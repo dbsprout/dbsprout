@@ -550,8 +550,9 @@ class TestValidateUrl:
     def test_postgresql_allowed(self) -> None:
         _validate_url("postgresql://user:pass@localhost/db")
 
-    def test_mysql_allowed(self) -> None:
-        _validate_url("mysql://user:pass@localhost/db")
+    def test_mysql_rejected_until_s005(self) -> None:
+        with pytest.raises(ValueError, match="Unsupported dialect"):
+            _validate_url("mysql://user:pass@localhost/db")
 
     def test_unsupported_dialect_rejected(self) -> None:
         with pytest.raises(ValueError, match="Unsupported dialect"):

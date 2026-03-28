@@ -1,8 +1,8 @@
 """Database introspection via SQLAlchemy Inspector.
 
 Connects to a live database, reads its schema, and returns a unified
-``DatabaseSchema``. Currently supports SQLite; PostgreSQL and MySQL
-introspection will be added in S-004 / S-005.
+``DatabaseSchema``. Supports SQLite and PostgreSQL; MySQL introspection
+will be added in S-005.
 """
 
 from __future__ import annotations
@@ -14,6 +14,8 @@ import sqlalchemy as sa
 from sqlalchemy import event, inspect
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from sqlalchemy.engine import Engine, Inspector
     from sqlalchemy.engine.interfaces import (
         ReflectedColumn,
@@ -32,7 +34,7 @@ from dbsprout.schema.models import (
     TableSchema,
 )
 
-_SUPPORTED_DIALECTS = frozenset({"sqlite", "postgresql", "mysql"})
+_SUPPORTED_DIALECTS = frozenset({"sqlite", "postgresql"})
 
 
 def introspect(url: str) -> DatabaseSchema:
@@ -60,8 +62,10 @@ def introspect(url: str) -> DatabaseSchema:
         inspector = inspect(engine)
         dialect_name = engine.dialect.name
         tables = _introspect_tables(inspector, dialect_name)
+        enums = _extract_pg_enums(inspector) if dialect_name == "postgresql" else {}
         return DatabaseSchema(
             tables=tables,
+            enums=enums,
             dialect=dialect_name,
             source="introspect",
         )
@@ -101,6 +105,19 @@ def _register_sqlite_pragma(engine: Engine) -> None:
         cursor = dbapi_connection.cursor()
         cursor.execute("PRAGMA foreign_keys = ON")
         cursor.close()
+
+
+def _extract_pg_enums(inspector: Inspector) -> dict[str, list[str]]:
+    """Extract PostgreSQL enum type definitions from the database.
+
+    Returns a mapping of enum name to sorted label values, e.g.
+    ``{"status_enum": ["active", "inactive"]}``.
+    """
+    get_enums = getattr(inspector, "get_enums", None)
+    if get_enums is None:
+        return {}
+    raw_enums: list[dict[str, Any]] = get_enums()
+    return {enum["name"]: sorted(enum.get("labels", [])) for enum in raw_enums}
 
 
 def _introspect_tables(inspector: Inspector, dialect: str) -> list[TableSchema]:
@@ -188,6 +205,7 @@ def _build_columns(
                 scale=meta.get("scale"),
                 enum_values=enum_values,
                 check_constraint=check_constraint,
+                comment=col_info.get("comment"),
             )
         )
     return columns
@@ -195,6 +213,9 @@ def _build_columns(
 
 def _get_raw_type(sa_type: Any) -> str:
     """Extract the raw DDL type string from a SQLAlchemy type."""
+    # Named enums: use the enum name instead of generic compile output
+    if isinstance(sa_type, sa.types.Enum) and getattr(sa_type, "name", None):
+        return str(sa_type.name)
     try:
         compiled = sa_type.compile()
         return str(compiled)
@@ -208,16 +229,48 @@ def _detect_autoincrement(
     pk_cols: list[str],
     dialect: str,
 ) -> bool:
-    """Detect autoincrement — SQLite ``INTEGER PRIMARY KEY`` is rowid alias."""
+    """Detect autoincrement across dialects.
+
+    Checks in order:
+    1. Generic ``autoincrement is True`` flag (works for PG SERIAL/BIGSERIAL)
+    2. PG IDENTITY column (``col_info["identity"]`` is a non-empty dict)
+    3. Dialect-specific heuristic (SQLite ``INTEGER PRIMARY KEY`` rowid alias)
+    """
+    # Generic flag — SA sets this for SERIAL, BIGSERIAL, and some IDENTITY cols
     if col_info.get("autoincrement", False) is True:
         return True
-    if dialect == "sqlite" and is_pk and len(pk_cols) == 1:
+    # PG IDENTITY columns (PG 10+)
+    identity = col_info.get("identity")
+    if isinstance(identity, dict) and identity:
+        return True
+    # Dialect-specific heuristics
+    detector = _AUTOINCREMENT_DETECTORS.get(dialect)
+    if detector is not None:
+        return detector(col_info, is_pk, pk_cols)
+    return False
+
+
+def _sqlite_autoincrement(
+    col_info: ReflectedColumn,
+    is_pk: bool,
+    pk_cols: list[str],
+) -> bool:
+    """SQLite: single-column INTEGER PRIMARY KEY is an alias for rowid."""
+    if is_pk and len(pk_cols) == 1:
         sa_type = col_info["type"]
         if isinstance(sa_type, sa.types.Integer) and not isinstance(
             sa_type, (sa.types.BigInteger, sa.types.SmallInteger)
         ):
             return True
     return False
+
+
+_AUTOINCREMENT_DETECTORS: dict[
+    str,
+    Callable[[ReflectedColumn, bool, list[str]], bool],
+] = {
+    "sqlite": _sqlite_autoincrement,
+}
 
 
 def _extract_default(raw_default: Any) -> str | None:
@@ -346,6 +399,7 @@ def _build_foreign_keys(raw_fks: list[ReflectedForeignKeyConstraint]) -> list[Fo
             ref_columns=fk["referred_columns"],
             on_delete=fk.get("options", {}).get("ondelete"),
             on_update=fk.get("options", {}).get("onupdate"),
+            deferrable=bool(fk.get("options", {}).get("deferrable", False)),
         )
         for fk in raw_fks
     ]

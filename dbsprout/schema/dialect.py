@@ -29,13 +29,28 @@ _SIMPLE_TYPE_MAP: list[tuple[type[sa_types.TypeEngine[Any]], ColumnType]] = [
     (sa_types.Time, ColumnType.TIME),
     (sa_types.LargeBinary, ColumnType.BINARY),
     (sa_types.JSON, ColumnType.JSON),
+    (sa_types.ARRAY, ColumnType.ARRAY),
+    (sa_types.Uuid, ColumnType.UUID),
     (sa_types.Text, ColumnType.TEXT),
 ]
+
+# PG types that do NOT inherit from any generic SA type and need explicit
+# mapping. These are only checked when dialect == "postgresql".
+_PG_TYPE_MAP: dict[str, ColumnType] = {
+    "INET": ColumnType.VARCHAR,
+    "CIDR": ColumnType.VARCHAR,
+    "MACADDR": ColumnType.VARCHAR,
+    "MACADDR8": ColumnType.VARCHAR,
+    "MONEY": ColumnType.DECIMAL,
+    "INTERVAL": ColumnType.VARCHAR,
+    "TSVECTOR": ColumnType.TEXT,
+    "TSQUERY": ColumnType.TEXT,
+}
 
 
 def normalize_type(
     sa_type: sa_types.TypeEngine[Any],
-    dialect: str,  # noqa: ARG001
+    dialect: str,
     raw_type: str,
 ) -> tuple[ColumnType, dict[str, Any]]:
     """Map a SQLAlchemy type + raw DDL string to ``(ColumnType, metadata)``.
@@ -46,7 +61,7 @@ def normalize_type(
         The SQLAlchemy ``TypeEngine`` instance from column reflection.
     dialect:
         The database dialect name (e.g. ``"sqlite"``, ``"postgresql"``).
-        Reserved for future dialect-specific overrides.
+        Used to gate dialect-specific type mappings.
     raw_type:
         The original type string as declared in DDL (preserved verbatim).
 
@@ -64,10 +79,10 @@ def normalize_type(
     if isinstance(sa_type, sa_types.Enum):
         return ColumnType.ENUM, {"enum_values": sorted(sa_type.enums)}
 
-    # Simple 1:1 type mappings (no metadata extraction needed)
-    for sa_cls, col_type in _SIMPLE_TYPE_MAP:
-        if isinstance(sa_type, sa_cls):
-            return col_type, {}
+    # Simple 1:1 type mappings + dialect-specific PG types (no metadata)
+    simple = _match_simple_type(sa_type, dialect)
+    if simple is not None:
+        return simple, {}
 
     # Numeric/DECIMAL family (Float already handled above in dispatch table)
     if isinstance(sa_type, (sa_types.DECIMAL, sa_types.Numeric)):
@@ -82,6 +97,21 @@ def normalize_type(
 
     # Fallback
     return ColumnType.UNKNOWN, {}
+
+
+def _match_simple_type(
+    sa_type: sa_types.TypeEngine[Any],
+    dialect: str,
+) -> ColumnType | None:
+    """Check PG-specific types, then generic SA type dispatch. Returns None if no match."""
+    if dialect == "postgresql":
+        pg_match = _PG_TYPE_MAP.get(type(sa_type).__name__)
+        if pg_match is not None:
+            return pg_match
+    for sa_cls, col_type in _SIMPLE_TYPE_MAP:
+        if isinstance(sa_type, sa_cls):
+            return col_type
+    return None
 
 
 def _extract_numeric_meta(sa_type: sa_types.Numeric[Any]) -> dict[str, Any]:
