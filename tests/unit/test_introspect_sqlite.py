@@ -8,11 +8,14 @@ from unittest.mock import MagicMock
 import pytest
 import sqlalchemy as sa
 
+from dbsprout.schema import introspect as introspect_fn
+from dbsprout.schema import normalize_type as normalize_type_fn
 from dbsprout.schema.introspect import (
     _collect_unique_columns,
     _detect_autoincrement,
     _extract_check_enum,
     _get_raw_type,
+    _is_safe_identifier,
     introspect,
 )
 from dbsprout.schema.models import ColumnType, DatabaseSchema
@@ -98,9 +101,9 @@ def sqlite_url() -> str:  # type: ignore[misc]
     shared_engine = sa.create_engine(url)
     _execute_ddl(shared_engine)
     # Keep a connection open to prevent the shared-memory DB from being garbage-collected.
-    _keepalive = shared_engine.connect()
+    keepalive_conn = shared_engine.connect()
     yield url
-    _keepalive.close()
+    keepalive_conn.close()
     shared_engine.dispose()
 
 
@@ -331,15 +334,18 @@ class TestAutoincrementDetection:
 
 class TestEmptyDatabase:
     def test_empty_db_returns_empty_schema(self) -> None:
-        engine = sa.create_engine("sqlite:///file:test_empty?mode=memory&cache=shared&uri=true")
-        _keepalive = engine.connect()
-        schema = introspect("sqlite:///file:test_empty?mode=memory&cache=shared&uri=true")
-        assert isinstance(schema, DatabaseSchema)
-        assert len(schema.tables) == 0
-        assert schema.dialect == "sqlite"
-        assert schema.source == "introspect"
-        _keepalive.close()
-        engine.dispose()
+        url = "sqlite:///file:test_empty?mode=memory&cache=shared&uri=true"
+        engine = sa.create_engine(url)
+        keepalive_conn = engine.connect()
+        try:
+            schema = introspect(url)
+            assert isinstance(schema, DatabaseSchema)
+            assert len(schema.tables) == 0
+            assert schema.dialect == "sqlite"
+            assert schema.source == "introspect"
+        finally:
+            keepalive_conn.close()
+            engine.dispose()
 
 
 class TestCheckConstraintEnumValues:
@@ -456,7 +462,7 @@ class TestExtractCheckEnumBranches:
 
     def test_check_constraint_exception(self) -> None:
         mock_inspector = MagicMock()
-        mock_inspector.get_check_constraints.side_effect = NotImplementedError
+        mock_inspector.get_check_constraints.side_effect = NotImplementedError("unsupported")
         constraint, values = _extract_check_enum("t", "col", mock_inspector)
         assert constraint is None
         assert values is None
@@ -488,3 +494,29 @@ class TestCollectUniqueColumnsExplicit:
         indexes = [{"unique": True, "column_names": ["code"]}]  # type: ignore[list-item]
         result = _collect_unique_columns(uniques, indexes, "t", mock_inspector)
         assert "code" in result
+
+
+class TestSchemaReExports:
+    """Verify the public API re-exports from dbsprout.schema."""
+
+    def test_introspect_importable(self) -> None:
+        assert callable(introspect_fn)
+
+    def test_normalize_type_importable(self) -> None:
+        assert callable(normalize_type_fn)
+
+
+class TestSafeIdentifier:
+    """Cover the _is_safe_identifier helper."""
+
+    def test_normal_identifier(self) -> None:
+        assert _is_safe_identifier("users") is True
+
+    def test_identifier_with_double_quote(self) -> None:
+        assert _is_safe_identifier('table"; DROP') is False
+
+    def test_identifier_with_semicolon(self) -> None:
+        assert _is_safe_identifier("table;evil") is False
+
+    def test_identifier_with_null_byte(self) -> None:
+        assert _is_safe_identifier("table\x00") is False

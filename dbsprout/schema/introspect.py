@@ -180,7 +180,7 @@ def _get_raw_type(sa_type: Any) -> str:
     try:
         compiled = sa_type.compile()
         return str(compiled)
-    except Exception:
+    except (TypeError, AttributeError, sa.exc.CompileError):
         return str(sa_type)
 
 
@@ -217,7 +217,7 @@ def _extract_check_enum(
     """Extract CHECK constraints and detect ``col IN ('a','b','c')`` patterns."""
     try:
         check_constraints = inspector.get_check_constraints(table_name)
-    except Exception:
+    except NotImplementedError:
         return None, None
 
     for cc in check_constraints:
@@ -268,21 +268,38 @@ def _sqlite_autoindex_unique_columns(
     table_name: str,
     inspector: Inspector,
 ) -> set[str]:
-    """Query ``PRAGMA index_list`` to find columns with SQLite autoindexes."""
+    """Query ``PRAGMA index_list`` to find columns with SQLite autoindexes.
+
+    Both ``table_name`` (from ``inspector.get_table_names()``) and
+    ``idx_name`` (from ``PRAGMA index_list`` results) originate from
+    SQLite's internal ``sqlite_master``.  We validate identifiers
+    as defense-in-depth before interpolation.
+    """
     unique_cols: set[str] = set()
     bind = inspector.bind
     if bind is None or not isinstance(bind, sa.engine.Engine):
+        return unique_cols
+    if not _is_safe_identifier(table_name):
         return unique_cols
     with bind.connect() as conn:
         rows = conn.execute(sa.text(f'PRAGMA index_list("{table_name}")')).fetchall()
         for row in rows:
             idx_name: str = row[1]
             is_unique: int = row[2]
-            if is_unique and idx_name.startswith("sqlite_autoindex_"):
+            if (
+                is_unique
+                and idx_name.startswith("sqlite_autoindex_")
+                and _is_safe_identifier(idx_name)
+            ):
                 info = conn.execute(sa.text(f'PRAGMA index_info("{idx_name}")')).fetchall()
                 if len(info) == 1:
                     unique_cols.add(info[0][2])
     return unique_cols
+
+
+def _is_safe_identifier(name: str) -> bool:
+    """Reject identifiers containing characters that could break SQL quoting."""
+    return '"' not in name and ";" not in name and "\x00" not in name
 
 
 def _apply_unique_flags(
@@ -318,7 +335,7 @@ def _build_indexes(raw_indexes: list[ReflectedIndex]) -> list[IndexSchema]:
     return [
         IndexSchema(
             name=idx.get("name"),
-            columns=idx.get("column_names", []),
+            columns=[c for c in idx.get("column_names", []) if c is not None],
             unique=idx.get("unique", False),
         )
         for idx in raw_indexes

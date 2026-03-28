@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from dbsprout.schema.dialect import normalize_type
-from dbsprout.schema.introspect import introspect
 from dbsprout.schema.models import (
     ColumnSchema,
     ColumnType,
@@ -20,6 +18,12 @@ __all__ = [
     "ForeignKeySchema",
     "IndexSchema",
     "TableSchema",
-    "introspect",
-    "normalize_type",
 ]
+
+try:
+    from dbsprout.schema.dialect import normalize_type
+    from dbsprout.schema.introspect import introspect
+
+    __all__ += ["introspect", "normalize_type"]
+except ImportError:  # pragma: no cover — sqlalchemy not installed
+    pass
