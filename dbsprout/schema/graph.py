@@ -1,13 +1,17 @@
-"""FK dependency graph and topological sort.
+"""FK dependency graph, topological sort, and cycle detection.
 
 Builds a directed acyclic graph of foreign key dependencies from a
 ``DatabaseSchema`` and computes a batched topological insertion order.
 Each batch contains tables that can be generated in parallel.
+
+When cycles exist, ``detect_cycles`` uses NetworkX SCC analysis to
+identify all strongly connected components and candidate break edges.
 """
 
 from __future__ import annotations
 
-from graphlib import TopologicalSorter
+from dataclasses import dataclass, field
+from graphlib import CycleError, TopologicalSorter
 from typing import TYPE_CHECKING
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -15,7 +19,65 @@ from pydantic import BaseModel, ConfigDict, Field
 from dbsprout.schema.models import ForeignKeySchema  # noqa: TC001 — Pydantic needs at runtime
 
 if TYPE_CHECKING:
-    from dbsprout.schema.models import DatabaseSchema
+    from dbsprout.schema.models import DatabaseSchema, TableSchema
+
+
+@dataclass(frozen=True)
+class _DependencyData:
+    """Intermediate result of FK analysis — shared by FKGraph and detect_cycles."""
+
+    deps: dict[str, frozenset[str]]
+    self_refs: dict[str, tuple[ForeignKeySchema, ...]]
+    ext_refs: dict[str, frozenset[str]]
+    edges_by_table: dict[str, tuple[ForeignKeySchema, ...]]
+    known_tables: frozenset[str] = field(default_factory=frozenset)
+
+
+def _build_dependency_data(schema: DatabaseSchema) -> _DependencyData:
+    """Extract FK relationships from a schema into a structured form.
+
+    Separates self-referencing FKs, external refs (FK to table not in
+    schema), and in-schema FK edges. Used by both ``FKGraph.from_schema``
+    and ``detect_cycles``.
+    """
+    known_tables = frozenset(t.name for t in schema.tables)
+
+    deps: dict[str, frozenset[str]] = {}
+    self_refs: dict[str, tuple[ForeignKeySchema, ...]] = {}
+    ext_refs: dict[str, frozenset[str]] = {}
+    edges_by_table: dict[str, tuple[ForeignKeySchema, ...]] = {}
+
+    for table in schema.tables:
+        predecessors: set[str] = set()
+        table_self_refs: list[ForeignKeySchema] = []
+        table_ext_refs: set[str] = set()
+        table_edges: list[ForeignKeySchema] = []
+
+        for fk in table.foreign_keys:
+            if fk.ref_table == table.name:
+                table_self_refs.append(fk)
+            elif fk.ref_table in known_tables:
+                predecessors.add(fk.ref_table)
+                table_edges.append(fk)
+            else:
+                table_ext_refs.add(fk.ref_table)
+
+        deps[table.name] = frozenset(predecessors)
+
+        if table_self_refs:
+            self_refs[table.name] = tuple(table_self_refs)
+        if table_ext_refs:
+            ext_refs[table.name] = frozenset(table_ext_refs)
+        if table_edges:
+            edges_by_table[table.name] = tuple(table_edges)
+
+    return _DependencyData(
+        deps=deps,
+        self_refs=self_refs,
+        ext_refs=ext_refs,
+        edges_by_table=edges_by_table,
+        known_tables=known_tables,
+    )
 
 
 class FKGraph(BaseModel):
@@ -55,44 +117,15 @@ class FKGraph(BaseModel):
         if not schema.tables:
             return cls()
 
-        known_tables = frozenset(t.name for t in schema.tables)
-
-        deps: dict[str, frozenset[str]] = {}
-        self_refs: dict[str, tuple[ForeignKeySchema, ...]] = {}
-        ext_refs: dict[str, frozenset[str]] = {}
-
-        # Manual FK iteration (not TableSchema.fk_parent_tables) because we
-        # also need to collect self_referencing FK objects and external_refs,
-        # which fk_parent_tables does not provide.
-        for table in schema.tables:
-            predecessors: set[str] = set()
-            table_self_refs: list[ForeignKeySchema] = []
-            table_ext_refs: set[str] = set()
-
-            for fk in table.foreign_keys:
-                if fk.ref_table == table.name:
-                    table_self_refs.append(fk)
-                elif fk.ref_table in known_tables:
-                    predecessors.add(fk.ref_table)
-                else:
-                    table_ext_refs.add(fk.ref_table)
-
-            deps[table.name] = frozenset(predecessors)
-
-            if table_self_refs:
-                self_refs[table.name] = tuple(table_self_refs)
-            if table_ext_refs:
-                ext_refs[table.name] = frozenset(table_ext_refs)
-
-        order = _compute_insertion_order(deps)
-        table_names = tuple(sorted(known_tables))
-        rev_deps = _compute_reverse_deps(deps)
+        data = _build_dependency_data(schema)
+        order = _compute_insertion_order(data.deps)
+        rev_deps = _compute_reverse_deps(data.deps)
 
         return cls(
-            tables=table_names,
-            dependencies=deps,
-            self_referencing=self_refs,
-            external_refs=ext_refs,
+            tables=tuple(sorted(data.known_tables)),
+            dependencies=data.deps,
+            self_referencing=data.self_refs,
+            external_refs=data.ext_refs,
             insertion_order=order,
             reverse_deps=rev_deps,
         )
@@ -109,6 +142,97 @@ class FKGraph(BaseModel):
             msg = f"Table {table!r} not in graph"
             raise KeyError(msg)
         return self.reverse_deps.get(table, frozenset())
+
+
+# ── Cycle detection ──────────────────────────────────────────────────────
+
+
+class CycleEdge(BaseModel):
+    """An FK edge within a cycle, tagged with its source table."""
+
+    model_config = ConfigDict(frozen=True)
+
+    source_table: str
+    foreign_key: ForeignKeySchema
+
+
+class CycleInfo(BaseModel):
+    """Description of one strongly connected component (cycle) in the FK graph."""
+
+    model_config = ConfigDict(frozen=True)
+
+    tables: frozenset[str]
+    edges: tuple[CycleEdge, ...] = ()
+    candidate_breaks: tuple[CycleEdge, ...] = ()
+
+
+def detect_cycles(schema: DatabaseSchema) -> list[CycleInfo]:
+    """Detect FK cycles using Tarjan's SCC algorithm.
+
+    Returns an empty list for acyclic schemas.  Each ``CycleInfo``
+    describes one strongly connected component with more than one
+    table.  NetworkX is imported lazily — only when cycles exist.
+    """
+    if not schema.tables:
+        return []
+
+    data = _build_dependency_data(schema)
+
+    # Fast path: try topological sort — if it succeeds, no cycles
+    try:
+        _compute_insertion_order(data.deps)
+        return []
+    except CycleError:
+        pass
+
+    # Slow path: find all SCCs via NetworkX
+    import networkx as nx  # noqa: PLC0415
+
+    graph: nx.DiGraph[str] = nx.DiGraph()
+    for table_name, preds in data.deps.items():
+        for pred in preds:
+            graph.add_edge(pred, table_name)
+
+    result: list[CycleInfo] = []
+    for scc in nx.strongly_connected_components(graph):
+        if len(scc) <= 1:
+            continue
+
+        edges: list[CycleEdge] = []
+        candidates: list[CycleEdge] = []
+
+        for table_name in sorted(scc):
+            table_obj = schema.get_table(table_name)
+            if table_obj is None:
+                continue
+            for fk in data.edges_by_table.get(table_name, ()):
+                if fk.ref_table in scc:
+                    edge = CycleEdge(source_table=table_name, foreign_key=fk)
+                    edges.append(edge)
+                    if _is_nullable_fk(fk, table_obj):
+                        candidates.append(edge)
+
+        edges.sort(key=lambda e: (e.source_table, e.foreign_key.ref_table))
+        candidates.sort(key=lambda e: (e.source_table, e.foreign_key.ref_table))
+
+        result.append(
+            CycleInfo(
+                tables=frozenset(scc),
+                edges=tuple(edges),
+                candidate_breaks=tuple(candidates),
+            )
+        )
+
+    result.sort(key=lambda c: tuple(sorted(c.tables)))
+    return result
+
+
+def _is_nullable_fk(fk: ForeignKeySchema, table: TableSchema) -> bool:
+    """True if ALL FK columns are nullable (candidate for cycle breaking)."""
+    return all((col := table.get_column(c)) is not None and col.nullable for c in fk.columns)
+
+
+# ── Topological sort helpers ─────────────────────────────────────────────
 
 
 def _compute_insertion_order(
