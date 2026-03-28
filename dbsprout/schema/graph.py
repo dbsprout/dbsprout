@@ -28,6 +28,10 @@ class FKGraph(BaseModel):
 
     model_config = ConfigDict(frozen=True)
 
+    # Note: dict fields are mutable containers on a frozen model. Pydantic's
+    # frozen=True prevents attribute reassignment but not in-place dict mutation.
+    # Treat all fields as read-only after construction. Inner values use
+    # frozenset/tuple for true immutability of the contained data.
     tables: tuple[str, ...] = ()
     dependencies: dict[str, frozenset[str]] = Field(default_factory=dict)
     self_referencing: dict[str, tuple[ForeignKeySchema, ...]] = Field(default_factory=dict)
@@ -53,6 +57,9 @@ class FKGraph(BaseModel):
         self_refs: dict[str, tuple[ForeignKeySchema, ...]] = {}
         ext_refs: dict[str, frozenset[str]] = {}
 
+        # Manual FK iteration (not TableSchema.fk_parent_tables) because we
+        # also need to collect self_referencing FK objects and external_refs,
+        # which fk_parent_tables does not provide.
         for table in schema.tables:
             predecessors: set[str] = set()
             table_self_refs: list[ForeignKeySchema] = []
