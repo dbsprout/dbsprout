@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from unittest.mock import MagicMock
+
+if TYPE_CHECKING:
+    from collections.abc import Generator
 
 import pytest
 import sqlalchemy as sa
@@ -95,7 +98,7 @@ def _execute_ddl(engine: sa.engine.Engine) -> None:
 
 
 @pytest.fixture
-def sqlite_url() -> str:  # type: ignore[misc]
+def sqlite_url() -> Generator[str, None, None]:
     """Create an in-memory SQLite database with the 7-table schema and return the URL."""
     url = "sqlite:///file:test_s003?mode=memory&cache=shared&uri=true"
     shared_engine = sa.create_engine(url)

@@ -153,7 +153,7 @@ def _build_columns(
 
         # Merge enum_values from type normalization
         if "enum_values" in meta:
-            enum_values = meta.pop("enum_values")
+            enum_values = meta["enum_values"]
             col_type = ColumnType.ENUM
 
         columns.append(
@@ -320,9 +320,9 @@ def _build_foreign_keys(raw_fks: list[ReflectedForeignKeyConstraint]) -> list[Fo
     return [
         ForeignKeySchema(
             name=fk.get("name"),
-            columns=fk.get("constrained_columns", []),
-            ref_table=fk.get("referred_table", ""),
-            ref_columns=fk.get("referred_columns", []),
+            columns=fk["constrained_columns"],
+            ref_table=fk["referred_table"],
+            ref_columns=fk["referred_columns"],
             on_delete=fk.get("options", {}).get("ondelete"),
             on_update=fk.get("options", {}).get("onupdate"),
         )
