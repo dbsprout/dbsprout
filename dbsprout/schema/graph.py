@@ -24,7 +24,13 @@ if TYPE_CHECKING:
 
 @dataclass(frozen=True)
 class _DependencyData:
-    """Intermediate result of FK analysis — shared by FKGraph and detect_cycles."""
+    """Intermediate result of FK analysis — shared by FKGraph and detect_cycles.
+
+    Note: frozen=True prevents attribute reassignment but dict fields can
+    still be mutated in-place. Inner values use frozenset/tuple for true
+    immutability of contained data. This is a private helper — treat as
+    read-only after construction.
+    """
 
     deps: dict[str, frozenset[str]]
     self_refs: dict[str, tuple[ForeignKeySchema, ...]]
@@ -203,8 +209,7 @@ def detect_cycles(schema: DatabaseSchema) -> list[CycleInfo]:
 
         for table_name in sorted(scc):
             table_obj = schema.get_table(table_name)
-            if table_obj is None:
-                continue
+            assert table_obj is not None  # SCC tables always exist in schema
             for fk in data.edges_by_table.get(table_name, ()):
                 if fk.ref_table in scc:
                     edge = CycleEdge(source_table=table_name, foreign_key=fk)
@@ -212,8 +217,11 @@ def detect_cycles(schema: DatabaseSchema) -> list[CycleInfo]:
                     if _is_nullable_fk(fk, table_obj):
                         candidates.append(edge)
 
-        edges.sort(key=lambda e: (e.source_table, e.foreign_key.ref_table))
-        candidates.sort(key=lambda e: (e.source_table, e.foreign_key.ref_table))
+        def _edge_sort_key(e: CycleEdge) -> tuple[str, str, list[str]]:
+            return (e.source_table, e.foreign_key.ref_table, e.foreign_key.columns)
+
+        edges.sort(key=_edge_sort_key)
+        candidates.sort(key=_edge_sort_key)
 
         result.append(
             CycleInfo(
@@ -229,7 +237,11 @@ def detect_cycles(schema: DatabaseSchema) -> list[CycleInfo]:
 
 def _is_nullable_fk(fk: ForeignKeySchema, table: TableSchema) -> bool:
     """True if ALL FK columns are nullable (candidate for cycle breaking)."""
-    return all((col := table.get_column(c)) is not None and col.nullable for c in fk.columns)
+    for c in fk.columns:
+        col = table.get_column(c)
+        if col is None or not col.nullable:
+            return False
+    return True
 
 
 # ── Topological sort helpers ─────────────────────────────────────────────

@@ -173,6 +173,31 @@ class TestNullableCandidates:
         assert len(result) == 1
         assert len(result[0].candidate_breaks) == 2
 
+    def test_composite_fk_partial_nullable_not_candidate(self) -> None:
+        """2-column FK where only one column is nullable → NOT a candidate."""
+        a = TableSchema(
+            name="a",
+            columns=[
+                _col("id", nullable=False),
+                _col("b_id1", nullable=True),
+                _col("b_id2", nullable=False),
+            ],
+            primary_key=["id"],
+            foreign_keys=[
+                ForeignKeySchema(
+                    columns=["b_id1", "b_id2"],
+                    ref_table="b",
+                    ref_columns=["id1", "id2"],
+                )
+            ],
+        )
+        b = _table("b", fks=[("a_id", "a", True)])
+        result = detect_cycles(_schema(a, b))
+        assert len(result) == 1
+        # Only b→a is nullable (single-col), a→b composite is partial → not candidate
+        assert len(result[0].candidate_breaks) == 1
+        assert result[0].candidate_breaks[0].source_table == "b"
+
 
 # ── Self-ref not reported ────────────────────────────────────────────────
 
