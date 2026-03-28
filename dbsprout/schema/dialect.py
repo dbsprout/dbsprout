@@ -148,11 +148,11 @@ def _normalize_dialect_special(
         if getattr(sa_type, "display_width", None) == 1:
             return ColumnType.BOOLEAN, {}
         return ColumnType.SMALLINT, {}
-    # MySQL SET: extract member values
+    # MySQL SET: multi-value selection, report as ENUM with allowed values
     if type_name == "SET":
         values = getattr(sa_type, "values", None)
         meta: dict[str, Any] = {"enum_values": sorted(values)} if values else {}
-        return ColumnType.VARCHAR, meta
+        return ColumnType.ENUM, meta
     return None
 
 

@@ -100,9 +100,9 @@ def _create_engine(url: str) -> Engine:
         connect_args["connect_timeout"] = _CONNECT_TIMEOUT
     try:
         engine = sa.create_engine(url, connect_args=connect_args)
-    except sa.exc.SQLAlchemyError:
+    except sa.exc.SQLAlchemyError as err:
         safe_url = parsed.render_as_string(hide_password=True)
-        msg = f"Failed to create engine for {safe_url}"
+        msg = f"Failed to create engine for {safe_url}: {type(err).__name__}"
         raise sa.exc.SQLAlchemyError(msg) from None
     if engine.dialect.name == "sqlite":
         _register_sqlite_pragma(engine)

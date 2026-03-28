@@ -109,7 +109,7 @@ class TestMysqlSetType:
         col_type, meta = normalize_type(
             mysql.SET("read", "write", "admin"), "mysql", "set('read','write','admin')"
         )
-        assert col_type is ColumnType.VARCHAR
+        assert col_type is ColumnType.ENUM
         assert meta == {"enum_values": ["admin", "read", "write"]}
 
     def test_set_not_matched_on_other_dialect(self) -> None:

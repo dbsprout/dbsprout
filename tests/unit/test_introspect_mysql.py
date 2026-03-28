@@ -13,6 +13,7 @@ from dbsprout.schema.introspect import (
     _build_foreign_keys,
     _detect_autoincrement,
 )
+from dbsprout.schema.models import ColumnType
 
 # ── Autoincrement detection ──────────────────────────────────────────────
 
@@ -59,7 +60,7 @@ class TestMysqlEnumColumn:
             }
         ]
         columns = _build_columns(raw_columns, [], "mysql", "users", mock_inspector)  # type: ignore[arg-type]
-        assert columns[0].data_type.value == "enum"
+        assert columns[0].data_type is ColumnType.ENUM
         assert columns[0].enum_values == ["active", "inactive"]
 
 
@@ -81,8 +82,7 @@ class TestMysqlSetColumn:
             }
         ]
         columns = _build_columns(raw_columns, [], "mysql", "roles", mock_inspector)  # type: ignore[arg-type]
-        # SET values become enum_values; _build_columns promotes to ENUM
-        assert columns[0].data_type.value == "enum"
+        assert columns[0].data_type is ColumnType.ENUM
         assert columns[0].enum_values == ["admin", "read", "write"]
 
 
