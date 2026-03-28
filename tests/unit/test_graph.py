@@ -355,6 +355,11 @@ class TestDependents:
         )
         assert graph.dependents("orders") == frozenset()
 
+    def test_dependents_unknown_table_raises(self) -> None:
+        graph = FKGraph.from_schema(_schema(_table("users")))
+        with pytest.raises(KeyError, match="nonexistent"):
+            graph.dependents("nonexistent")
+
 
 class TestImmutability:
     def test_frozen_model(self) -> None:

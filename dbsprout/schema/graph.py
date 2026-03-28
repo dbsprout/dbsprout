@@ -8,7 +8,7 @@ Each batch contains tables that can be generated in parallel.
 from __future__ import annotations
 
 from graphlib import TopologicalSorter
-from typing import TYPE_CHECKING, ClassVar
+from typing import TYPE_CHECKING
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -26,13 +26,14 @@ class FKGraph(BaseModel):
     relationships contain cycles (S-007 handles cycle resolution).
     """
 
-    model_config: ClassVar[ConfigDict] = ConfigDict(frozen=True)
+    model_config = ConfigDict(frozen=True)
 
     tables: tuple[str, ...] = ()
     dependencies: dict[str, frozenset[str]] = Field(default_factory=dict)
     self_referencing: dict[str, tuple[ForeignKeySchema, ...]] = Field(default_factory=dict)
     external_refs: dict[str, frozenset[str]] = Field(default_factory=dict)
     insertion_order: tuple[tuple[str, ...], ...] = ()
+    reverse_deps: dict[str, frozenset[str]] = Field(default_factory=dict)
 
     @classmethod
     def from_schema(cls, schema: DatabaseSchema) -> FKGraph:
@@ -53,7 +54,6 @@ class FKGraph(BaseModel):
         ext_refs: dict[str, frozenset[str]] = {}
 
         for table in schema.tables:
-            # Predecessors: tables this table depends on (excluding self-refs and externals)
             predecessors: set[str] = set()
             table_self_refs: list[ForeignKeySchema] = []
             table_ext_refs: set[str] = set()
@@ -75,6 +75,7 @@ class FKGraph(BaseModel):
 
         order = _compute_insertion_order(deps)
         table_names = tuple(sorted(known_tables))
+        rev_deps = _compute_reverse_deps(deps)
 
         return cls(
             tables=table_names,
@@ -82,11 +83,21 @@ class FKGraph(BaseModel):
             self_referencing=self_refs,
             external_refs=ext_refs,
             insertion_order=order,
+            reverse_deps=rev_deps,
         )
 
     def dependents(self, table: str) -> frozenset[str]:
-        """Return tables that depend on the given table (reverse edges)."""
-        return frozenset(t for t, preds in self.dependencies.items() if table in preds)
+        """Return tables that depend on the given table (reverse edges).
+
+        Raises
+        ------
+        KeyError
+            If ``table`` is not in the graph.
+        """
+        if table not in self.dependencies:
+            msg = f"Table {table!r} not in graph"
+            raise KeyError(msg)
+        return self.reverse_deps.get(table, frozenset())
 
 
 def _compute_insertion_order(
@@ -97,8 +108,6 @@ def _compute_insertion_order(
     Each batch is a tuple of table names sorted alphabetically
     for deterministic output.
     """
-    # TopologicalSorter expects {node: {predecessors}}
-    # frozenset is iterable, which is what it needs
     sorter: TopologicalSorter[str] = TopologicalSorter(deps)
     sorter.prepare()
 
@@ -110,3 +119,14 @@ def _compute_insertion_order(
         sorter.done(*batch)
 
     return tuple(batches)
+
+
+def _compute_reverse_deps(
+    deps: dict[str, frozenset[str]],
+) -> dict[str, frozenset[str]]:
+    """Pre-compute reverse dependency map for O(1) dependents() lookups."""
+    rev: dict[str, set[str]] = {}
+    for table, predecessors in deps.items():
+        for pred in predecessors:
+            rev.setdefault(pred, set()).add(table)
+    return {k: frozenset(v) for k, v in rev.items()}
