@@ -73,10 +73,10 @@ class TestAcyclic:
                 _table("orders", fks=[("user_id", "users", True)]),
             )
         )
-        assert result == []
+        assert result == ()
 
     def test_empty_schema(self) -> None:
-        assert detect_cycles(_schema()) == []
+        assert detect_cycles(_schema()) == ()
 
 
 # ── Basic cycles ─────────────────────────────────────────────────────────
@@ -205,7 +205,7 @@ class TestNullableCandidates:
 class TestSelfRefNotCycle:
     def test_self_ref_only_not_cycle(self) -> None:
         result = detect_cycles(_schema(_table("employees", self_ref="manager_id")))
-        assert result == []
+        assert result == ()
 
     def test_self_ref_with_acyclic_fks(self) -> None:
         result = detect_cycles(
@@ -218,7 +218,7 @@ class TestSelfRefNotCycle:
                 ),
             )
         )
-        assert result == []
+        assert result == ()
 
 
 # ── Overlapping cycles (single SCC) ─────────────────────────────────────

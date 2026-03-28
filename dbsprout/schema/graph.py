@@ -172,7 +172,7 @@ class CycleInfo(BaseModel):
     candidate_breaks: tuple[CycleEdge, ...] = ()
 
 
-def detect_cycles(schema: DatabaseSchema) -> list[CycleInfo]:
+def detect_cycles(schema: DatabaseSchema) -> tuple[CycleInfo, ...]:
     """Detect FK cycles using Tarjan's SCC algorithm.
 
     Returns an empty list for acyclic schemas.  Each ``CycleInfo``
@@ -180,14 +180,14 @@ def detect_cycles(schema: DatabaseSchema) -> list[CycleInfo]:
     table.  NetworkX is imported lazily — only when cycles exist.
     """
     if not schema.tables:
-        return []
+        return ()
 
     data = _build_dependency_data(schema)
 
     # Fast path: try topological sort — if it succeeds, no cycles
     try:
         _compute_insertion_order(data.deps)
-        return []
+        return ()
     except CycleError:
         pass
 
@@ -232,7 +232,7 @@ def detect_cycles(schema: DatabaseSchema) -> list[CycleInfo]:
         )
 
     result.sort(key=lambda c: tuple(sorted(c.tables)))
-    return result
+    return tuple(result)
 
 
 def _is_nullable_fk(fk: ForeignKeySchema, table: TableSchema) -> bool:
