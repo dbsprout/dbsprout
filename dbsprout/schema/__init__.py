@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dbsprout.schema.graph import FKGraph
+from dbsprout.schema.graph import CycleEdge, CycleInfo, FKGraph, detect_cycles
 from dbsprout.schema.models import (
     ColumnSchema,
     ColumnType,
@@ -15,11 +15,14 @@ from dbsprout.schema.models import (
 __all__ = [
     "ColumnSchema",
     "ColumnType",
+    "CycleEdge",
+    "CycleInfo",
     "DatabaseSchema",
     "FKGraph",
     "ForeignKeySchema",
     "IndexSchema",
     "TableSchema",
+    "detect_cycles",
 ]
 
 try:
