@@ -241,6 +241,8 @@ class DatabaseSchema(BaseModel):
                 parts.append("NOT NULL")
             if col.primary_key and single_pk:
                 parts.append("PRIMARY KEY")
+            if col.autoincrement:
+                parts.append("AUTOINCREMENT")
             if col.unique:
                 parts.append("UNIQUE")
             if col.default is not None:

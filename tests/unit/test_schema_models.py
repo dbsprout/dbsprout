@@ -613,3 +613,72 @@ def test_schema_hash_enum_values_included() -> None:
     db1 = DatabaseSchema(tables=[TableSchema(name="t", columns=[col1])])
     db2 = DatabaseSchema(tables=[TableSchema(name="t", columns=[col2])])
     assert db1.schema_hash() != db2.schema_hash()
+
+
+def test_schema_hash_ignores_raw_type() -> None:
+    col1 = _make_col("x", raw_type="int4")
+    col2 = _make_col("x", raw_type="integer")
+    db1 = DatabaseSchema(tables=[TableSchema(name="t", columns=[col1])])
+    db2 = DatabaseSchema(tables=[TableSchema(name="t", columns=[col2])])
+    assert db1.schema_hash() == db2.schema_hash()
+
+
+def test_schema_hash_ignores_comments() -> None:
+    col1 = _make_col("x", comment="user id")
+    col2 = _make_col("x", comment="identifier")
+    t1 = TableSchema(name="t", columns=[col1], comment="table A")
+    t2 = TableSchema(name="t", columns=[col2], comment="table B")
+    db1 = DatabaseSchema(tables=[t1])
+    db2 = DatabaseSchema(tables=[t2])
+    assert db1.schema_hash() == db2.schema_hash()
+
+
+def test_schema_hash_ignores_row_count_hint() -> None:
+    t1 = TableSchema(name="t", columns=[_make_col("x")], row_count_hint=100)
+    t2 = TableSchema(name="t", columns=[_make_col("x")], row_count_hint=999)
+    db1 = DatabaseSchema(tables=[t1])
+    db2 = DatabaseSchema(tables=[t2])
+    assert db1.schema_hash() == db2.schema_hash()
+
+
+def test_schema_hash_ignores_fk_and_index_names() -> None:
+    fk1 = _make_fk(["a"], "p", ["id"], name="fk_old")
+    fk2 = _make_fk(["a"], "p", ["id"], name="fk_new")
+    idx1 = IndexSchema(name="idx_old", columns=["x"])
+    idx2 = IndexSchema(name="idx_new", columns=["x"])
+    t1 = TableSchema(name="t", columns=[_make_col("a")], foreign_keys=[fk1], indexes=[idx1])
+    t2 = TableSchema(name="t", columns=[_make_col("a")], foreign_keys=[fk2], indexes=[idx2])
+    db1 = DatabaseSchema(tables=[t1])
+    db2 = DatabaseSchema(tables=[t2])
+    assert db1.schema_hash() == db2.schema_hash()
+
+
+def test_index_schema_frozen() -> None:
+    idx = IndexSchema(columns=["a"])
+    with pytest.raises(ValidationError):
+        idx.unique = True  # type: ignore[misc]
+
+
+def test_table_schema_frozen() -> None:
+    t = TableSchema(name="t", columns=[_make_col("id")])
+    with pytest.raises(ValidationError):
+        t.name = "changed"  # type: ignore[misc]
+
+
+def test_to_ddl_autoincrement() -> None:
+    db = DatabaseSchema(
+        tables=[
+            TableSchema(
+                name="t",
+                columns=[_make_col("id", autoincrement=True, primary_key=True)],
+                primary_key=["id"],
+            )
+        ]
+    )
+    assert "AUTOINCREMENT" in db.to_ddl()
+
+
+def test_to_ddl_with_dialect_param() -> None:
+    db = DatabaseSchema(tables=[TableSchema(name="t", columns=[_make_col("id")])])
+    ddl = db.to_ddl(dialect="postgresql")
+    assert "CREATE TABLE" in ddl
