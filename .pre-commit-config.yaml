@@ -1,0 +1,40 @@
+repos:
+  # ── Ruff (lint + format) ──────────────────────────────────────────
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.15.8
+    hooks:
+      - id: ruff
+        args: [--fix, --exit-non-zero-on-fix]
+      - id: ruff-format
+
+  # ── Mypy (strict type checking) ──────────────────────────────────
+  - repo: local
+    hooks:
+      - id: mypy
+        name: mypy
+        entry: uv run mypy --strict dbsprout/
+        language: system
+        pass_filenames: false
+        always_run: true
+        types: [python]
+
+  # ── Bandit (security — pre-push only) ─────────────────────────────
+  - repo: https://github.com/PyCQA/bandit
+    rev: "1.9.4"
+    hooks:
+      - id: bandit
+        args: [-c, pyproject.toml, -r, dbsprout/]
+        pass_filenames: false
+        additional_dependencies: ["bandit[toml]"]
+        stages: [pre-push]
+
+  # ── Pytest (tests — pre-push only) ──────────────────────────────
+  - repo: local
+    hooks:
+      - id: pytest
+        name: pytest
+        entry: uv run pytest --cov=dbsprout --cov-report=term-missing -q
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-push]
