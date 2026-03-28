@@ -1,8 +1,8 @@
 """Database introspection via SQLAlchemy Inspector.
 
 Connects to a live database, reads its schema, and returns a unified
-``DatabaseSchema``. Currently supports SQLite; PostgreSQL and MySQL
-introspection will be added in S-004 / S-005.
+``DatabaseSchema``. Supports SQLite and PostgreSQL; MySQL introspection
+will be added in S-005.
 """
 
 from __future__ import annotations
@@ -113,10 +113,10 @@ def _extract_pg_enums(inspector: Inspector) -> dict[str, list[str]]:
     Returns a mapping of enum name to sorted label values, e.g.
     ``{"status_enum": ["active", "inactive"]}``.
     """
-    try:
-        raw_enums: list[dict[str, Any]] = inspector.get_enums()  # type: ignore[attr-defined]
-    except AttributeError:
+    get_enums = getattr(inspector, "get_enums", None)
+    if get_enums is None:
         return {}
+    raw_enums: list[dict[str, Any]] = get_enums()
     return {enum["name"]: sorted(enum.get("labels", [])) for enum in raw_enums}
 
 

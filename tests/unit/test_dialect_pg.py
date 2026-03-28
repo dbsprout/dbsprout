@@ -56,6 +56,16 @@ class TestPgTypesAlreadyHandled:
         assert col_type is ColumnType.UUID
         assert meta == {}
 
+    def test_double_precision(self) -> None:
+        col_type, meta = normalize_type(pg.DOUBLE_PRECISION(), "postgresql", "double precision")
+        assert col_type is ColumnType.FLOAT
+        assert meta == {}
+
+    def test_pg_real(self) -> None:
+        col_type, meta = normalize_type(pg.REAL(), "postgresql", "real")
+        assert col_type is ColumnType.FLOAT
+        assert meta == {}
+
 
 class TestPgTypesNewEntries:
     """Types that need new entries in _SIMPLE_TYPE_MAP."""
@@ -108,6 +118,16 @@ class TestPgOnlyTypes:
     def test_tsquery(self) -> None:
         col_type, meta = normalize_type(pg.TSQUERY(), "postgresql", "tsquery")
         assert col_type is ColumnType.TEXT
+        assert meta == {}
+
+    def test_macaddr(self) -> None:
+        col_type, meta = normalize_type(pg.MACADDR(), "postgresql", "macaddr")
+        assert col_type is ColumnType.VARCHAR
+        assert meta == {}
+
+    def test_macaddr8(self) -> None:
+        col_type, meta = normalize_type(pg.MACADDR8(), "postgresql", "macaddr8")
+        assert col_type is ColumnType.VARCHAR
         assert meta == {}
 
     def test_pg_types_not_matched_on_other_dialect(self) -> None:
