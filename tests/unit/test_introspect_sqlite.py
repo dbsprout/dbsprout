@@ -14,6 +14,7 @@ import sqlalchemy as sa
 from dbsprout.schema import introspect as introspect_fn
 from dbsprout.schema import normalize_type as normalize_type_fn
 from dbsprout.schema.introspect import (
+    _CONNECT_TIMEOUT,
     _collect_unique_columns,
     _detect_autoincrement,
     _extract_check_enum,
@@ -550,10 +551,14 @@ class TestValidateUrl:
     def test_postgresql_allowed(self) -> None:
         _validate_url("postgresql://user:pass@localhost/db")
 
-    def test_mysql_rejected_until_s005(self) -> None:
-        with pytest.raises(ValueError, match="Unsupported dialect"):
-            _validate_url("mysql://user:pass@localhost/db")
+    def test_mysql_allowed(self) -> None:
+        _validate_url("mysql://user:pass@localhost/db")
 
     def test_unsupported_dialect_rejected(self) -> None:
         with pytest.raises(ValueError, match="Unsupported dialect"):
             _validate_url("mssql://user:pass@localhost/db")
+
+
+class TestConnectionTimeout:
+    def test_connect_timeout_set_for_pg(self) -> None:
+        assert _CONNECT_TIMEOUT == 10

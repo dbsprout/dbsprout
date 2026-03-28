@@ -45,6 +45,25 @@ _PG_TYPE_MAP: dict[str, ColumnType] = {
     "INTERVAL": ColumnType.VARCHAR,
     "TSVECTOR": ColumnType.TEXT,
     "TSQUERY": ColumnType.TEXT,
+    "HSTORE": ColumnType.JSON,
+}
+
+# MySQL types that do NOT inherit from the expected generic SA type.
+_MYSQL_TYPE_MAP: dict[str, ColumnType] = {
+    "MEDIUMTEXT": ColumnType.TEXT,
+    "LONGTEXT": ColumnType.TEXT,
+    "TINYTEXT": ColumnType.TEXT,
+    "TINYBLOB": ColumnType.BINARY,
+    "MEDIUMBLOB": ColumnType.BINARY,
+    "LONGBLOB": ColumnType.BINARY,
+    "YEAR": ColumnType.INTEGER,
+    "BIT": ColumnType.INTEGER,
+}
+
+# Registry of dialect-specific type maps.
+_DIALECT_TYPE_MAPS: dict[str, dict[str, ColumnType]] = {
+    "postgresql": _PG_TYPE_MAP,
+    "mysql": _MYSQL_TYPE_MAP,
 }
 
 
@@ -79,10 +98,10 @@ def normalize_type(
     if isinstance(sa_type, sa_types.Enum):
         return ColumnType.ENUM, {"enum_values": sorted(sa_type.enums)}
 
-    # Simple 1:1 type mappings + dialect-specific PG types (no metadata)
-    simple = _match_simple_type(sa_type, dialect)
-    if simple is not None:
-        return simple, {}
+    # Dialect-specific special cases + simple 1:1 type mappings
+    dispatch = _dispatch_type(sa_type, dialect)
+    if dispatch is not None:
+        return dispatch
 
     # Numeric/DECIMAL family (Float already handled above in dispatch table)
     if isinstance(sa_type, (sa_types.DECIMAL, sa_types.Numeric)):
@@ -99,15 +118,54 @@ def normalize_type(
     return ColumnType.UNKNOWN, {}
 
 
+def _dispatch_type(
+    sa_type: sa_types.TypeEngine[Any],
+    dialect: str,
+) -> tuple[ColumnType, dict[str, Any]] | None:
+    """Try dialect-specific special cases, then simple type map dispatch."""
+    special = _normalize_dialect_special(sa_type, dialect)
+    if special is not None:
+        return special
+    simple = _match_simple_type(sa_type, dialect)
+    if simple is not None:
+        return simple, {}
+    return None
+
+
+def _normalize_dialect_special(
+    sa_type: sa_types.TypeEngine[Any],
+    dialect: str,
+) -> tuple[ColumnType, dict[str, Any]] | None:
+    """Handle dialect-specific types that need metadata extraction.
+
+    Returns None if no match — falls through to generic dispatch.
+    """
+    if dialect != "mysql":
+        return None
+    type_name = type(sa_type).__name__
+    # MySQL TINYINT: display_width=1 → BOOLEAN, else → SMALLINT
+    if type_name == "TINYINT":
+        if getattr(sa_type, "display_width", None) == 1:
+            return ColumnType.BOOLEAN, {}
+        return ColumnType.SMALLINT, {}
+    # MySQL SET: extract member values
+    if type_name == "SET":
+        values = getattr(sa_type, "values", None)
+        meta: dict[str, Any] = {"enum_values": sorted(values)} if values else {}
+        return ColumnType.VARCHAR, meta
+    return None
+
+
 def _match_simple_type(
     sa_type: sa_types.TypeEngine[Any],
     dialect: str,
 ) -> ColumnType | None:
-    """Check PG-specific types, then generic SA type dispatch. Returns None if no match."""
-    if dialect == "postgresql":
-        pg_match = _PG_TYPE_MAP.get(type(sa_type).__name__)
-        if pg_match is not None:
-            return pg_match
+    """Check dialect-specific types, then generic SA type dispatch. Returns None if no match."""
+    dialect_map = _DIALECT_TYPE_MAPS.get(dialect)
+    if dialect_map is not None:
+        match = dialect_map.get(type(sa_type).__name__)
+        if match is not None:
+            return match
     for sa_cls, col_type in _SIMPLE_TYPE_MAP:
         if isinstance(sa_type, sa_cls):
             return col_type

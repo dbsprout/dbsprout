@@ -135,6 +135,7 @@ class TestPgDeferrableFk:
         fks = _build_foreign_keys(raw_fks)  # type: ignore[arg-type]
         assert len(fks) == 1
         assert fks[0].deferrable is True
+        assert fks[0].initially == "DEFERRED"
 
     def test_non_deferrable_fk(self) -> None:
         raw_fks: list[Any] = [
