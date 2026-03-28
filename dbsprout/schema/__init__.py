@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dbsprout.schema.graph import FKGraph
 from dbsprout.schema.models import (
     ColumnSchema,
     ColumnType,
@@ -15,6 +16,7 @@ __all__ = [
     "ColumnSchema",
     "ColumnType",
     "DatabaseSchema",
+    "FKGraph",
     "ForeignKeySchema",
     "IndexSchema",
     "TableSchema",
