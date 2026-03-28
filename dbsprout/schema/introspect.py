@@ -1,8 +1,7 @@
 """Database introspection via SQLAlchemy Inspector.
 
 Connects to a live database, reads its schema, and returns a unified
-``DatabaseSchema``. Supports SQLite and PostgreSQL; MySQL introspection
-will be added in S-005.
+``DatabaseSchema``. Supports SQLite, PostgreSQL, and MySQL.
 """
 
 from __future__ import annotations
@@ -34,7 +33,7 @@ from dbsprout.schema.models import (
     TableSchema,
 )
 
-_SUPPORTED_DIALECTS = frozenset({"sqlite", "postgresql"})
+_SUPPORTED_DIALECTS = frozenset({"sqlite", "postgresql", "mysql"})
 
 
 def introspect(url: str) -> DatabaseSchema:
@@ -57,6 +56,7 @@ def introspect(url: str) -> DatabaseSchema:
         If the URL uses an unsupported database dialect.
     """
     _validate_url(url)
+    safe_url = sa.engine.make_url(url).render_as_string(hide_password=True)
     engine = _create_engine(url)
     try:
         inspector = inspect(engine)
@@ -69,6 +69,9 @@ def introspect(url: str) -> DatabaseSchema:
             dialect=dialect_name,
             source="introspect",
         )
+    except sa.exc.SQLAlchemyError as err:
+        msg = f"Introspection failed for {safe_url}: {type(err).__name__}"
+        raise type(err)(msg) from None
     finally:
         engine.dispose()
 
@@ -86,9 +89,25 @@ def _validate_url(url: str) -> None:
         raise ValueError(msg)
 
 
+_CONNECT_TIMEOUT = 10
+
+
 def _create_engine(url: str) -> Engine:
-    """Create a SQLAlchemy engine with dialect-specific setup."""
-    engine = sa.create_engine(url)
+    """Create a SQLAlchemy engine with dialect-specific setup.
+
+    Applies connection timeouts for network databases (PG, MySQL) and
+    sanitizes credentials in error messages.
+    """
+    parsed = sa.engine.make_url(url)
+    connect_args: dict[str, Any] = {}
+    if parsed.get_backend_name() in ("postgresql", "mysql"):
+        connect_args["connect_timeout"] = _CONNECT_TIMEOUT
+    try:
+        engine = sa.create_engine(url, connect_args=connect_args)
+    except sa.exc.SQLAlchemyError as err:
+        safe_url = parsed.render_as_string(hide_password=True)
+        msg = f"Failed to create engine for {safe_url}: {type(err).__name__}"
+        raise sa.exc.SQLAlchemyError(msg) from None
     if engine.dialect.name == "sqlite":
         _register_sqlite_pragma(engine)
     return engine
@@ -400,6 +419,7 @@ def _build_foreign_keys(raw_fks: list[ReflectedForeignKeyConstraint]) -> list[Fo
             on_delete=fk.get("options", {}).get("ondelete"),
             on_update=fk.get("options", {}).get("onupdate"),
             deferrable=bool(fk.get("options", {}).get("deferrable", False)),
+            initially=fk.get("options", {}).get("initially"),
         )
         for fk in raw_fks
     ]

@@ -71,6 +71,7 @@ class ForeignKeySchema(BaseModel):
     on_delete: str | None = None
     on_update: str | None = None
     deferrable: bool = False
+    initially: str | None = None
 
 
 class IndexSchema(BaseModel):
@@ -188,6 +189,7 @@ class DatabaseSchema(BaseModel):
                     "on_delete": fk.on_delete,
                     "on_update": fk.on_update,
                     "deferrable": fk.deferrable,
+                    "initially": fk.initially,
                 }
                 for fk in t.foreign_keys
             ],

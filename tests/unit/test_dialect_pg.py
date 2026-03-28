@@ -130,6 +130,17 @@ class TestPgOnlyTypes:
         assert col_type is ColumnType.VARCHAR
         assert meta == {}
 
+    def test_hstore(self) -> None:
+        col_type, meta = normalize_type(pg.HSTORE(), "postgresql", "hstore")
+        assert col_type is ColumnType.JSON
+        assert meta == {}
+
+    def test_citext(self) -> None:
+        """CITEXT inherits from sa_types.Text — already handled by generic dispatch."""
+        col_type, meta = normalize_type(pg.CITEXT(), "postgresql", "citext")
+        assert col_type is ColumnType.TEXT
+        assert meta == {}
+
     def test_pg_types_not_matched_on_other_dialect(self) -> None:
         """PG-only types should fall through to UNKNOWN on non-PG dialects."""
         col_type, _meta = normalize_type(pg.INET(), "sqlite", "inet")
