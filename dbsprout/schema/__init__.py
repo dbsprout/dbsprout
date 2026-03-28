@@ -1,7 +1,9 @@
-"""Schema input stage — unified database schema models."""
+"""Schema input stage — unified database schema models and introspection."""
 
 from __future__ import annotations
 
+from dbsprout.schema.dialect import normalize_type
+from dbsprout.schema.introspect import introspect
 from dbsprout.schema.models import (
     ColumnSchema,
     ColumnType,
@@ -18,4 +20,6 @@ __all__ = [
     "ForeignKeySchema",
     "IndexSchema",
     "TableSchema",
+    "introspect",
+    "normalize_type",
 ]
