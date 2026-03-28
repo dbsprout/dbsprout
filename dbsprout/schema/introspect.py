@@ -32,6 +32,8 @@ from dbsprout.schema.models import (
     TableSchema,
 )
 
+_SUPPORTED_DIALECTS = frozenset({"sqlite", "postgresql", "mysql"})
+
 
 def introspect(url: str) -> DatabaseSchema:
     """Introspect a database and return a ``DatabaseSchema``.
@@ -46,7 +48,13 @@ def introspect(url: str) -> DatabaseSchema:
     -------
     DatabaseSchema
         The complete, immutable schema representation.
+
+    Raises
+    ------
+    ValueError
+        If the URL uses an unsupported database dialect.
     """
+    _validate_url(url)
     engine = _create_engine(url)
     try:
         inspector = inspect(engine)
@@ -62,6 +70,16 @@ def introspect(url: str) -> DatabaseSchema:
 
 
 # ── Private helpers ──────────────────────────────────────────────────────
+
+
+def _validate_url(url: str) -> None:
+    """Reject URLs with unsupported or dangerous dialects."""
+    dialect = sa.engine.make_url(url).get_backend_name()
+    if dialect not in _SUPPORTED_DIALECTS:
+        msg = (
+            f"Unsupported dialect {dialect!r}. Supported: {', '.join(sorted(_SUPPORTED_DIALECTS))}"
+        )
+        raise ValueError(msg)
 
 
 def _create_engine(url: str) -> Engine:
@@ -297,9 +315,12 @@ def _sqlite_autoindex_unique_columns(
     return unique_cols
 
 
+_SAFE_IDENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_. ]*$")
+
+
 def _is_safe_identifier(name: str) -> bool:
-    """Reject identifiers containing characters that could break SQL quoting."""
-    return '"' not in name and ";" not in name and "\x00" not in name
+    """Allow only identifiers matching a safe allowlist pattern."""
+    return bool(_SAFE_IDENT_RE.match(name)) and len(name) <= 128
 
 
 def _apply_unique_flags(

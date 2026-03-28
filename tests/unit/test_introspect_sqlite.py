@@ -19,6 +19,7 @@ from dbsprout.schema.introspect import (
     _extract_check_enum,
     _get_raw_type,
     _is_safe_identifier,
+    _validate_url,
     introspect,
 )
 from dbsprout.schema.models import ColumnType, DatabaseSchema
@@ -510,10 +511,13 @@ class TestSchemaReExports:
 
 
 class TestSafeIdentifier:
-    """Cover the _is_safe_identifier helper."""
+    """Cover the _is_safe_identifier allowlist."""
 
     def test_normal_identifier(self) -> None:
         assert _is_safe_identifier("users") is True
+
+    def test_autoindex_name(self) -> None:
+        assert _is_safe_identifier("sqlite_autoindex_users_1") is True
 
     def test_identifier_with_double_quote(self) -> None:
         assert _is_safe_identifier('table"; DROP') is False
@@ -523,3 +527,32 @@ class TestSafeIdentifier:
 
     def test_identifier_with_null_byte(self) -> None:
         assert _is_safe_identifier("table\x00") is False
+
+    def test_empty_string(self) -> None:
+        assert _is_safe_identifier("") is False
+
+    def test_starts_with_digit(self) -> None:
+        assert _is_safe_identifier("1table") is False
+
+    def test_too_long(self) -> None:
+        assert _is_safe_identifier("a" * 129) is False
+
+    def test_max_length_ok(self) -> None:
+        assert _is_safe_identifier("a" * 128) is True
+
+
+class TestValidateUrl:
+    """Cover URL validation for supported dialects."""
+
+    def test_sqlite_allowed(self) -> None:
+        _validate_url("sqlite:///test.db")
+
+    def test_postgresql_allowed(self) -> None:
+        _validate_url("postgresql://user:pass@localhost/db")
+
+    def test_mysql_allowed(self) -> None:
+        _validate_url("mysql://user:pass@localhost/db")
+
+    def test_unsupported_dialect_rejected(self) -> None:
+        with pytest.raises(ValueError, match="Unsupported dialect"):
+            _validate_url("mssql://user:pass@localhost/db")
