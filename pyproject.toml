@@ -77,6 +77,7 @@ web = [
 tui = [
     "textual>=1.0",
 ]
+# Excludes train-cuda/train-mlx (platform-specific) and cloud (subset of llm)
 all = [
     "dbsprout[db,gen,llm,stats,web,tui]",
 ]

@@ -6,6 +6,9 @@ on:
   pull_request:
     branches: [dev]
 
+permissions:
+  contents: read
+
 jobs:
   lint:
     name: Lint & Type Check
@@ -60,4 +63,4 @@ jobs:
         run: uv sync --extra dev
 
       - name: Run tests with coverage
-        run: uv run pytest --cov=dbsprout --cov-report=term-missing
+        run: uv run pytest --cov=dbsprout --cov-report=term-missing --cov-fail-under=95

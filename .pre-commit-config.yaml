@@ -16,7 +16,6 @@ repos:
         language: system
         pass_filenames: false
         always_run: true
-        types: [python]
 
   # ── Bandit (security — pre-push only) ─────────────────────────────
   - repo: https://github.com/PyCQA/bandit
