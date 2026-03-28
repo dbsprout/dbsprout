@@ -24,6 +24,10 @@ class FKGraph(BaseModel):
     Use the ``from_schema`` classmethod to construct from a
     ``DatabaseSchema``.  Raises ``graphlib.CycleError`` if the FK
     relationships contain cycles (S-007 handles cycle resolution).
+
+    Table names within each batch of ``insertion_order`` are sorted
+    alphabetically for deterministic, reproducible output regardless
+    of input schema ordering.  The ``tables`` field is also sorted.
     """
 
     model_config = ConfigDict(frozen=True)
