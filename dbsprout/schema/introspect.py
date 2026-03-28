@@ -56,6 +56,7 @@ def introspect(url: str) -> DatabaseSchema:
         If the URL uses an unsupported database dialect.
     """
     _validate_url(url)
+    safe_url = sa.engine.make_url(url).render_as_string(hide_password=True)
     engine = _create_engine(url)
     try:
         inspector = inspect(engine)
@@ -68,6 +69,9 @@ def introspect(url: str) -> DatabaseSchema:
             dialect=dialect_name,
             source="introspect",
         )
+    except sa.exc.SQLAlchemyError as err:
+        msg = f"Introspection failed for {safe_url}: {type(err).__name__}"
+        raise type(err)(msg) from None
     finally:
         engine.dispose()
 

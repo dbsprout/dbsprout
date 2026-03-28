@@ -573,6 +573,15 @@ class TestConnectionTimeout:
             _, kwargs = mock_create.call_args
             assert kwargs["connect_args"]["connect_timeout"] == 10
 
+    def test_mysql_url_gets_connect_timeout(self) -> None:
+        with patch("dbsprout.schema.introspect.sa.create_engine") as mock_create:
+            mock_engine = MagicMock()
+            mock_engine.dialect.name = "mysql"
+            mock_create.return_value = mock_engine
+            _create_engine("mysql+pymysql://user:pass@localhost/db")
+            _, kwargs = mock_create.call_args
+            assert kwargs["connect_args"]["connect_timeout"] == 10
+
     def test_sqlite_url_no_connect_timeout(self) -> None:
         with (
             patch("dbsprout.schema.introspect.sa.create_engine") as mock_create,
