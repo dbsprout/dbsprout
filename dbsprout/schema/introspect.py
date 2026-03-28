@@ -34,7 +34,7 @@ from dbsprout.schema.models import (
     TableSchema,
 )
 
-_SUPPORTED_DIALECTS = frozenset({"sqlite", "postgresql", "mysql"})
+_SUPPORTED_DIALECTS = frozenset({"sqlite", "postgresql"})
 
 
 def introspect(url: str) -> DatabaseSchema:
