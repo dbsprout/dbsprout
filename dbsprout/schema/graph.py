@@ -241,7 +241,8 @@ def detect_cycles(schema: DatabaseSchema) -> tuple[CycleInfo, ...]:
 
         for table_name in sorted(scc):
             table_obj = schema.get_table(table_name)
-            assert table_obj is not None  # SCC tables always exist in schema
+            if table_obj is None:  # pragma: no cover — SCC tables always exist in schema
+                continue
             for fk in data.edges_by_table.get(table_name, ()):
                 if fk.ref_table in scc:
                     edge = CycleEdge(source_table=table_name, foreign_key=fk)
@@ -249,8 +250,8 @@ def detect_cycles(schema: DatabaseSchema) -> tuple[CycleInfo, ...]:
                     if _is_nullable_fk(fk, table_obj):
                         candidates.append(edge)
 
-        def _edge_sort_key(e: CycleEdge) -> tuple[str, str, list[str]]:
-            return (e.source_table, e.foreign_key.ref_table, e.foreign_key.columns)
+        def _edge_sort_key(e: CycleEdge) -> tuple[str, str, tuple[str, ...]]:
+            return (e.source_table, e.foreign_key.ref_table, tuple(e.foreign_key.columns))
 
         edges.sort(key=_edge_sort_key)
         candidates.sort(key=_edge_sort_key)
@@ -362,8 +363,12 @@ def resolve_cycles(schema: DatabaseSchema) -> ResolvedGraph:
             # Re-detect cycles from modified deps for next iteration
             cycles = _detect_cycles_from_deps(modified_deps, data, table_lookup)
     else:
-        msg = "Could not resolve all cycles within iteration limit"
-        raise RuntimeError(msg)
+        # Re-detect to get the remaining cycle info for the error
+        remaining_cycles = _detect_cycles_from_deps(modified_deps, data, table_lookup)
+        if remaining_cycles:
+            raise UnresolvableCycleError(remaining_cycles[0])
+        msg = "Could not resolve all cycles within iteration limit"  # pragma: no cover
+        raise RuntimeError(msg)  # pragma: no cover
 
     # Build final graph from modified deps
     final_deps = {k: frozenset(v) for k, v in modified_deps.items()}
