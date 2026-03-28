@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sys
 from typing import TYPE_CHECKING, Any
 from unittest.mock import MagicMock, patch
 
@@ -565,7 +566,7 @@ class TestConnectionTimeout:
         assert _CONNECT_TIMEOUT == 10
 
     def test_pg_url_gets_connect_timeout(self) -> None:
-        with patch("dbsprout.schema.introspect.sa.create_engine") as mock_create:
+        with patch("sqlalchemy.create_engine") as mock_create:
             mock_engine = MagicMock()
             mock_engine.dialect.name = "postgresql"
             mock_create.return_value = mock_engine
@@ -574,7 +575,7 @@ class TestConnectionTimeout:
             assert kwargs["connect_args"]["connect_timeout"] == 10
 
     def test_mysql_url_gets_connect_timeout(self) -> None:
-        with patch("dbsprout.schema.introspect.sa.create_engine") as mock_create:
+        with patch("sqlalchemy.create_engine") as mock_create:
             mock_engine = MagicMock()
             mock_engine.dialect.name = "mysql"
             mock_create.return_value = mock_engine
@@ -583,10 +584,8 @@ class TestConnectionTimeout:
             assert kwargs["connect_args"]["connect_timeout"] == 10
 
     def test_sqlite_url_no_connect_timeout(self) -> None:
-        with (
-            patch("dbsprout.schema.introspect.sa.create_engine") as mock_create,
-            patch("dbsprout.schema.introspect.event"),
-        ):
+        _mod = sys.modules["dbsprout.schema.introspect"]
+        with patch("sqlalchemy.create_engine") as mock_create, patch.object(_mod, "event"):
             mock_engine = MagicMock()
             mock_engine.dialect.name = "sqlite"
             mock_create.return_value = mock_engine
@@ -598,7 +597,7 @@ class TestConnectionTimeout:
 class TestCredentialSanitization:
     def test_password_not_in_error_message(self) -> None:
         with patch(
-            "dbsprout.schema.introspect.sa.create_engine",
+            "sqlalchemy.create_engine",
             side_effect=sa.exc.SQLAlchemyError("connection refused"),
         ):
             with pytest.raises(sa.exc.SQLAlchemyError, match="Failed to create engine") as exc_info:
