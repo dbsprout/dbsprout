@@ -33,6 +33,13 @@ htmlcov/
 *.swp
 *.swo
 
+# Secrets & credentials
+.env
+.env.*
+.envrc
+*.pem
+*.key
+
 # OS
 .DS_Store
 Thumbs.db
