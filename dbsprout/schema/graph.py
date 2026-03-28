@@ -312,7 +312,7 @@ def resolve_cycles(schema: DatabaseSchema) -> ResolvedGraph:
     deferred: list[DeferredFK] = []
     modified_deps = dict(data.deps)  # mutable copy
     # Track deferred FK objects by identity (source_table, columns, ref_table)
-    deferred_fk_ids: set[tuple[str, str, str]] = set()
+    deferred_fk_ids: set[tuple[str, tuple[str, ...], str]] = set()
 
     # First round: use full detect_cycles (returns CycleInfo with candidates)
     cycles = detect_cycles(schema)
@@ -349,8 +349,7 @@ def resolve_cycles(schema: DatabaseSchema) -> ResolvedGraph:
             ref = best.foreign_key.ref_table
             all_fks_to_ref = [fk for fk in data.edges_by_table.get(src, ()) if fk.ref_table == ref]
             all_deferred = all(
-                (src, ",".join(fk.columns), fk.ref_table) in deferred_fk_ids
-                for fk in all_fks_to_ref
+                (src, tuple(fk.columns), fk.ref_table) in deferred_fk_ids for fk in all_fks_to_ref
             )
             if all_deferred:
                 modified_deps[src] = modified_deps[src] - {ref}
@@ -444,9 +443,9 @@ def _detect_cycles_from_deps(
     return tuple(result)
 
 
-def _fk_id(edge: CycleEdge) -> tuple[str, str, str]:
-    """Unique identifier for a CycleEdge: (source_table, columns_key, ref_table)."""
-    return (edge.source_table, ",".join(edge.foreign_key.columns), edge.foreign_key.ref_table)
+def _fk_id(edge: CycleEdge) -> tuple[str, tuple[str, ...], str]:
+    """Unique identifier for a CycleEdge: (source_table, columns, ref_table)."""
+    return (edge.source_table, tuple(edge.foreign_key.columns), edge.foreign_key.ref_table)
 
 
 def _pick_best_break(cycle_info: CycleInfo) -> CycleEdge:
@@ -462,11 +461,12 @@ def _pick_best_break(cycle_info: CycleInfo) -> CycleEdge:
     for edge in cycle_info.edges:
         outgoing_counts[edge.source_table] = outgoing_counts.get(edge.source_table, 0) + 1
 
-    def sort_key(e: CycleEdge) -> tuple[int, int, str, str]:
+    def sort_key(e: CycleEdge) -> tuple[int, int, str, str, tuple[str, ...]]:
         # Lower = better: deferrable first (0), then most outgoing (negative), then alpha
         is_deferrable = 0 if e.foreign_key.deferrable else 1
         outgoing = -outgoing_counts.get(e.source_table, 0)
-        return (is_deferrable, outgoing, e.source_table, e.foreign_key.ref_table)
+        cols = tuple(e.foreign_key.columns)
+        return (is_deferrable, outgoing, e.source_table, e.foreign_key.ref_table, cols)
 
     return min(candidates, key=sort_key)
 
