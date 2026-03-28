@@ -7,60 +7,10 @@ from pydantic import ValidationError
 
 from dbsprout.schema.graph import detect_cycles
 from dbsprout.schema.models import (
-    ColumnSchema,
-    ColumnType,
-    DatabaseSchema,
     ForeignKeySchema,
     TableSchema,
 )
-
-
-def _col(name: str, *, nullable: bool = True) -> ColumnSchema:
-    return ColumnSchema(name=name, data_type=ColumnType.INTEGER, nullable=nullable)
-
-
-def _table(
-    name: str,
-    fks: list[tuple[str, str, bool]] | None = None,
-    self_ref: str | None = None,
-) -> TableSchema:
-    """Build a table with optional FKs.
-
-    fks: list of (column, ref_table, nullable) tuples.
-    self_ref: column name for self-referencing FK.
-    """
-    columns = [_col("id", nullable=False)]
-    foreign_keys: list[ForeignKeySchema] = []
-    if fks:
-        for col_name, ref_table, nullable in fks:
-            columns.append(_col(col_name, nullable=nullable))
-            foreign_keys.append(
-                ForeignKeySchema(
-                    columns=[col_name],
-                    ref_table=ref_table,
-                    ref_columns=["id"],
-                )
-            )
-    if self_ref:
-        columns.append(_col(self_ref))
-        foreign_keys.append(
-            ForeignKeySchema(
-                columns=[self_ref],
-                ref_table=name,
-                ref_columns=["id"],
-            )
-        )
-    return TableSchema(
-        name=name,
-        columns=columns,
-        primary_key=["id"],
-        foreign_keys=foreign_keys,
-    )
-
-
-def _schema(*tables: TableSchema) -> DatabaseSchema:
-    return DatabaseSchema(tables=list(tables))
-
+from tests.unit.conftest import _col, _schema, _table
 
 # ── Acyclic ──────────────────────────────────────────────────────────────
 
