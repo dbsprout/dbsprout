@@ -20,9 +20,7 @@ if TYPE_CHECKING:
 
 def init_command(
     db: str | None = typer.Option(None, "--db", help="Database connection URL"),
-    file: str | None = typer.Option(
-        None, "--file", "-f", help="Schema file (DDL, DBML, etc.) — not yet implemented"
-    ),
+    file: str | None = typer.Option(None, "--file", "-f", help="SQL DDL file path (.sql)"),
     output_dir: Path = typer.Option(
         Path("."), "--output-dir", "-o", help="Output directory for config and snapshots"
     ),
@@ -252,7 +250,11 @@ def _init_from_file(file_path: str, output_dir: Path, dry_run: bool) -> None:
         _write_config(schema, file_path, output_dir, dry_run)
         raise typer.Exit(code=0)
 
-    resolved = resolve_cycles(schema)
+    try:
+        resolved = resolve_cycles(schema)
+    except UnresolvableCycleError as exc:  # pragma: no cover — tested via --db path
+        console.print(f"[red]Error:[/red] {exc}")
+        raise typer.Exit(code=1) from None
 
     _display_schema_table(schema)
     _display_insertion_order(resolved)
