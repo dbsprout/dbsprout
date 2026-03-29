@@ -20,9 +20,7 @@ if TYPE_CHECKING:
 
 def init_command(
     db: str | None = typer.Option(None, "--db", help="Database connection URL"),
-    file: str | None = typer.Option(
-        None, "--file", "-f", help="Schema file (DDL, DBML, etc.) — not yet implemented"
-    ),
+    file: str | None = typer.Option(None, "--file", "-f", help="SQL DDL file path (.sql)"),
     output_dir: Path = typer.Option(
         Path("."), "--output-dir", "-o", help="Output directory for config and snapshots"
     ),
@@ -30,16 +28,15 @@ def init_command(
 ) -> None:
     """Introspect a database schema and generate configuration."""
     # ── Validate arguments ───────────────────────────────────────────────
-    if file is not None:
-        console.print(
-            "[red]Error:[/red] --file support requires DDL parsing (S-010). Use --db for now."
-        )
+    if file is not None and db is not None:
+        console.print("[red]Error:[/red] Provide --db or --file, not both.")
         raise typer.Exit(code=1)
 
+    if file is not None:
+        return _init_from_file(file, output_dir, dry_run)
+
     if db is None:
-        console.print(
-            "[red]Error:[/red] Provide --db <connection_string> to introspect a database."
-        )
+        console.print("[red]Error:[/red] Provide --db <connection_string> or --file <path.sql>.")
         raise typer.Exit(code=1)
 
     # ── Sanitize URL for display/storage ────────────────────────────────
@@ -78,6 +75,7 @@ def init_command(
     _write_snapshot(schema, output_dir, dry_run)
 
     console.print("\n[green bold]Done![/green bold] Run `dbsprout generate` to create seed data.")
+    return None
 
 
 # ── Display helpers ──────────────────────────────────────────────────────
@@ -220,3 +218,50 @@ def _write_snapshot(
     except OSError as exc:
         console.print(f"[red]Error writing snapshot:[/red] {exc}")
         raise typer.Exit(code=1) from None
+
+
+# ── File-based init ──────────────────────────────────────────────────────
+
+
+def _init_from_file(file_path: str, output_dir: Path, dry_run: bool) -> None:
+    """Initialize from a DDL file instead of a live database."""
+    from dbsprout.schema.parsers.ddl import parse_ddl  # noqa: PLC0415
+
+    max_ddl_bytes = 10 * 1024 * 1024  # 10 MB
+
+    path = Path(file_path)
+    if not path.exists():
+        console.print(f"[red]Error:[/red] File not found: {file_path}")
+        raise typer.Exit(code=1)
+
+    if path.stat().st_size > max_ddl_bytes:  # pragma: no cover — requires >10MB file
+        console.print(f"[red]Error:[/red] File too large (>10 MB): {file_path}")
+        raise typer.Exit(code=1)
+
+    try:
+        sql_text = path.read_text(encoding="utf-8")
+        schema = parse_ddl(sql_text, source_file=file_path)
+    except (ValueError, OSError) as exc:
+        console.print(f"[red]Error:[/red] {exc}")
+        raise typer.Exit(code=1) from None
+
+    if not schema.tables:
+        console.print("[yellow]Warning:[/yellow] No tables found in DDL file.")
+        _write_config(schema, file_path, output_dir, dry_run)
+        raise typer.Exit(code=0)
+
+    try:
+        resolved = resolve_cycles(schema)
+    except UnresolvableCycleError as exc:  # pragma: no cover — tested via --db path
+        console.print(f"[red]Error:[/red] {exc}")
+        raise typer.Exit(code=1) from None
+
+    _display_schema_table(schema)
+    _display_insertion_order(resolved)
+    _display_cycle_warnings(resolved)
+    _display_self_refs(resolved)
+
+    _write_config(schema, file_path, output_dir, dry_run)
+    _write_snapshot(schema, output_dir, dry_run)
+
+    console.print("\n[green bold]Done![/green bold] Run `dbsprout generate` to create seed data.")
