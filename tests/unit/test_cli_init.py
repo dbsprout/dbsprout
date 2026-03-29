@@ -13,7 +13,13 @@ if TYPE_CHECKING:
 from typer.testing import CliRunner
 
 from dbsprout.cli.app import app
-from dbsprout.schema.graph import FKGraph, ResolvedGraph
+from dbsprout.schema.graph import (
+    CycleInfo,
+    DeferredFK,
+    FKGraph,
+    ResolvedGraph,
+    UnresolvableCycleError,
+)
 from dbsprout.schema.models import (
     ColumnSchema,
     ColumnType,
@@ -199,3 +205,93 @@ class TestInitErrors:
         snapshot_dir = tmp_path / ".dbsprout" / "snapshots"
         snapshots = list(snapshot_dir.glob("*.json")) if snapshot_dir.exists() else []
         assert len(snapshots) == 0
+
+    @patch("dbsprout.cli.commands.init.resolve_cycles")
+    @patch("dbsprout.cli.commands.init.introspect")
+    def test_unresolvable_cycle(self, mock_introspect: MagicMock, mock_resolve: MagicMock) -> None:
+        mock_introspect.return_value = _simple_schema()
+        mock_resolve.side_effect = UnresolvableCycleError(CycleInfo(tables=frozenset({"a", "b"})))
+        result = runner.invoke(app, ["init", "--db", "sqlite:///test.db"])
+        assert result.exit_code == 1
+        assert "nullable" in result.output.lower()
+
+
+# ── Cycle + self-ref display ─────────────────────────────────────────────
+
+
+class TestInitCycleDisplay:
+    @patch("dbsprout.cli.commands.init.resolve_cycles")
+    @patch("dbsprout.cli.commands.init.introspect")
+    def test_deferred_fk_display(
+        self, mock_introspect: MagicMock, mock_resolve: MagicMock, tmp_path: Path
+    ) -> None:
+        schema = _simple_schema()
+        mock_introspect.return_value = schema
+        graph = FKGraph.from_schema(schema)
+        mock_resolve.return_value = ResolvedGraph(
+            graph=graph,
+            deferred_fks=(
+                DeferredFK(
+                    source_table="orders",
+                    foreign_key=ForeignKeySchema(
+                        columns=["user_id"], ref_table="users", ref_columns=["id"]
+                    ),
+                ),
+            ),
+        )
+        result = runner.invoke(
+            app, ["init", "--db", "sqlite:///test.db", "--output-dir", str(tmp_path)]
+        )
+        assert result.exit_code == 0
+        assert "deferred" in result.output.lower()
+
+    @patch("dbsprout.cli.commands.init.resolve_cycles")
+    @patch("dbsprout.cli.commands.init.introspect")
+    def test_self_ref_display(
+        self, mock_introspect: MagicMock, mock_resolve: MagicMock, tmp_path: Path
+    ) -> None:
+        schema = DatabaseSchema(
+            tables=[
+                TableSchema(
+                    name="employees",
+                    columns=[
+                        ColumnSchema(name="id", data_type=ColumnType.INTEGER, nullable=False),
+                        ColumnSchema(name="manager_id", data_type=ColumnType.INTEGER),
+                    ],
+                    primary_key=["id"],
+                    foreign_keys=[
+                        ForeignKeySchema(
+                            columns=["manager_id"], ref_table="employees", ref_columns=["id"]
+                        )
+                    ],
+                )
+            ],
+            dialect="sqlite",
+        )
+        mock_introspect.return_value = schema
+        graph = FKGraph.from_schema(schema)
+        mock_resolve.return_value = ResolvedGraph(graph=graph)
+        result = runner.invoke(
+            app, ["init", "--db", "sqlite:///test.db", "--output-dir", str(tmp_path)]
+        )
+        assert result.exit_code == 0
+        assert "self-referencing" in result.output.lower() or "employees" in result.output
+
+
+# ── TOML content ─────────────────────────────────────────────────────────
+
+
+class TestInitTomlContent:
+    @patch("dbsprout.cli.commands.init.resolve_cycles")
+    @patch("dbsprout.cli.commands.init.introspect")
+    def test_toml_has_snapshot_path(
+        self, mock_introspect: MagicMock, mock_resolve: MagicMock, tmp_path: Path
+    ) -> None:
+        schema = _simple_schema()
+        mock_introspect.return_value = schema
+        mock_resolve.return_value = _mock_resolved(schema)
+
+        runner.invoke(app, ["init", "--db", "sqlite:///test.db", "--output-dir", str(tmp_path)])
+        content = (tmp_path / "dbsprout.toml").read_text()
+        assert "snapshot" in content
+        assert ".dbsprout/snapshots/" in content
