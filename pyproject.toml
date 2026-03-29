@@ -126,6 +126,7 @@ ignore = [
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**/*.py" = ["S101", "ARG001", "ARG002", "T20"]
+"dbsprout/cli/commands/*.py" = ["B008"]  # typer.Option() in function defaults is the standard pattern
 
 [tool.ruff.lint.isort]
 known-first-party = ["dbsprout"]
