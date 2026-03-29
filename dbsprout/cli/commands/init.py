@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+import sqlalchemy as sa
 import typer
 from rich.panel import Panel
 from rich.table import Table
@@ -41,16 +42,22 @@ def init_command(
         )
         raise typer.Exit(code=1)
 
+    # ── Sanitize URL for display/storage ────────────────────────────────
+    try:
+        safe_url = sa.engine.make_url(db).render_as_string(hide_password=True)
+    except Exception:
+        safe_url = "<invalid URL>"
+
     # ── Introspect ───────────────────────────────────────────────────────
     try:
         schema = introspect(db)
-    except Exception as exc:
+    except (ValueError, sa.exc.SQLAlchemyError) as exc:
         console.print(f"[red]Error:[/red] {exc}")
         raise typer.Exit(code=1) from None
 
     if not schema.tables:
         console.print("[yellow]Warning:[/yellow] No tables found in database.")
-        _write_config(schema, db, output_dir, dry_run)
+        _write_config(schema, safe_url, output_dir, dry_run)
         raise typer.Exit(code=0)
 
     # ── Resolve cycles ───────────────────────────────────────────────────
@@ -67,7 +74,7 @@ def init_command(
     _display_self_refs(resolved)
 
     # ── Write files ──────────────────────────────────────────────────────
-    _write_config(schema, db, output_dir, dry_run)
+    _write_config(schema, safe_url, output_dir, dry_run)
     _write_snapshot(schema, output_dir, dry_run)
 
     console.print("\n[green bold]Done![/green bold] Run `dbsprout generate` to create seed data.")
@@ -165,18 +172,24 @@ output_dir = "./seeds"
     if table_names:
         toml_content += "\n# Per-table overrides (uncomment and customize):\n"
         for name in table_names:
-            toml_content += f"# [tables.{name}]\n# rows = 100\n"
+            # Quote table names that contain special TOML characters
+            safe_name = f'"{name}"' if any(c in name for c in '.]["\n') else name
+            toml_content += f"# [tables.{safe_name}]\n# rows = 100\n"
 
     if dry_run:
         console.print("[dim]Dry run — skipping file writes[/dim]")
         return
 
-    output_dir.mkdir(parents=True, exist_ok=True)
-    toml_path = output_dir / "dbsprout.toml"
-    if toml_path.exists():
-        console.print("[yellow]Warning:[/yellow] Overwriting existing dbsprout.toml")
-    toml_path.write_text(toml_content)
-    console.print(f"[green]Wrote[/green] {toml_path}")
+    try:
+        output_dir.mkdir(parents=True, exist_ok=True)
+        toml_path = output_dir / "dbsprout.toml"
+        if toml_path.exists():
+            console.print("[yellow]Warning:[/yellow] Overwriting existing dbsprout.toml")
+        toml_path.write_text(toml_content)
+        console.print(f"[green]Wrote[/green] {toml_path}")
+    except OSError as exc:
+        console.print(f"[red]Error writing config:[/red] {exc}")
+        raise typer.Exit(code=1) from None
 
 
 def _write_snapshot(
@@ -191,10 +204,14 @@ def _write_snapshot(
     if dry_run:
         return
 
-    snapshot_dir = output_dir / ".dbsprout" / "snapshots"
-    snapshot_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        snapshot_dir = output_dir / ".dbsprout" / "snapshots"
+        snapshot_dir.mkdir(parents=True, exist_ok=True)
 
-    schema_hash = schema.schema_hash()
-    snapshot_path = snapshot_dir / f"{schema_hash}.json"
-    snapshot_path.write_text(schema.model_dump_json(indent=2))
-    console.print(f"[green]Wrote[/green] {snapshot_path}")
+        schema_hash = schema.schema_hash()
+        snapshot_path = snapshot_dir / f"{schema_hash}.json"
+        snapshot_path.write_text(schema.model_dump_json(indent=2))
+        console.print(f"[green]Wrote[/green] {snapshot_path}")
+    except OSError as exc:
+        console.print(f"[red]Error writing snapshot:[/red] {exc}")
+        raise typer.Exit(code=1) from None
