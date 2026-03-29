@@ -19,6 +19,8 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+_SELF_REF_NULL_FRACTION = 5  # 1/5 = 20% of rows get NULL for self-referencing FKs
+
 
 def sample_fk_values(
     table: TableSchema,
@@ -79,8 +81,7 @@ def _sample_single_fk(
     """Sample single-column FK values from parent PKs."""
     ref_col = fk.ref_columns[0]
     parent_pks = [r[ref_col] for r in parent_rows]
-    pk_array = np.array(parent_pks)
-    indices = rng.integers(0, len(pk_array), size=len(rows))
+    indices = rng.integers(0, len(parent_pks), size=len(rows))
 
     fk_col = fk.columns[0]
     for i, row in enumerate(rows):
@@ -109,7 +110,7 @@ def _sample_self_ref_fk(
 ) -> None:
     """Self-referencing FK: first 20% None, rest reference earlier rows."""
     num_rows = len(rows)
-    null_count = max(num_rows // 5, 1) if num_rows > 0 else 0
+    null_count = max(num_rows // _SELF_REF_NULL_FRACTION, 1) if num_rows > 0 else 0
     pk_cols = fk.ref_columns
     fk_cols = fk.columns
 

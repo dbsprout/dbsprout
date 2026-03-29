@@ -20,11 +20,6 @@ def _col(name: str, *, nullable: bool = True, pk: bool = False) -> ColumnSchema:
     )
 
 
-def _make_rows(n: int, pk_col: str = "id") -> list[dict[str, object]]:
-    """Create rows with sequential PK values and None FK placeholders."""
-    return [{pk_col: i} for i in range(1, n + 1)]
-
-
 class TestSingleColumnFK:
     def test_all_fk_values_exist_in_parent_pks(self) -> None:
         """Every FK value must reference a valid parent PK."""
@@ -279,3 +274,52 @@ class TestDeferredFKSkipped:
 
         for row in result:
             assert row["user_id"] is None
+
+
+class TestEdgeCases:
+    def test_self_ref_single_row_gets_none(self) -> None:
+        """Single row in self-referencing table must get None."""
+        table = TableSchema(
+            name="categories",
+            columns=[
+                _col("id", nullable=False, pk=True),
+                _col("parent_id"),
+            ],
+            primary_key=["id"],
+            foreign_keys=[
+                ForeignKeySchema(
+                    columns=["parent_id"],
+                    ref_table="categories",
+                    ref_columns=["id"],
+                )
+            ],
+        )
+        rows: list[dict[str, object]] = [{"id": 1, "parent_id": None}]
+
+        result = sample_fk_values(table, {}, rows, seed=42)
+
+        assert result[0]["parent_id"] is None
+
+    def test_empty_rows_returns_empty(self) -> None:
+        """Empty rows list should return empty list without errors."""
+        table = TableSchema(
+            name="orders",
+            columns=[
+                _col("id", nullable=False, pk=True),
+                _col("user_id"),
+            ],
+            primary_key=["id"],
+            foreign_keys=[
+                ForeignKeySchema(
+                    columns=["user_id"],
+                    ref_table="users",
+                    ref_columns=["id"],
+                )
+            ],
+        )
+        parent_data = {"users": [{"id": 1}]}
+        rows: list[dict[str, object]] = []
+
+        result = sample_fk_values(table, parent_data, rows, seed=42)
+
+        assert result == []
