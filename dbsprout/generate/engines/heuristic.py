@@ -55,7 +55,9 @@ class HeuristicEngine:
                 col_data[col.name] = [None] * num_rows
             else:
                 mapping = mappings.get(col.name)
-                col_seed = hash((self._seed, table.name, col.name)) % (2**31)
+                from dbsprout.generate.deterministic import column_seed  # noqa: PLC0415
+
+                col_seed = column_seed(self._seed, table.name, col.name)
                 col_data[col.name] = self._generate_column(mapping, num_rows, col_seed)
 
         # Transpose to row-oriented
