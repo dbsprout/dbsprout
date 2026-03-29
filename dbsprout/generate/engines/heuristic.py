@@ -68,6 +68,19 @@ class HeuristicEngine:
         if mapping is None:
             return [None] * num_rows
 
+        # Fast path: vectorized NumPy generation for eligible types
+        from dbsprout.generate.vectorized import generate_vectorized  # noqa: PLC0415
+
+        vec_result = generate_vectorized(
+            mapping.generator_name, num_rows, seed=42, params=mapping.params
+        )
+        if vec_result is not None:
+            # Apply max_length truncation if needed
+            max_length = mapping.params.get("max_length")
+            if max_length is not None:
+                vec_result = [v[:max_length] if isinstance(v, str) else v for v in vec_result]
+            return vec_result
+
         gen = self._resolve_generator(mapping)
         params = mapping.params
         max_length = params.get("max_length")

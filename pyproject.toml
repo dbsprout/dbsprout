@@ -30,6 +30,7 @@ dependencies = [
     "tomli>=2.0; python_version < '3.11'",
     "mimesis>=18.0",
     "faker>=33.0",
+    "numpy>=1.26",
 ]
 
 [project.scripts]
