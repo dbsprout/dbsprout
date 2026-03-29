@@ -594,6 +594,8 @@ name = "dbsprout"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
+    { name = "faker" },
+    { name = "mimesis" },
     { name = "networkx", version = "3.4.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "networkx", version = "3.6.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
     { name = "pydantic" },
@@ -680,6 +682,7 @@ web = [
 requires-dist = [
     { name = "bandit", extras = ["toml"], marker = "extra == 'dev'", specifier = ">=1.8" },
     { name = "dbsprout", extras = ["db", "gen", "llm", "stats", "web", "tui"], marker = "extra == 'all'" },
+    { name = "faker", specifier = ">=33.0" },
     { name = "faker", marker = "extra == 'gen'", specifier = ">=33.0" },
     { name = "fastapi", marker = "extra == 'web'", specifier = ">=0.115" },
     { name = "instructor", marker = "extra == 'cloud'", specifier = ">=1.0" },
@@ -688,6 +691,7 @@ requires-dist = [
     { name = "litellm", marker = "extra == 'cloud'", specifier = ">=1.0" },
     { name = "litellm", marker = "extra == 'llm'", specifier = ">=1.0" },
     { name = "llama-cpp-python", marker = "extra == 'llm'", specifier = ">=0.3" },
+    { name = "mimesis", specifier = ">=18.0" },
     { name = "mimesis", marker = "extra == 'gen'", specifier = ">=18.0" },
     { name = "mlx", marker = "extra == 'train-mlx'", specifier = ">=0.20" },
     { name = "mlx-lm", marker = "extra == 'train-mlx'", specifier = ">=0.20" },
