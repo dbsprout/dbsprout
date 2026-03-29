@@ -61,6 +61,8 @@ def _vec_int(rng: np.random.Generator, n: int, params: dict[str, Any]) -> list[i
 def _vec_float(rng: np.random.Generator, n: int, params: dict[str, Any]) -> list[float]:
     lo = params.get("min", 0.0)
     hi = params.get("max", 10000.0)
+    if lo > hi:
+        lo, hi = hi, lo
     arr = rng.uniform(lo, hi, size=n)
     return [round(float(v), 2) for v in arr]
 

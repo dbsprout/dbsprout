@@ -24,7 +24,8 @@ if TYPE_CHECKING:
 class HeuristicEngine:
     """Generate rows using Mimesis providers and builtin fallbacks."""
 
-    def __init__(self, locale: str = "en") -> None:
+    def __init__(self, locale: str = "en", seed: int = 42) -> None:
+        self._seed = seed
         loc = Locale(locale) if locale != "en" else Locale.EN
         self._person = Person(loc)
         self._address = Address(loc)
@@ -54,7 +55,8 @@ class HeuristicEngine:
                 col_data[col.name] = [None] * num_rows
             else:
                 mapping = mappings.get(col.name)
-                col_data[col.name] = self._generate_column(mapping, num_rows)
+                col_seed = hash((self._seed, table.name, col.name)) % (2**31)
+                col_data[col.name] = self._generate_column(mapping, num_rows, col_seed)
 
         # Transpose to row-oriented
         return [{col_name: col_data[col_name][i] for col_name in col_data} for i in range(num_rows)]
@@ -63,6 +65,7 @@ class HeuristicEngine:
         self,
         mapping: GeneratorMapping | None,
         num_rows: int,
+        col_seed: int = 42,
     ) -> list[Any]:
         """Generate values for a single column."""
         if mapping is None:
@@ -72,7 +75,7 @@ class HeuristicEngine:
         from dbsprout.generate.vectorized import generate_vectorized  # noqa: PLC0415
 
         vec_result = generate_vectorized(
-            mapping.generator_name, num_rows, seed=42, params=mapping.params
+            mapping.generator_name, num_rows, seed=col_seed, params=mapping.params
         )
         if vec_result is not None:
             # Apply max_length truncation if needed
