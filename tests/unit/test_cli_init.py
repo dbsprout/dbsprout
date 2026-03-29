@@ -2,14 +2,14 @@
 
 from __future__ import annotations
 
+import re
 from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
-
-import sqlalchemy.exc
 
 if TYPE_CHECKING:
     from pathlib import Path
 
+import sqlalchemy.exc
 from typer.testing import CliRunner
 
 from dbsprout.cli.app import app
@@ -28,7 +28,14 @@ from dbsprout.schema.models import (
     TableSchema,
 )
 
+_ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
+
 runner = CliRunner()
+
+
+def _strip_ansi(text: str) -> str:
+    """Remove ANSI escape codes for assertion matching."""
+    return _ANSI_RE.sub("", text)
 
 
 def _simple_schema() -> DatabaseSchema:
@@ -72,8 +79,8 @@ class TestInitHelp:
     def test_help_shows_usage(self) -> None:
         result = runner.invoke(app, ["init", "--help"])
         assert result.exit_code == 0
-        assert "Introspect" in result.output
-        assert "--db" in result.output
+        assert "Introspect" in _strip_ansi(result.output)
+        assert "--db" in _strip_ansi(result.output)
 
 
 # ── Happy path ───────────────────────────────────────────────────────────
@@ -89,8 +96,8 @@ class TestInitHappyPath:
 
         result = runner.invoke(app, ["init", "--db", "sqlite:///test.db"])
         assert result.exit_code == 0
-        assert "users" in result.output
-        assert "orders" in result.output
+        assert "users" in _strip_ansi(result.output)
+        assert "orders" in _strip_ansi(result.output)
 
     @patch("dbsprout.cli.commands.init.resolve_cycles")
     @patch("dbsprout.cli.commands.init.introspect")
@@ -103,7 +110,7 @@ class TestInitHappyPath:
 
         result = runner.invoke(app, ["init", "--db", "sqlite:///test.db"])
         assert result.exit_code == 0
-        assert "Insertion Order" in result.output
+        assert "Insertion Order" in _strip_ansi(result.output)
 
 
 # ── Dry run ──────────────────────────────────────────────────────────────
@@ -178,17 +185,17 @@ class TestInitErrors:
 
         result = runner.invoke(app, ["init", "--db", "sqlite:///bad.db"])
         assert result.exit_code == 1
-        assert "error" in result.output.lower() or "Error" in result.output
+        assert "error" in _strip_ansi(result.output).lower()
 
     def test_no_args(self) -> None:
         result = runner.invoke(app, ["init"])
         assert result.exit_code == 1
-        assert "Provide --db" in result.output
+        assert "Provide --db" in _strip_ansi(result.output)
 
     def test_file_not_implemented(self) -> None:
         result = runner.invoke(app, ["init", "--file", "schema.sql"])
         assert result.exit_code == 1
-        assert "S-010" in result.output or "DDL" in result.output
+        assert "S-010" in _strip_ansi(result.output) or "DDL" in _strip_ansi(result.output)
 
     @patch("dbsprout.cli.commands.init.introspect")
     def test_empty_db_warns(self, mock_introspect: MagicMock, tmp_path: Path) -> None:
@@ -198,7 +205,7 @@ class TestInitErrors:
             app, ["init", "--db", "sqlite:///empty.db", "--output-dir", str(tmp_path)]
         )
         assert result.exit_code == 0
-        assert "no tables" in result.output.lower() or "No tables" in result.output
+        assert "no tables" in _strip_ansi(result.output).lower()
         # TOML should still be written
         assert (tmp_path / "dbsprout.toml").exists()
         # No snapshot for empty schema
@@ -213,7 +220,7 @@ class TestInitErrors:
         mock_resolve.side_effect = UnresolvableCycleError(CycleInfo(tables=frozenset({"a", "b"})))
         result = runner.invoke(app, ["init", "--db", "sqlite:///test.db"])
         assert result.exit_code == 1
-        assert "nullable" in result.output.lower()
+        assert "nullable" in _strip_ansi(result.output).lower()
 
 
 # ── Cycle + self-ref display ─────────────────────────────────────────────
@@ -243,7 +250,7 @@ class TestInitCycleDisplay:
             app, ["init", "--db", "sqlite:///test.db", "--output-dir", str(tmp_path)]
         )
         assert result.exit_code == 0
-        assert "deferred" in result.output.lower()
+        assert "deferred" in _strip_ansi(result.output).lower()
 
     @patch("dbsprout.cli.commands.init.resolve_cycles")
     @patch("dbsprout.cli.commands.init.introspect")
@@ -275,7 +282,8 @@ class TestInitCycleDisplay:
             app, ["init", "--db", "sqlite:///test.db", "--output-dir", str(tmp_path)]
         )
         assert result.exit_code == 0
-        assert "self-referencing" in result.output.lower() or "employees" in result.output
+        out = _strip_ansi(result.output).lower()
+        assert "self-referencing" in out or "employees" in out
 
 
 # ── TOML content ─────────────────────────────────────────────────────────
