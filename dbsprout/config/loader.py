@@ -37,7 +37,11 @@ def load_config(path: Path | None = None) -> DBSproutConfig:
     if path is None or not path.exists():
         return DBSproutConfig()
 
-    with path.open("rb") as f:
-        raw = tomllib.load(f)
+    try:
+        with path.open("rb") as f:
+            raw = tomllib.load(f)
+    except tomllib.TOMLDecodeError as exc:
+        msg = f"Failed to parse {path}: {exc}"
+        raise ValueError(msg) from None
 
     return DBSproutConfig.model_validate(raw)

@@ -6,7 +6,12 @@ reject unknown TOML keys with clear validation errors.
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING, Literal
+
 from pydantic import BaseModel, ConfigDict, Field
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 class SchemaConfig(BaseModel):
@@ -25,9 +30,9 @@ class GenerationConfig(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     default_rows: int = Field(default=100, ge=1)
-    seed: int = 42
-    engine: str = "heuristic"
-    output_format: str = "sql"
+    seed: int = Field(default=42, ge=0)
+    engine: Literal["heuristic", "spec", "statistical", "finetuned"] = "heuristic"
+    output_format: Literal["sql", "csv", "json", "jsonl", "parquet"] = "sql"
     output_dir: str = "./seeds"
 
 
@@ -48,3 +53,10 @@ class DBSproutConfig(BaseModel):
     schema_: SchemaConfig = Field(default_factory=SchemaConfig, alias="schema")
     generation: GenerationConfig = Field(default_factory=GenerationConfig)
     tables: dict[str, TableOverride] = Field(default_factory=dict)
+
+    @classmethod
+    def from_toml(cls, path: Path | None = None) -> DBSproutConfig:
+        """Load config from a TOML file. Returns defaults if file is missing."""
+        from dbsprout.config.loader import load_config  # noqa: PLC0415
+
+        return load_config(path)

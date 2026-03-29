@@ -175,6 +175,35 @@ class TestLoadConfig:
         with pytest.raises(ValidationError):
             load_config(p)
 
+    def test_malformed_toml(self, tmp_path: Path) -> None:
+        p = tmp_path / "bad.toml"
+        p.write_text("[generation\nunterminated")
+        with pytest.raises(ValueError, match="Failed to parse"):
+            load_config(p)
+
+    def test_invalid_engine(self, tmp_path: Path) -> None:
+        p = tmp_path / "dbsprout.toml"
+        p.write_text('[generation]\nengine = "bogus"\n')
+        with pytest.raises(ValidationError):
+            load_config(p)
+
+    def test_invalid_output_format(self, tmp_path: Path) -> None:
+        p = tmp_path / "dbsprout.toml"
+        p.write_text('[generation]\noutput_format = "xlsx"\n')
+        with pytest.raises(ValidationError):
+            load_config(p)
+
+    def test_from_toml_classmethod(self, tmp_path: Path) -> None:
+        p = tmp_path / "dbsprout.toml"
+        p.write_text(VALID_TOML)
+        cfg = DBSproutConfig.from_toml(p)
+        assert cfg.schema_.dialect == "sqlite"
+        assert cfg.generation.default_rows == 100
+
+    def test_from_toml_defaults(self) -> None:
+        cfg = DBSproutConfig.from_toml(None)
+        assert cfg.generation.default_rows == 100
+
     def test_init_toml_round_trips(self, tmp_path: Path) -> None:
         """The exact TOML template from S-009 init loads correctly."""
         p = tmp_path / "dbsprout.toml"
