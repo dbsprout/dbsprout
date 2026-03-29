@@ -53,6 +53,13 @@ class TestNameMapping:
         result = map_columns(schema)
         assert result["t"]["firstName"].generator_name == "first_name"
 
+    def test_email_address_camel(self) -> None:
+        """emailAddress → email_address via token normalization (step 2)."""
+        schema = _schema(_table("t", [_col("emailAddress")]))
+        result = map_columns(schema)
+        assert result["t"]["emailAddress"].generator_name == "email"
+        assert result["t"]["emailAddress"].confidence < 0.95  # reduced by 0.9 factor
+
     def test_last_name(self) -> None:
         schema = _schema(_table("t", [_col("last_name")]))
         result = map_columns(schema)

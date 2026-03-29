@@ -27,8 +27,8 @@ _PERSONAL: list[PatternRule] = [
     PatternRule(r"^first_?name$", "first_name", "mimesis", 0.95),
     PatternRule(r"^last_?name$", "last_name", "mimesis", 0.95),
     PatternRule(r"^full_?name$", "full_name", "mimesis", 0.95),
-    PatternRule(r"^(user_?)?name$", "username", "mimesis", 0.85),
     PatternRule(r"^username$", "username", "mimesis", 0.95),
+    PatternRule(r"^(user_?)?name$", "username", "mimesis", 0.85),
     PatternRule(r"^password(_hash)?$", "password", "mimesis", 0.90),
     PatternRule(r"^avatar(_url)?$", "avatar_url", "mimesis", 0.90),
     PatternRule(r"^(profile_?)?image(_url)?$", "avatar_url", "mimesis", 0.85),
@@ -37,7 +37,7 @@ _PERSONAL: list[PatternRule] = [
     PatternRule(r"^(date_of_)?birth(day|date)?$", "date_of_birth", "mimesis", 0.90),
     PatternRule(r"^age$", "age", "builtin", 0.85),
     PatternRule(r"^ssn$", "ssn", "faker", 0.90),
-    PatternRule(r"^(national_?)?id(_number)?$", "national_id", "faker", 0.80),
+    PatternRule(r"^national_?id(_number)?$", "national_id", "faker", 0.80),
 ]
 
 # ── Contact ──────────────────────────────────────────────────────────────
@@ -59,8 +59,8 @@ _ADDRESS: list[PatternRule] = [
     PatternRule(r"^city$", "city", "mimesis", 0.95),
     PatternRule(r"^(state|province|region)(_code)?$", "state", "mimesis", 0.90),
     PatternRule(r"^(zip|postal)(_code)?$", "zip_code", "mimesis", 0.95),
-    PatternRule(r"^country(_code)?$", "country", "mimesis", 0.90),
     PatternRule(r"^country$", "country", "mimesis", 0.95),
+    PatternRule(r"^country_code$", "country_code", "mimesis", 0.90),
     PatternRule(r"^lat(itude)?$", "latitude", "mimesis", 0.90),
     PatternRule(r"^(lon|lng)(gitude)?$", "longitude", "mimesis", 0.90),
     PatternRule(r"^county$", "city", "mimesis", 0.75),
@@ -108,9 +108,9 @@ _CONTENT: list[PatternRule] = [
     PatternRule(r"^slug$", "slug", "mimesis", 0.90),
     PatternRule(r"^(url|link|href)$", "url", "mimesis", 0.90),
     PatternRule(r"^(image|photo|picture|thumbnail)(_url)?$", "image_url", "mimesis", 0.90),
-    PatternRule(r"^(file_?)?(path|name)$", "filename", "mimesis", 0.80),
-    PatternRule(r"^(mime_?)?type$", "mime_type", "builtin", 0.75),
-    PatternRule(r"^(file_?)?size$", "random_int", "builtin", 0.70),
+    PatternRule(r"^file_?(path|name)$", "filename", "mimesis", 0.80),
+    PatternRule(r"^mime_?type$", "mime_type", "builtin", 0.75),
+    PatternRule(r"^file_?size$", "random_int", "builtin", 0.70),
     PatternRule(r"^tags?$", "word", "mimesis", 0.75),
     PatternRule(r"^label$", "word", "mimesis", 0.75),
     PatternRule(r"^color(_code)?$", "hex_color", "mimesis", 0.85),
@@ -125,12 +125,12 @@ _IDENTIFIERS: list[PatternRule] = [
         r"^(ref(erence)?|tracking)(_number|_code|_id)?$", "reference_code", "builtin", 0.80
     ),
     PatternRule(r"^token$", "token", "builtin", 0.80),
-    PatternRule(r"^(api_?)?key$", "token", "builtin", 0.80),
+    PatternRule(r"^api_?key$", "token", "builtin", 0.80),
     PatternRule(r"^(hash|checksum|digest)$", "hash", "builtin", 0.80),
-    PatternRule(r"^(ip_?)?address$", "ip_address", "mimesis", 0.80),
+    PatternRule(r"^ip_?address$", "ip_address", "mimesis", 0.80),
     PatternRule(r"^ip(v[46])?$", "ip_address", "mimesis", 0.85),
     PatternRule(r"^mac_?address$", "mac_address", "mimesis", 0.85),
-    PatternRule(r"^(user_?)?agent$", "user_agent", "mimesis", 0.85),
+    PatternRule(r"^user_?agent$", "user_agent", "mimesis", 0.85),
 ]
 
 # ── Status / Enum-like ───────────────────────────────────────────────────
@@ -162,7 +162,7 @@ _QUANTITY: list[PatternRule] = [
         r"^(percent|percentage|ratio)$", "random_float", "builtin", 0.80, {"min": 0.0, "max": 100.0}
     ),
     PatternRule(r"^(version|revision)$", "version", "builtin", 0.80),
-    PatternRule(r"^(sort_?)?order$", "random_int", "builtin", 0.75, {"min": 0, "max": 1000}),
+    PatternRule(r"^sort_?order$", "random_int", "builtin", 0.75, {"min": 0, "max": 1000}),
 ]
 
 
