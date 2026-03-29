@@ -229,13 +229,19 @@ def _init_from_file(file_path: str, output_dir: Path, dry_run: bool) -> None:
     """Initialize from a DDL file instead of a live database."""
     from dbsprout.schema.parsers.ddl import parse_ddl  # noqa: PLC0415
 
+    max_ddl_bytes = 10 * 1024 * 1024  # 10 MB
+
     path = Path(file_path)
     if not path.exists():
         console.print(f"[red]Error:[/red] File not found: {file_path}")
         raise typer.Exit(code=1)
 
+    if path.stat().st_size > max_ddl_bytes:  # pragma: no cover — requires >10MB file
+        console.print(f"[red]Error:[/red] File too large (>10 MB): {file_path}")
+        raise typer.Exit(code=1)
+
     try:
-        sql_text = path.read_text()
+        sql_text = path.read_text(encoding="utf-8")
         schema = parse_ddl(sql_text, source_file=file_path)
     except (ValueError, OSError) as exc:
         console.print(f"[red]Error:[/red] {exc}")

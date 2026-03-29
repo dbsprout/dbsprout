@@ -51,7 +51,12 @@ _DTYPE_MAP: dict[Any, ColumnType] = {  # keys are DType.Type enum members
     DType.Type.JSONB: ColumnType.JSON,
     DType.Type.BINARY: ColumnType.BINARY,
     DType.Type.VARBINARY: ColumnType.BINARY,
+    DType.Type.TINYBLOB: ColumnType.BINARY,
+    DType.Type.MEDIUMBLOB: ColumnType.BINARY,
+    DType.Type.LONGBLOB: ColumnType.BINARY,
     DType.Type.IMAGE: ColumnType.BINARY,
+    DType.Type.MEDIUMINT: ColumnType.INTEGER,
+    DType.Type.TINYTEXT: ColumnType.TEXT,
     DType.Type.ENUM: ColumnType.ENUM,
     DType.Type.ARRAY: ColumnType.ARRAY,
     DType.Type.SERIAL: ColumnType.INTEGER,
@@ -158,7 +163,7 @@ def _detect_dialect(sql_text: str) -> str | None:
         return "postgres"
     if re.search(r"\bAUTO_INCREMENT\b", upper):
         return "mysql"
-    if "`" in sql_text:
+    if re.search(r"`\w+`", sql_text):
         return "mysql"
     if re.search(r"\bAUTOINCREMENT\b", upper):
         return "sqlite"
