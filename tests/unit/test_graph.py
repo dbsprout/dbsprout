@@ -10,65 +10,10 @@ from pydantic import ValidationError
 
 from dbsprout.schema.graph import FKGraph
 from dbsprout.schema.models import (
-    ColumnSchema,
-    ColumnType,
-    DatabaseSchema,
     ForeignKeySchema,
     TableSchema,
 )
-
-
-def _col(name: str) -> ColumnSchema:
-    """Minimal column for test schemas."""
-    return ColumnSchema(name=name, data_type=ColumnType.INTEGER)
-
-
-def _table(
-    name: str,
-    fks: list[tuple[str, str]] | None = None,
-    self_ref: str | None = None,
-    fk_name: str | None = None,
-) -> TableSchema:
-    """Build a table with optional FKs.
-
-    fks: list of (column, ref_table) pairs for foreign keys
-    self_ref: column name for self-referencing FK
-    fk_name: explicit FK name (for self_ref or single FK)
-    """
-    columns = [_col("id")]
-    foreign_keys: list[ForeignKeySchema] = []
-    if fks:
-        for col_name, ref_table in fks:
-            columns.append(_col(col_name))
-            foreign_keys.append(
-                ForeignKeySchema(
-                    columns=[col_name],
-                    ref_table=ref_table,
-                    ref_columns=["id"],
-                )
-            )
-    if self_ref:
-        columns.append(_col(self_ref))
-        foreign_keys.append(
-            ForeignKeySchema(
-                name=fk_name,
-                columns=[self_ref],
-                ref_table=name,
-                ref_columns=["id"],
-            )
-        )
-    return TableSchema(
-        name=name,
-        columns=columns,
-        primary_key=["id"],
-        foreign_keys=foreign_keys,
-    )
-
-
-def _schema(*tables: TableSchema) -> DatabaseSchema:
-    """Build a DatabaseSchema from tables."""
-    return DatabaseSchema(tables=list(tables))
-
+from tests.unit.conftest import _col, _schema, _table
 
 # ── Task 1: Core graph construction tests ────────────────────────────────
 
@@ -106,7 +51,7 @@ class TestSimpleFK:
         graph = FKGraph.from_schema(
             _schema(
                 _table("users"),
-                _table("orders", fks=[("user_id", "users")]),
+                _table("orders", fks=[("user_id", "users", True)]),
             )
         )
         assert graph.insertion_order == (("users",), ("orders",))
@@ -115,7 +60,7 @@ class TestSimpleFK:
         graph = FKGraph.from_schema(
             _schema(
                 _table("users"),
-                _table("orders", fks=[("user_id", "users")]),
+                _table("orders", fks=[("user_id", "users", True)]),
             )
         )
         assert graph.dependencies == {
@@ -129,9 +74,9 @@ class TestLinearChain:
         graph = FKGraph.from_schema(
             _schema(
                 _table("d"),
-                _table("c", fks=[("d_id", "d")]),
-                _table("b", fks=[("c_id", "c")]),
-                _table("a", fks=[("b_id", "b")]),
+                _table("c", fks=[("d_id", "d", True)]),
+                _table("b", fks=[("c_id", "c", True)]),
+                _table("a", fks=[("b_id", "b", True)]),
             )
         )
         assert graph.insertion_order == (("d",), ("c",), ("b",), ("a",))
@@ -142,9 +87,9 @@ class TestDiamond:
         graph = FKGraph.from_schema(
             _schema(
                 _table("a"),
-                _table("b", fks=[("a_id", "a")]),
-                _table("c", fks=[("a_id", "a")]),
-                _table("d", fks=[("b_id", "b"), ("c_id", "c")]),
+                _table("b", fks=[("a_id", "a", True)]),
+                _table("c", fks=[("a_id", "a", True)]),
+                _table("d", fks=[("b_id", "b", True), ("c_id", "c", True)]),
             )
         )
         assert len(graph.insertion_order) == 3
@@ -223,7 +168,7 @@ class TestJunctionTable:
             _schema(
                 _table("users"),
                 _table("roles"),
-                _table("user_roles", fks=[("user_id", "users"), ("role_id", "roles")]),
+                _table("user_roles", fks=[("user_id", "users", True), ("role_id", "roles", True)]),
             )
         )
         assert len(graph.insertion_order) == 2
@@ -319,8 +264,8 @@ class TestCycleDetection:
         with pytest.raises(CycleError):
             FKGraph.from_schema(
                 _schema(
-                    _table("a", fks=[("b_id", "b")]),
-                    _table("b", fks=[("a_id", "a")]),
+                    _table("a", fks=[("b_id", "b", True)]),
+                    _table("b", fks=[("a_id", "a", True)]),
                 )
             )
 
@@ -328,9 +273,9 @@ class TestCycleDetection:
         with pytest.raises(CycleError):
             FKGraph.from_schema(
                 _schema(
-                    _table("a", fks=[("c_id", "c")]),
-                    _table("b", fks=[("a_id", "a")]),
-                    _table("c", fks=[("b_id", "b")]),
+                    _table("a", fks=[("c_id", "c", True)]),
+                    _table("b", fks=[("a_id", "a", True)]),
+                    _table("c", fks=[("b_id", "b", True)]),
                 )
             )
 
@@ -340,8 +285,8 @@ class TestDependents:
         graph = FKGraph.from_schema(
             _schema(
                 _table("users"),
-                _table("orders", fks=[("user_id", "users")]),
-                _table("reviews", fks=[("user_id", "users")]),
+                _table("orders", fks=[("user_id", "users", True)]),
+                _table("reviews", fks=[("user_id", "users", True)]),
             )
         )
         assert graph.dependents("users") == frozenset({"orders", "reviews"})
@@ -350,7 +295,7 @@ class TestDependents:
         graph = FKGraph.from_schema(
             _schema(
                 _table("users"),
-                _table("orders", fks=[("user_id", "users")]),
+                _table("orders", fks=[("user_id", "users", True)]),
             )
         )
         assert graph.dependents("orders") == frozenset()
@@ -372,8 +317,8 @@ class TestDeterministicOrdering:
     def test_same_schema_same_order(self) -> None:
         schema = _schema(
             _table("c"),
-            _table("b", fks=[("c_id", "c")]),
-            _table("a", fks=[("c_id", "c")]),
+            _table("b", fks=[("c_id", "c", True)]),
+            _table("a", fks=[("c_id", "c", True)]),
         )
         order1 = FKGraph.from_schema(schema).insertion_order
         order2 = FKGraph.from_schema(schema).insertion_order
@@ -394,16 +339,16 @@ class TestRealisticSchema:
             _table("categories", self_ref="parent_id"),
             _table("countries"),
             _table("roles"),
-            _table("users", fks=[("role_id", "roles"), ("country_id", "countries")]),
-            _table("products", fks=[("category_id", "categories")]),
-            _table("orders", fks=[("user_id", "users")]),
+            _table("users", fks=[("role_id", "roles", True), ("country_id", "countries", True)]),
+            _table("products", fks=[("category_id", "categories", True)]),
+            _table("orders", fks=[("user_id", "users", True)]),
             _table(
                 "order_items",
-                fks=[("order_id", "orders"), ("product_id", "products")],
+                fks=[("order_id", "orders", True), ("product_id", "products", True)],
             ),
             _table(
                 "reviews",
-                fks=[("user_id", "users"), ("product_id", "products")],
+                fks=[("user_id", "users", True), ("product_id", "products", True)],
             ),
         )
         graph = FKGraph.from_schema(schema)
@@ -426,7 +371,7 @@ class TestRealisticSchema:
     def test_self_refs_captured(self) -> None:
         schema = _schema(
             _table("categories", self_ref="parent_id"),
-            _table("products", fks=[("category_id", "categories")]),
+            _table("products", fks=[("category_id", "categories", True)]),
         )
         graph = FKGraph.from_schema(schema)
         assert "categories" in graph.self_referencing
@@ -439,7 +384,8 @@ class TestPerformance:
         # Add FK chain: t_001 -> t_000, t_002 -> t_001, ...
         chained: list[TableSchema] = [tables[0]]
         for i in range(1, 200):
-            chained.append(_table(f"t_{i:03d}", fks=[(f"t_{i - 1:03d}_id", f"t_{i - 1:03d}")]))
+            prev = f"t_{i - 1:03d}"
+            chained.append(_table(f"t_{i:03d}", fks=[(f"{prev}_id", prev, True)]))
         schema = _schema(*chained)
 
         start = time.perf_counter()
@@ -453,7 +399,7 @@ class TestPerformance:
     def test_200_table_star_under_100ms(self) -> None:
         """200 tables all depending on one root — 2 batches, tests parallel grouping."""
         root = _table("root")
-        children = [_table(f"child_{i:03d}", fks=[("root_id", "root")]) for i in range(199)]
+        children = [_table(f"child_{i:03d}", fks=[("root_id", "root", True)]) for i in range(199)]
         schema = _schema(root, *children)
 
         start = time.perf_counter()

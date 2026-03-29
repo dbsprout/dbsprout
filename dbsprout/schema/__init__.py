@@ -2,7 +2,16 @@
 
 from __future__ import annotations
 
-from dbsprout.schema.graph import CycleEdge, CycleInfo, FKGraph, detect_cycles
+from dbsprout.schema.graph import (
+    CycleEdge,
+    CycleInfo,
+    DeferredFK,
+    FKGraph,
+    ResolvedGraph,
+    UnresolvableCycleError,
+    detect_cycles,
+    resolve_cycles,
+)
 from dbsprout.schema.models import (
     ColumnSchema,
     ColumnType,
@@ -18,11 +27,15 @@ __all__ = [
     "CycleEdge",
     "CycleInfo",
     "DatabaseSchema",
+    "DeferredFK",
     "FKGraph",
     "ForeignKeySchema",
     "IndexSchema",
+    "ResolvedGraph",
     "TableSchema",
+    "UnresolvableCycleError",
     "detect_cycles",
+    "resolve_cycles",
 ]
 
 try:
