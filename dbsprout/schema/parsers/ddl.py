@@ -109,7 +109,12 @@ def parse_ddl(
         dialect = _detect_dialect(sql_text)
 
     sqlglot_dialect = dialect if dialect else None
-    statements = sqlglot.parse(sql_text, dialect=sqlglot_dialect)
+    try:
+        statements = sqlglot.parse(sql_text, dialect=sqlglot_dialect)
+    except sqlglot.errors.ParseError as exc:
+        file_hint = f" in {source_file}" if source_file else ""
+        msg = f"Failed to parse DDL{file_hint}: {exc}"
+        raise ValueError(msg) from None
 
     tables: dict[str, TableSchema] = {}
     indexes: dict[str, list[IndexSchema]] = {}
@@ -133,7 +138,8 @@ def parse_ddl(
             _merge_alter_fks(stmt, tables)
 
     if not tables:
-        msg = "No CREATE TABLE statements found in DDL"
+        file_hint = f" in {source_file}" if source_file else ""
+        msg = f"No CREATE TABLE statements found{file_hint}"
         raise ValueError(msg)
 
     # Merge indexes into tables

@@ -241,6 +241,24 @@ class TestEdgeCases:
         with pytest.raises(ValueError, match=r"No.*statement"):
             parse_ddl("-- just a comment")
 
+    def test_truncated_ddl(self) -> None:
+        """Truncated SQL with no complete CREATE TABLE → ValueError."""
+        with pytest.raises(ValueError, match=r"(No|Failed)"):
+            parse_ddl("CREATE TABLE users (id INTEGER")
+
+    def test_missing_table_name(self) -> None:
+        """DDL with syntax error → ValueError with parse context."""
+        with pytest.raises(ValueError, match=r"Failed to parse"):
+            parse_ddl("CREATE TABLE (id INTEGER);")
+
+    def test_non_ddl_statements_only(self) -> None:
+        with pytest.raises(ValueError, match=r"No.*statement"):
+            parse_ddl("SELECT * FROM users; INSERT INTO t VALUES (1);")
+
+    def test_source_file_in_error(self) -> None:
+        with pytest.raises(ValueError, match=r"schema\.sql"):
+            parse_ddl("-- empty", source_file="schema.sql")
+
     def test_create_table_if_not_exists(self) -> None:
         ddl = "CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY, name TEXT);"
         schema = parse_ddl(ddl)
