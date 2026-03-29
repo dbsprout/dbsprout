@@ -145,6 +145,8 @@ class HeuristicEngine:
 def _gen_random_int(params: dict[str, Any]) -> int:
     lo = params.get("min", 0)
     hi = params.get("max", 10000)
+    if lo > hi:
+        lo, hi = hi, lo
     return random.randint(lo, hi)  # noqa: S311
 
 
@@ -157,7 +159,7 @@ def _gen_random_float(params: dict[str, Any]) -> float:
 def _gen_random_decimal(params: dict[str, Any]) -> float:
     precision = params.get("precision", 10)
     scale = params.get("scale", 2)
-    max_val = 10 ** (precision - scale) - 1
+    max_val = max(10 ** (precision - scale) - 1, 1)
     return float(round(random.uniform(0, max_val), scale))  # noqa: S311
 
 
@@ -198,6 +200,8 @@ def _gen_uuid4(_params: dict[str, Any]) -> str:
 
 def _gen_random_choice(params: dict[str, Any]) -> Any:
     values = params.get("enum_values", ["a", "b", "c"])
+    if not values:
+        return None
     return random.choice(values)  # noqa: S311
 
 

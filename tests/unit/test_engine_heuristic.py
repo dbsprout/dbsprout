@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import uuid
 from datetime import date, time
 
@@ -15,6 +16,7 @@ from dbsprout.generate.engines.heuristic import (
     _gen_random_list,
     _gen_random_text,
     _gen_random_time,
+    _gen_ssn,
 )
 from dbsprout.schema.models import (
     ColumnSchema,
@@ -275,6 +277,28 @@ class TestBuiltinGeneratorsDirect:
         rows = engine.generate_table(table, {"weird": mapping}, 3)
         for row in rows:
             assert isinstance(row["weird"], str)
+
+
+class TestEdgeCases:
+    def test_ssn_format(self) -> None:
+        v = _gen_ssn()
+        assert re.fullmatch(r"\d{3}-\d{2}-\d{4}", v)
+
+    def test_zero_rows(self) -> None:
+        table = _table("t", [_col("id", ColumnType.INTEGER)])
+        schema = DatabaseSchema(tables=[table])
+        mappings = map_columns(schema)
+        engine = HeuristicEngine()
+        rows = engine.generate_table(table, mappings["t"], 0)
+        assert rows == []
+
+    def test_none_mapping_returns_none(self) -> None:
+        """Column with no mapping in dict → None values."""
+        table = _table("t", [_col("weird", ColumnType.VARCHAR)])
+        engine = HeuristicEngine()
+        rows = engine.generate_table(table, {}, 3)  # empty mappings
+        for row in rows:
+            assert row["weird"] is None
 
 
 class TestLocale:
