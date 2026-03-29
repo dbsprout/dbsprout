@@ -130,6 +130,7 @@ ignore = [
 "tests/**/*.py" = ["S101", "ARG001", "ARG002", "T20"]
 "dbsprout/cli/commands/*.py" = ["B008"]  # typer.Option() in function defaults is the standard pattern
 "dbsprout/schema/parsers/*.py" = ["PLR0912", "PLR0915"]  # parser functions are inherently branchy
+"dbsprout/spec/patterns.py" = ["E501"]  # pattern data declarations are naturally wide
 
 [tool.ruff.lint.isort]
 known-first-party = ["dbsprout"]
