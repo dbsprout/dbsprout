@@ -367,3 +367,43 @@ class TestDecimalAndFallbackRegen:
         result = enforce_constraints(table, rows, seed=42)
 
         assert result[0]["data"] is not None
+
+    def test_not_null_enum_uses_enum_values(self) -> None:
+        """ENUM NOT NULL column should regenerate from enum_values."""
+        table = TableSchema(
+            name="tasks",
+            columns=[
+                _col("id", nullable=False, pk=True, autoincrement=True),
+                ColumnSchema(
+                    name="status",
+                    data_type=ColumnType.ENUM,
+                    nullable=False,
+                    enum_values=["active", "inactive", "pending"],
+                ),
+            ],
+            primary_key=["id"],
+        )
+        rows = [{"id": None, "status": None}]
+
+        result = enforce_constraints(table, rows, seed=42)
+
+        assert result[0]["status"] in {"active", "inactive", "pending"}
+
+    def test_not_null_uuid_gets_uuid_string(self) -> None:
+        """UUID NOT NULL column should regenerate as a UUID string."""
+        table = TableSchema(
+            name="tokens",
+            columns=[
+                _col("id", nullable=False, pk=True, autoincrement=True),
+                _col("token", nullable=False, data_type=ColumnType.UUID),
+            ],
+            primary_key=["id"],
+        )
+        rows = [{"id": None, "token": None}]
+
+        result = enforce_constraints(table, rows, seed=42)
+
+        token = result[0]["token"]
+        assert token is not None
+        assert isinstance(token, str)
+        assert len(token) == 36  # UUID format: 8-4-4-4-12

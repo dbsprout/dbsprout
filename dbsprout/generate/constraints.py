@@ -19,6 +19,8 @@ if TYPE_CHECKING:
 from dbsprout.schema.models import ColumnType
 
 _MAX_RETRIES = 10
+_INTEGER_TYPES = frozenset({ColumnType.INTEGER, ColumnType.BIGINT, ColumnType.SMALLINT})
+_ASCII_LOWER_CHARS = list(string.ascii_lowercase)
 
 
 class ConstraintError(Exception):
@@ -86,15 +88,15 @@ def _enforce_unique(
     for idx in table.indexes:
         if not idx.unique or len(idx.columns) <= 1:
             continue
-        # Skip if any column is a FK column
-        if any(c in fk_cols for c in idx.columns):
+        # Skip if all columns are FK columns (junction table)
+        if all(c in fk_cols for c in idx.columns):
             continue
         _dedup_composite(table, idx.columns, rows, rng)
 
     # Composite PK as implicit UNIQUE
     if len(table.primary_key) > 1:
-        pk_cols_in_fk = any(c in fk_cols for c in table.primary_key)
-        if not pk_cols_in_fk:
+        all_pk_cols_are_fk = all(c in fk_cols for c in table.primary_key)
+        if not all_pk_cols_are_fk:
             _dedup_composite(table, table.primary_key, rows, rng)
 
 
@@ -133,7 +135,8 @@ def _dedup_composite(
 ) -> None:
     """Remove duplicate tuples for composite UNIQUE constraints."""
     seen: set[tuple[Any, ...]] = set()
-    col_schemas = [c for c in table.columns if c.name in col_names]
+    col_name_set = set(col_names)
+    col_schemas = [c for c in table.columns if c.name in col_name_set]
 
     for row in rows:
         tup = tuple(row[c] for c in col_names)
@@ -185,13 +188,26 @@ def _regenerate_value(col: ColumnSchema, rng: Generator) -> Any:
         return bool(rng.integers(0, 2))
     if dt in (ColumnType.VARCHAR, ColumnType.TEXT):
         length = min(col.max_length or 20, 50)
-        chars = list(string.ascii_lowercase)
-        return "".join(rng.choice(chars, size=length))
-    # Fallback for UUID, DATE, JSON, etc.
+        return "".join(rng.choice(_ASCII_LOWER_CHARS, size=length))
+    return _regen_special_or_fallback(col, rng)
+
+
+def _regen_special_or_fallback(col: ColumnSchema, rng: Generator) -> Any:
+    """Handle ENUM, UUID, and fallback types."""
+    if col.data_type == ColumnType.ENUM and col.enum_values:
+        return str(rng.choice(col.enum_values))
+    if col.data_type == ColumnType.UUID:
+        return _regen_uuid(rng)
+    # Fallback for DATE, JSON, ARRAY, etc.
     return int(rng.integers(0, 10000))
 
 
-_INTEGER_TYPES = frozenset({ColumnType.INTEGER, ColumnType.BIGINT, ColumnType.SMALLINT})
+def _regen_uuid(rng: Generator) -> str:
+    """Generate a deterministic UUID from RNG bytes."""
+    import uuid  # noqa: PLC0415
+
+    raw = bytes(rng.integers(0, 256, size=16, dtype=np.uint8))
+    return str(uuid.UUID(bytes=raw))
 
 
 def _regen_numeric(col: ColumnSchema, rng: Generator) -> float:
