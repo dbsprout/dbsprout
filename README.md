@@ -2,7 +2,19 @@
 
 Generate realistic seed data from your database schema.
 
-DBSprout reads your database schema (live connection or DDL file), analyzes foreign key dependencies, resolves cycles, and generates seed data in the correct insertion order. It works offline by default and supports SQLite, PostgreSQL, and MySQL.
+DBSprout reads your database schema (live connection or DDL file), analyzes foreign key dependencies, and generates realistic seed data with 100% FK integrity. It works offline by default and supports SQLite, PostgreSQL, and MySQL.
+
+## Features
+
+- **Schema-first** -- point at your DB or DDL file, no config required
+- **100% FK integrity** -- topological ordering + FK sampling from parent PKs
+- **Realistic values** -- 89 pattern rules map columns to appropriate generators (email, name, phone, etc.)
+- **Deterministic** -- same seed produces identical output for CI/testing
+- **Multiple output formats** -- SQL INSERT, CSV, JSON, JSONL
+- **3 SQL dialects** -- PostgreSQL, MySQL, SQLite with correct quoting and escaping
+- **Constraint enforcement** -- UNIQUE dedup, NOT NULL, auto-increment PKs
+- **Integrity validation** -- automatic post-generation validation with detailed report
+- **Cycle handling** -- detects and resolves circular FK dependencies automatically
 
 ## Installation
 
@@ -27,9 +39,7 @@ pip install dbsprout[dev]     # Development tools (pytest, ruff, mypy)
 
 ## Quick Start
 
-### From a live database
-
-Point DBSprout at your database and it will introspect the schema, display a summary, and generate a configuration file:
+### 1. Initialize from your database
 
 ```bash
 # SQLite
@@ -42,15 +52,27 @@ dbsprout init --db postgresql://user:pass@localhost:5432/mydb
 dbsprout init --db mysql+pymysql://user:pass@localhost:3306/mydb
 ```
 
-### From a DDL file
-
-No running database? Use a SQL DDL file instead:
+Or from a DDL file:
 
 ```bash
 dbsprout init --file schema.sql
 ```
 
-DBSprout auto-detects the SQL dialect (PostgreSQL, MySQL, SQLite) from the DDL content.
+### 2. Generate seed data
+
+```bash
+# Generate SQL INSERT files (default)
+dbsprout generate
+
+# Generate 500 rows per table with CSV output
+dbsprout generate --rows 500 --output-format csv
+
+# Generate JSON with a specific seed for reproducibility
+dbsprout generate --output-format json --seed 123
+
+# MySQL dialect
+dbsprout generate --dialect mysql --output-dir ./mysql-seeds
+```
 
 ### Example output
 
@@ -67,44 +89,81 @@ $ dbsprout init --db sqlite:///bookstore.db
 │ orders      │       4 │   1 │ id          │
 │ order_items │       4 │   2 │ id          │
 └─────────────┴─────────┴─────┴─────────────┘
-╭──────────────── Insertion Order ─────────────────╮
-│   1. authors, categories                         │
-│   2. books                                       │
-│   3. orders                                      │
-│   4. order_items                                 │
-╰──────────────────────────────────────────────────╯
-Self-referencing FKs: categories
-
-Wrote dbsprout.toml
-Wrote .dbsprout/snapshots/a1b2c3d4e5f6g7h8.json
-
 Done! Run `dbsprout generate` to create seed data.
+
+$ dbsprout generate --rows 50 --output-format sql
+
+         Integrity Validation
+┏━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━┳━━━━━━━━┓
+┃ Check            ┃ Table       ┃ Status ┃
+┡━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━╇━━━━━━━━┩
+│ pk_uniqueness    │ authors     │ PASS   │
+│ pk_uniqueness    │ books       │ PASS   │
+│ fk_satisfaction  │ books       │ PASS   │
+│ fk_satisfaction  │ orders      │ PASS   │
+│ fk_satisfaction  │ order_items │ PASS   │
+└──────────────────┴─────────────┴────────┘
+      Generation Complete
+┏━━━━━━━━━━━━┳━━━━━━━━━━━━┓
+┃ Metric     ┃ Value      ┃
+┡━━━━━━━━━━━━╇━━━━━━━━━━━━┩
+│ Tables     │ 5          │
+│ Total rows │ 250        │
+│ Duration   │ 0.042s     │
+│ Output     │ ./seeds    │
+│ Format     │ sql        │
+└────────────┴────────────┘
 ```
 
-### Preview without writing files
+Output files are numbered by insertion order:
 
-```bash
-dbsprout init --db sqlite:///myapp.db --dry-run
+```
+seeds/
+  001_authors.sql
+  001_categories.sql
+  002_books.sql
+  003_orders.sql
+  004_order_items.sql
 ```
 
-### Specify output directory
+## CLI Reference
 
-```bash
-dbsprout init --db sqlite:///myapp.db --output-dir ./config
+### `dbsprout init`
+
+Introspect a database schema and generate configuration.
+
+```
+dbsprout init --db <connection-url>    # From live database
+dbsprout init --file <schema.sql>      # From DDL file
+dbsprout init --dry-run                # Preview without writing files
+dbsprout init --output-dir ./config    # Custom output directory
 ```
 
-## What it generates
+### `dbsprout generate`
 
-### `dbsprout.toml`
+Generate seed data from the schema snapshot.
 
-Configuration file with your schema settings and generation defaults:
+```
+dbsprout generate                              # Defaults: 100 rows, SQL, ./seeds/
+dbsprout generate --rows 500                   # 500 rows per table
+dbsprout generate --seed 123                   # Deterministic output
+dbsprout generate --output-format csv          # CSV output
+dbsprout generate --output-format json         # JSON (pretty-printed array)
+dbsprout generate --output-format jsonl        # JSONL (one object per line)
+dbsprout generate --dialect mysql              # MySQL SQL dialect
+dbsprout generate --output-dir ./my-seeds      # Custom output directory
+dbsprout generate --schema-snapshot path.json  # Explicit schema path
+dbsprout generate --config dbsprout.toml       # Explicit config path
+```
+
+## Configuration
+
+`dbsprout.toml` (generated by `dbsprout init`):
 
 ```toml
-# DBSprout configuration
-
 [schema]
-dialect = "sqlite"
-source = "sqlite:///myapp.db"
+dialect = "postgresql"
+source = "postgresql://user:***@localhost:5432/mydb"
 snapshot = ".dbsprout/snapshots/a1b2c3d4.json"
 
 [generation]
@@ -113,45 +172,53 @@ seed = 42
 output_format = "sql"
 output_dir = "./seeds"
 
-# Per-table overrides (uncomment and customize):
-# [tables.users]
-# rows = 50
-# [tables.orders]
-# rows = 200
+# Per-table overrides
+[tables.users]
+rows = 50
+
+[tables.audit_logs]
+exclude = true
 ```
 
-### Schema snapshot
+## How it Works
 
-A JSON snapshot of your schema is saved to `.dbsprout/snapshots/` for future diff operations. The filename is a hash of the schema content, so identical schemas produce the same file.
+```
+SCHEMA INPUT ──> FK GRAPH ──> GENERATION ──> CONSTRAINTS ──> VALIDATION ──> OUTPUT
+```
 
-## How it works
+1. **Schema Input** -- Reads schema via live DB introspection (SQLAlchemy) or DDL file parsing (sqlglot)
+2. **FK Graph** -- Builds dependency graph, detects cycles (Tarjan SCC), resolves via nullable FK deferral
+3. **Generation** -- Heuristic column mapping (89 patterns) + Mimesis/NumPy value generation in topological order
+4. **FK Sampling** -- FK columns sample from parent PKs using NumPy vectorized random selection
+5. **Constraints** -- UNIQUE dedup with retry, NOT NULL enforcement, auto-increment PK assignment
+6. **Validation** -- FK satisfaction, PK uniqueness, UNIQUE, NOT NULL checks (all must be 100%)
+7. **Output** -- SQL INSERT (3 dialects), CSV, JSON, JSONL with insertion-order file numbering
 
-1. **Schema Input** -- Reads your schema via live database introspection (SQLAlchemy) or DDL file parsing (sqlglot)
-2. **FK Graph Analysis** -- Builds a dependency graph from foreign key relationships
-3. **Cycle Detection** -- Uses Tarjan's SCC algorithm to find circular dependencies
-4. **Cycle Resolution** -- Automatically breaks cycles by deferring nullable FK columns for two-pass insertion
-5. **Insertion Order** -- Computes a batched topological sort so parent tables are populated before children
+## Supported Databases
 
-## Supported databases
-
-| Database   | Live introspection | DDL file parsing |
+| Database   | Live Introspection | DDL File Parsing |
 |------------|-------------------|------------------|
 | SQLite     | Yes               | Yes              |
 | PostgreSQL | Yes               | Yes              |
 | MySQL      | Yes               | Yes              |
 
-## Project status
+## Project Status
 
-DBSprout is in active development. Sprint 1 (schema input layer) is complete:
+DBSprout is in active development.
 
+**v0.1.0** (current) -- Sprint 1 + Sprint 2 complete:
 - Schema introspection for SQLite, PostgreSQL, MySQL
 - SQL DDL file parsing with auto dialect detection
-- FK dependency graph with topological sort
-- Cycle detection (Tarjan SCC) and automatic cycle breaking
-- `dbsprout init` CLI command with Rich terminal output
-- 375+ tests, 95%+ coverage
+- FK dependency graph with topological sort and cycle resolution
+- `dbsprout init` and `dbsprout generate` CLI commands
+- Heuristic generation engine with 89 column pattern rules
+- Vectorized NumPy generation + deterministic seeding
+- FK sampling, UNIQUE/NOT NULL constraint enforcement
+- SQL INSERT (3 dialects), CSV, JSON/JSONL output writers
+- Automatic integrity validation
+- 600+ tests, 95%+ coverage
 
-**Coming next:** Seed data generation engines, output writers, and the `dbsprout generate` command.
+**Coming next:** Embedded LLM spec generation, additional schema parsers (DBML, Prisma, Mermaid), cloud LLM support, and migration-aware incremental seeding.
 
 ## Development
 
@@ -167,9 +234,10 @@ uv run pytest
 # Run with coverage
 uv run pytest --cov=dbsprout --cov-report=term-missing
 
-# Lint + type check
+# Lint + type check + security scan
 uv run ruff check .
 uv run mypy --strict dbsprout/
+uv run bandit -c pyproject.toml -r dbsprout/
 
 # Run the CLI
 uv run dbsprout --help
