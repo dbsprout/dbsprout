@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import typer
 
+from dbsprout.cli.commands.generate import generate_command
 from dbsprout.cli.commands.init import init_command
 
 app = typer.Typer(
@@ -13,6 +14,7 @@ app = typer.Typer(
 )
 
 app.command(name="init")(init_command)
+app.command(name="generate")(generate_command)
 
 
 @app.callback()
