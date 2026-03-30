@@ -103,7 +103,7 @@ def build_insert(
         value_rows.append(f"({vals})")
 
     values_str = ",\n".join(value_rows)
-    return f"INSERT INTO {quoted_table} ({quoted_cols}) VALUES\n{values_str};\n"
+    return f"INSERT INTO {quoted_table} ({quoted_cols}) VALUES\n{values_str};\n"  # nosec B608
 
 
 class SQLWriter:
