@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import typer
 from rich.console import Console
@@ -11,6 +12,9 @@ from rich.table import Table
 from dbsprout.config.models import DBSproutConfig
 from dbsprout.generate.orchestrator import GenerateResult, orchestrate
 from dbsprout.schema.models import DatabaseSchema
+
+if TYPE_CHECKING:
+    from dbsprout.quality.integrity import IntegrityReport
 
 console = Console()
 
@@ -84,8 +88,18 @@ def generate_command(  # noqa: PLR0913
     # Write output
     _write_output(result, schema, result.insertion_order, output_dir, output_format, dialect)
 
+    # Validate integrity
+    from dbsprout.quality.integrity import validate_integrity  # noqa: PLC0415
+
+    report = validate_integrity(result.tables_data, schema)
+    _print_validation(report)
+
     # Summary
     _print_summary(result, output_dir, output_format)
+
+    if not report.passed:
+        console.print("[red]Integrity validation FAILED.[/red]")
+        raise typer.Exit(code=1)
 
 
 def _resolve_schema_path(explicit: Path | None) -> Path | None:
@@ -134,6 +148,25 @@ def _write_output(  # noqa: PLR0913
     else:
         console.print(f"[red]Error:[/red] Unknown output format: {output_format}")
         raise typer.Exit(code=1)
+
+
+def _print_validation(report: IntegrityReport) -> None:
+    """Print integrity validation results as a Rich table."""
+    if not report.checks:
+        return
+
+    table = Table(title="Integrity Validation")
+    table.add_column("Check", style="bold")
+    table.add_column("Table")
+    table.add_column("Column")
+    table.add_column("Status")
+    table.add_column("Details")
+
+    for check in report.checks:
+        status = "[green]PASS[/green]" if check.passed else "[red]FAIL[/red]"
+        table.add_row(check.check, check.table, check.column, status, check.details)
+
+    console.print(table)
 
 
 def _print_summary(
