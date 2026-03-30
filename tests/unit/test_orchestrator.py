@@ -188,6 +188,19 @@ class TestEmptySchema:
         assert result.total_tables == 0
 
 
+class TestSpecEngine:
+    def test_engine_spec_produces_data(self) -> None:
+        """engine='spec' uses SpecDrivenEngine and produces valid data."""
+        schema = _users_orders_schema()
+        config = DBSproutConfig()
+
+        result = orchestrate(schema, config, seed=42, default_rows=5, engine="spec")
+
+        assert "users" in result.tables_data
+        assert "orders" in result.tables_data
+        assert len(result.tables_data["users"]) == 5
+
+
 class TestGenerateResult:
     def test_result_stats(self) -> None:
         """GenerateResult must report correct stats."""

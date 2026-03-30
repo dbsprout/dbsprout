@@ -38,6 +38,7 @@ def orchestrate(
     config: DBSproutConfig,
     seed: int,
     default_rows: int,
+    engine: str = "heuristic",
 ) -> GenerateResult:
     """Run the full generation pipeline.
 
@@ -54,8 +55,19 @@ def orchestrate(
     # Map columns to generators (once for whole schema)
     all_mappings = map_columns(schema)
 
-    # Generate tables in topological order
-    engine = HeuristicEngine(seed=seed)
+    # Select engine
+    use_spec = engine == "spec"
+    heuristic_engine = HeuristicEngine(seed=seed)
+    spec_engine = None
+    all_table_specs = None
+    if use_spec:
+        from dbsprout.generate.engines.spec_driven import SpecDrivenEngine  # noqa: PLC0415
+        from dbsprout.spec.analyzer import heuristic_fallback  # noqa: PLC0415
+
+        spec_engine = SpecDrivenEngine(seed=seed)
+        dataspec = heuristic_fallback(schema)
+        all_table_specs = {ts.table_name: ts for ts in dataspec.tables}
+
     parent_data: dict[str, list[dict[str, Any]]] = {}
 
     for table_name in insertion_order:
@@ -67,10 +79,18 @@ def orchestrate(
             continue
 
         num_rows = _get_row_count(table_name, config, default_rows)
-        mappings = all_mappings.get(table_name, {})
 
-        # Generate → FK sample → enforce constraints
-        rows = engine.generate_table(table_schema, mappings, num_rows)
+        # Generate with selected engine
+        if use_spec and spec_engine is not None and all_table_specs is not None:
+            table_spec = all_table_specs.get(table_name)
+            if table_spec is not None:
+                rows = spec_engine.generate_table(table_schema, table_spec, num_rows)
+            else:
+                mappings = all_mappings.get(table_name, {})
+                rows = heuristic_engine.generate_table(table_schema, mappings, num_rows)
+        else:
+            mappings = all_mappings.get(table_name, {})
+            rows = heuristic_engine.generate_table(table_schema, mappings, num_rows)
         sample_fk_values(table_schema, parent_data, rows, seed)
         rows = enforce_constraints(table_schema, rows, seed)
 

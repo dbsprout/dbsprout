@@ -407,3 +407,56 @@ class TestDecimalAndFallbackRegen:
         assert token is not None
         assert isinstance(token, str)
         assert len(token) == 36  # UUID format: 8-4-4-4-12
+
+
+class TestCheckConstraintEnforcement:
+    def test_range_check_enforced(self) -> None:
+        """Values outside CHECK range are corrected."""
+        table = TableSchema(
+            name="items",
+            columns=[
+                _col("id", nullable=False, pk=True, autoincrement=True),
+                ColumnSchema(
+                    name="price",
+                    data_type=ColumnType.FLOAT,
+                    nullable=False,
+                    check_constraint="price >= 0 AND price <= 1000",
+                ),
+            ],
+            primary_key=["id"],
+        )
+        rows = [
+            {"id": None, "price": -5.0},  # below range
+            {"id": None, "price": 50.0},  # within range
+            {"id": None, "price": 9999.0},  # above range
+        ]
+
+        result = enforce_constraints(table, rows, seed=42)
+
+        for row in result:
+            assert 0 <= row["price"] <= 1000
+
+    def test_in_check_enforced(self) -> None:
+        """Values not in allowed set are corrected."""
+        table = TableSchema(
+            name="tasks",
+            columns=[
+                _col("id", nullable=False, pk=True, autoincrement=True),
+                ColumnSchema(
+                    name="status",
+                    data_type=ColumnType.VARCHAR,
+                    nullable=False,
+                    check_constraint="status IN ('active', 'inactive')",
+                ),
+            ],
+            primary_key=["id"],
+        )
+        rows = [
+            {"id": None, "status": "invalid"},
+            {"id": None, "status": "active"},
+        ]
+
+        result = enforce_constraints(table, rows, seed=42)
+
+        for row in result:
+            assert row["status"] in {"active", "inactive"}
