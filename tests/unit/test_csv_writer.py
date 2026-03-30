@@ -351,6 +351,65 @@ class TestCSVTypeFormatting:
         rows = _read_csv(paths[0])
         assert rows[1][1] == '{"key": "value"}'
 
+    def test_list_as_json(self, tmp_path: Path) -> None:
+        """List values should be written as JSON strings."""
+        schema = DatabaseSchema(
+            tables=[
+                TableSchema(
+                    name="configs",
+                    columns=[
+                        ColumnSchema(
+                            name="id",
+                            data_type=ColumnType.INTEGER,
+                            nullable=False,
+                            primary_key=True,
+                        ),
+                        ColumnSchema(
+                            name="tags",
+                            data_type=ColumnType.JSON,
+                            nullable=True,
+                        ),
+                    ],
+                    primary_key=["id"],
+                ),
+            ],
+            dialect="postgresql",
+        )
+        data: dict[str, list[dict[str, Any]]] = {
+            "configs": [{"id": 1, "tags": [1, 2, 3]}],
+        }
+        writer = CSVWriter()
+        paths = writer.write(data, schema, ["configs"], tmp_path)
+
+        rows = _read_csv(paths[0])
+        assert rows[1][1] == "[1, 2, 3]"
+
+
+class TestCSVNanInf:
+    def test_nan_as_empty(self, tmp_path: Path) -> None:
+        """NaN float values should be written as empty string."""
+        schema = _simple_schema()
+        data: dict[str, list[dict[str, Any]]] = {
+            "users": [{"id": 1, "email": float("nan")}],
+        }
+        writer = CSVWriter()
+        paths = writer.write(data, schema, ["users"], tmp_path)
+
+        rows = _read_csv(paths[0])
+        assert rows[1][1] == ""
+
+    def test_inf_as_empty(self, tmp_path: Path) -> None:
+        """Inf float values should be written as empty string."""
+        schema = _simple_schema()
+        data: dict[str, list[dict[str, Any]]] = {
+            "users": [{"id": 1, "email": float("inf")}],
+        }
+        writer = CSVWriter()
+        paths = writer.write(data, schema, ["users"], tmp_path)
+
+        rows = _read_csv(paths[0])
+        assert rows[1][1] == ""
+
 
 class TestCSVDeterministic:
     def test_same_data_same_output(self, tmp_path: Path) -> None:

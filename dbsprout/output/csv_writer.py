@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import csv
 import json
+import math
+from decimal import Decimal
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -22,11 +24,22 @@ def _format_csv_value(value: Any) -> str:
         return ""
     if isinstance(value, bool):
         return "true" if value else "false"
+    if _is_nan_or_inf(value):
+        return ""
     if isinstance(value, bytes):
         return value.hex()
     if isinstance(value, (dict, list)):
         return json.dumps(value, default=str)
     return str(value)
+
+
+def _is_nan_or_inf(value: Any) -> bool:
+    """Check if a numeric value is NaN or Inf."""
+    if isinstance(value, float):
+        return math.isnan(value) or math.isinf(value)
+    if isinstance(value, Decimal):
+        return value.is_nan() or value.is_infinite()
+    return False
 
 
 class CSVWriter:
