@@ -67,6 +67,20 @@ class SpecDrivenEngine:
                 col_s,
             )
 
+        # Log warnings for deferred features
+        if table_spec.derived:
+            logger.warning(
+                "Table '%s' has %d derived columns — skipped (Sprint 5)",
+                table.name,
+                len(table_spec.derived),
+            )
+        if table_spec.correlations:
+            logger.warning(
+                "Table '%s' has %d correlation rules — skipped (Sprint 5)",
+                table.name,
+                len(table_spec.correlations),
+            )
+
         return [{col_name: col_data[col_name][i] for col_name in col_data} for i in range(num_rows)]
 
     def _generate_from_config(
@@ -100,7 +114,10 @@ class SpecDrivenEngine:
     ) -> list[Any]:
         """Route a provider string to the appropriate generator."""
         if provider == "builtin.uuid4":
-            return [str(uuid.uuid4()) for _ in range(num_rows)]
+            return [
+                str(uuid.UUID(bytes=bytes(rng.integers(0, 256, size=16, dtype=np.uint8))))
+                for _ in range(num_rows)
+            ]
         if provider in ("builtin.autoincrement", "builtin.default"):
             return [None] * num_rows
         if provider.startswith("numpy."):
@@ -120,21 +137,7 @@ class SpecDrivenEngine:
         class_name = parts[1]
         method_name = parts[2]
 
-        resolver = _MIMESIS_CLASS_MAP.get(class_name)
-        instance = self._mimesis_instances().get(class_name) if resolver is None else resolver(self)
-
-        if instance is None:
-            return [f"val_{i}" for i in range(num_rows)]
-
-        method = getattr(instance, method_name, None)
-        if method is None or not callable(method):
-            return [f"val_{i}" for i in range(num_rows)]
-
-        return [method() for _ in range(num_rows)]
-
-    def _mimesis_instances(self) -> dict[str, Any]:
-        """Map class names to Mimesis provider instances."""
-        return {
+        instances: dict[str, Any] = {
             "Person": self._person,
             "Address": self._address,
             "Finance": self._finance,
@@ -144,17 +147,15 @@ class SpecDrivenEngine:
             "Payment": self._payment,
         }
 
+        instance = instances.get(class_name)
+        if instance is None:
+            return [f"val_{i}" for i in range(num_rows)]
 
-# Class name → lambda(engine) -> instance
-_MIMESIS_CLASS_MAP: dict[str, Any] = {
-    "Person": lambda e: e._person,
-    "Address": lambda e: e._address,
-    "Finance": lambda e: e._finance,
-    "Internet": lambda e: e._internet,
-    "Text": lambda e: e._text,
-    "Datetime": lambda e: e._dt,
-    "Payment": lambda e: e._payment,
-}
+        method = getattr(instance, method_name, None)
+        if method is None or not callable(method):
+            return [f"val_{i}" for i in range(num_rows)]
+
+        return [method() for _ in range(num_rows)]
 
 
 def _dispatch_numpy(

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import uuid
+from typing import Any
 
 from dbsprout.generate.engines.spec_driven import SpecDrivenEngine
 from dbsprout.schema.models import (
@@ -244,9 +245,77 @@ class TestBuiltinUUID:
         rows = engine.generate_table(table, spec, 5)
 
         for row in rows:
-            # Should be a valid UUID string
             parsed = uuid.UUID(row["token"])
             assert isinstance(parsed, uuid.UUID)
+
+    def test_uuid4_deterministic(self) -> None:
+        """Same seed produces identical UUIDs."""
+        table = TableSchema(
+            name="tokens",
+            columns=[_col("token", data_type=ColumnType.UUID)],
+            primary_key=[],
+        )
+        spec = TableSpec(
+            table_name="tokens",
+            columns={"token": GeneratorConfig(provider="builtin.uuid4")},
+        )
+        e1 = SpecDrivenEngine(seed=99)
+        e2 = SpecDrivenEngine(seed=99)
+
+        rows1 = e1.generate_table(table, spec, 5)
+        rows2 = e2.generate_table(table, spec, 5)
+
+        assert [r["token"] for r in rows1] == [r["token"] for r in rows2]
+
+
+class TestDerivedAndCorrelationWarnings:
+    def test_derived_columns_logged_warning(self, caplog: Any) -> None:
+        """Derived columns log a warning and are skipped."""
+        import logging  # noqa: PLC0415
+
+        from dbsprout.spec.models import DerivedColumn  # noqa: PLC0415
+
+        table = TableSchema(
+            name="users",
+            columns=[_col("name", data_type=ColumnType.VARCHAR)],
+            primary_key=[],
+        )
+        spec = TableSpec(
+            table_name="users",
+            columns={"name": GeneratorConfig(provider="mimesis.Text.word")},
+            derived=[
+                DerivedColumn(column="full", expression="x", depends_on=["name"]),
+            ],
+        )
+        engine = SpecDrivenEngine(seed=42)
+        with caplog.at_level(logging.WARNING):
+            rows = engine.generate_table(table, spec, 3)
+
+        assert len(rows) == 3
+        assert "derived columns" in caplog.text.lower()
+
+    def test_correlations_logged_warning(self, caplog: Any) -> None:
+        """Correlation rules log a warning and are skipped."""
+        import logging  # noqa: PLC0415
+
+        from dbsprout.spec.models import CorrelationRule  # noqa: PLC0415
+
+        table = TableSchema(
+            name="users",
+            columns=[_col("city", data_type=ColumnType.VARCHAR)],
+            primary_key=[],
+        )
+        spec = TableSpec(
+            table_name="users",
+            columns={"city": GeneratorConfig(provider="mimesis.Address.city")},
+            correlations=[CorrelationRule(columns=["city", "state"])],
+        )
+        engine = SpecDrivenEngine(seed=42)
+        with caplog.at_level(logging.WARNING):
+            rows = engine.generate_table(table, spec, 3)
+
+        assert len(rows) == 3
+        assert "correlation" in caplog.text.lower()
 
 
 class TestDeterministic:
