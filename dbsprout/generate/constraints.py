@@ -14,6 +14,7 @@ import numpy as np
 if TYPE_CHECKING:
     from numpy.random import Generator
 
+    from dbsprout.generate.check_parser import CheckConstraint
     from dbsprout.schema.models import ColumnSchema, TableSchema
 
 from dbsprout.schema.models import ColumnType
@@ -52,6 +53,7 @@ def enforce_constraints(
     _assign_autoincrement_pks(table, result)
     _enforce_unique(table, result, rng, fk_cols)
     _enforce_not_null(table, result, rng, fk_cols)
+    _enforce_check(table, result, rng)
 
     return result
 
@@ -218,6 +220,47 @@ def _regen_numeric(col: ColumnSchema, rng: Generator) -> float:
         max_val = max(10 ** (precision - scale) - 1, 1)
         return round(float(rng.uniform(0, max_val)), scale)
     return round(float(rng.uniform(0, 10000)), 2)
+
+
+def _enforce_check(
+    table: TableSchema,
+    rows: list[dict[str, Any]],
+    rng: Generator,
+) -> None:
+    """Enforce CHECK constraints by regenerating out-of-bounds values."""
+    from dbsprout.generate.check_parser import parse_check  # noqa: PLC0415
+
+    for col in table.columns:
+        if col.check_constraint is None:
+            continue
+
+        cc = parse_check(col.name, col.check_constraint)
+        if cc is None:
+            continue
+
+        for row in rows:
+            val = row[col.name]
+            if val is None:
+                continue
+
+            if cc.allowed_values is not None:
+                if str(val) not in cc.allowed_values:
+                    row[col.name] = str(rng.choice(cc.allowed_values))
+            elif _is_numeric_out_of_bounds(val, cc):
+                lo = cc.min_value if cc.min_value is not None else val
+                hi = cc.max_value if cc.max_value is not None else val
+                row[col.name] = round(float(rng.uniform(lo, hi)), 2)
+
+
+def _is_numeric_out_of_bounds(val: Any, cc: CheckConstraint) -> bool:
+    """Check if a numeric value is outside CHECK constraint bounds."""
+    if not isinstance(val, (int, float)):
+        return False
+    if cc.min_value is None and cc.max_value is None:
+        return False
+    lo = cc.min_value if cc.min_value is not None else val
+    hi = cc.max_value if cc.max_value is not None else val
+    return bool(val < lo or val > hi)
 
 
 def _fk_columns(table: TableSchema) -> set[str]:
