@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.1.2](https://github.com/dbsprout/dbsprout/compare/v0.1.1...v0.1.2) (2026-03-30)
+
+
+### Features
+
+* geo coherence with 563 US city/state/zip lookup tuples (S-029) ([#34](https://github.com/dbsprout/dbsprout/issues/34)) ([9b9af4b](https://github.com/dbsprout/dbsprout/commit/9b9af4b91d86146f0605b0900afe183dbaa96356))
+* spec cache with diskcache keyed by schema_hash (S-024) ([#29](https://github.com/dbsprout/dbsprout/issues/29)) ([f5b28bb](https://github.com/dbsprout/dbsprout/commit/f5b28bb50718999fad23a5d1d9af6edd3c98d666))
+
+
+### CI/CD
+
+* PyPI publish workflow with trusted publishing + metadata fixes (S-031) ([#36](https://github.com/dbsprout/dbsprout/issues/36)) ([cee1554](https://github.com/dbsprout/dbsprout/commit/cee1554b562922448ee742a02a0c7661ff5a27d2))
+
 ## [0.1.1](https://github.com/dbsprout/dbsprout/compare/v0.1.0...v0.1.1) (2026-03-30)
 
 
