@@ -157,3 +157,48 @@ class TestGenerateProducesOutput:
         assert len(json_files) == 1
         parsed = json.loads(json_files[0].read_text())
         assert len(parsed) == 3
+
+    def test_end_to_end_jsonl(self, tmp_path: Path) -> None:
+        """Full generate with JSONL output."""
+        project_dir = _write_schema(tmp_path)
+        seeds_dir = project_dir / "seeds"
+
+        result = runner.invoke(
+            app,
+            [
+                "generate",
+                "--schema-snapshot",
+                str(project_dir / ".dbsprout" / "schema.json"),
+                "--output-dir",
+                str(seeds_dir),
+                "--output-format",
+                "jsonl",
+                "--rows",
+                "3",
+            ],
+        )
+
+        assert result.exit_code == 0
+        jsonl_files = list(seeds_dir.glob("*.jsonl"))
+        assert len(jsonl_files) == 1
+        lines = jsonl_files[0].read_text().strip().split("\n")
+        assert len(lines) == 3
+
+    def test_invalid_format_errors(self, tmp_path: Path) -> None:
+        """Invalid output format should exit with error."""
+        project_dir = _write_schema(tmp_path)
+
+        result = runner.invoke(
+            app,
+            [
+                "generate",
+                "--schema-snapshot",
+                str(project_dir / ".dbsprout" / "schema.json"),
+                "--output-dir",
+                str(tmp_path / "seeds"),
+                "--output-format",
+                "parquet",
+            ],
+        )
+
+        assert result.exit_code != 0

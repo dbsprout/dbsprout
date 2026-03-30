@@ -74,20 +74,15 @@ def generate_command(  # noqa: PLR0913
     cfg_path = config_path or Path("dbsprout.toml")
     config = DBSproutConfig.from_toml(cfg_path if cfg_path.exists() else None)
 
-    # Override config seed/rows from CLI
-    effective_rows = rows
-    effective_seed = seed
-
     # Orchestrate
-    result = orchestrate(schema, config, seed=effective_seed, default_rows=effective_rows)
+    result = orchestrate(schema, config, seed=seed, default_rows=rows)
 
     if result.total_tables == 0:
         console.print("[yellow]No tables to generate.[/yellow]")
         raise typer.Exit(code=0)
 
     # Write output
-    insertion_order = _flat_insertion_order(schema, result)
-    _write_output(result, schema, insertion_order, output_dir, output_format, dialect)
+    _write_output(result, schema, result.insertion_order, output_dir, output_format, dialect)
 
     # Summary
     _print_summary(result, output_dir, output_format)
@@ -101,28 +96,6 @@ def _resolve_schema_path(explicit: Path | None) -> Path | None:
     if default.exists():
         return default
     return None
-
-
-def _flat_insertion_order(
-    schema: DatabaseSchema,
-    result: GenerateResult,
-) -> list[str]:
-    """Get flat insertion order for output file naming."""
-    from graphlib import CycleError  # noqa: PLC0415
-
-    from dbsprout.schema.graph import FKGraph, resolve_cycles  # noqa: PLC0415
-
-    try:
-        graph = FKGraph.from_schema(schema)
-    except CycleError:
-        graph = resolve_cycles(schema).graph
-
-    flat: list[str] = []
-    for batch in graph.insertion_order:
-        flat.extend(sorted(batch))
-
-    # Only include tables that were actually generated
-    return [t for t in flat if t in result.tables_data]
 
 
 def _write_output(  # noqa: PLR0913

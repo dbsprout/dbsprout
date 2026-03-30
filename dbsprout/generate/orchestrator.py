@@ -27,6 +27,7 @@ class GenerateResult:
     """Result of a generation run."""
 
     tables_data: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
+    insertion_order: list[str] = field(default_factory=list)
     total_rows: int = 0
     total_tables: int = 0
     duration_seconds: float = 0.0
@@ -77,9 +78,11 @@ def orchestrate(
 
     duration = time.monotonic() - start
     total_rows = sum(len(rows) for rows in parent_data.values())
+    generated_order = [t for t in insertion_order if t in parent_data]
 
     return GenerateResult(
         tables_data=parent_data,
+        insertion_order=generated_order,
         total_rows=total_rows,
         total_tables=len(parent_data),
         duration_seconds=round(duration, 3),
