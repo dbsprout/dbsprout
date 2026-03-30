@@ -14,6 +14,7 @@ import numpy as np
 if TYPE_CHECKING:
     from numpy.random import Generator
 
+    from dbsprout.generate.check_parser import CheckConstraint
     from dbsprout.schema.models import ColumnSchema, TableSchema
 
 from dbsprout.schema.models import ColumnType
@@ -248,10 +249,10 @@ def _enforce_check(
             elif _is_numeric_out_of_bounds(val, cc):
                 lo = cc.min_value if cc.min_value is not None else val
                 hi = cc.max_value if cc.max_value is not None else val
-                row[col.name] = round(float(rng.uniform(lo, hi + 1)), 2)
+                row[col.name] = round(float(rng.uniform(lo, hi)), 2)
 
 
-def _is_numeric_out_of_bounds(val: Any, cc: Any) -> bool:
+def _is_numeric_out_of_bounds(val: Any, cc: CheckConstraint) -> bool:
     """Check if a numeric value is outside CHECK constraint bounds."""
     if not isinstance(val, (int, float)):
         return False
