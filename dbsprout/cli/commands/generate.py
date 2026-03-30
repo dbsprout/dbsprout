@@ -62,6 +62,12 @@ def generate_command(  # noqa: PLR0913
         "-d",
         help="SQL dialect: postgresql, mysql, sqlite.",
     ),
+    engine: str = typer.Option(
+        "heuristic",
+        "--engine",
+        "-e",
+        help="Generation engine: heuristic or spec.",
+    ),
 ) -> None:
     """Generate seed data from a schema snapshot."""
     # Load schema
@@ -79,7 +85,7 @@ def generate_command(  # noqa: PLR0913
     config = DBSproutConfig.from_toml(cfg_path if cfg_path.exists() else None)
 
     # Orchestrate
-    result = orchestrate(schema, config, seed=seed, default_rows=rows)
+    result = orchestrate(schema, config, seed=seed, default_rows=rows, engine=engine)
 
     if result.total_tables == 0:
         console.print("[yellow]No tables to generate.[/yellow]")
