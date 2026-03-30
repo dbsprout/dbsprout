@@ -2,7 +2,7 @@
 name = "dbsprout"
 version = "0.1.0"
 description = "CLI tool that reads database schemas and generates realistic seed data"
-readme = {text = "", content-type = "text/markdown"}
+readme = "README.md"
 license = "MIT"
 requires-python = ">=3.10"
 authors = [{ name = "Fernando Flores" }]
@@ -33,6 +33,11 @@ dependencies = [
     "numpy>=1.26",
     "diskcache>=5.6",
 ]
+
+[project.urls]
+Homepage = "https://github.com/dbsprout/dbsprout"
+Repository = "https://github.com/dbsprout/dbsprout"
+"Bug Tracker" = "https://github.com/dbsprout/dbsprout/issues"
 
 [project.scripts]
 dbsprout = "dbsprout.cli.app:app"
