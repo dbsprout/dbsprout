@@ -1,0 +1,183 @@
+"""SQL INSERT output writer — PostgreSQL, MySQL, SQLite dialect-aware.
+
+Writes generated data as `.sql` files with batch INSERT statements,
+transaction wrapping, and correct per-dialect quoting/escaping.
+"""
+
+from __future__ import annotations
+
+import json
+import math
+import uuid
+from datetime import date, datetime, time
+from decimal import Decimal
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from pathlib import Path
+
+    from dbsprout.schema.models import DatabaseSchema
+
+_DIALECT_CONFIGS: dict[str, dict[str, str]] = {
+    "postgresql": {
+        "quote": '"',
+        "bool_true": "TRUE",
+        "bool_false": "FALSE",
+        "escape": "standard",
+    },
+    "mysql": {
+        "quote": "`",
+        "bool_true": "1",
+        "bool_false": "0",
+        "escape": "backslash",
+    },
+    "sqlite": {
+        "quote": '"',
+        "bool_true": "1",
+        "bool_false": "0",
+        "escape": "standard",
+    },
+}
+
+
+def get_dialect_config(dialect: str) -> dict[str, str]:
+    """Get formatting config for a SQL dialect."""
+    if dialect not in _DIALECT_CONFIGS:
+        supported = ", ".join(sorted(_DIALECT_CONFIGS))
+        msg = f"Unsupported dialect: {dialect}. Must be one of: {supported}"
+        raise ValueError(msg)
+    return _DIALECT_CONFIGS[dialect]
+
+
+def format_value(value: Any, config: dict[str, str]) -> str:
+    """Format a Python value as a SQL literal."""
+    if value is None:
+        return "NULL"
+    if isinstance(value, bool):
+        return config["bool_true"] if value else config["bool_false"]
+    if isinstance(value, (int, float, Decimal)):
+        return _format_numeric(value)
+    if isinstance(value, (datetime, date, time)):
+        return _quote_string(str(value), config)
+    if isinstance(value, bytes):
+        return f"X'{value.hex()}'"
+    return _format_complex(value, config)
+
+
+def _format_numeric(value: int | float | Decimal) -> str:
+    """Format numeric values, converting NaN/Inf to NULL."""
+    if isinstance(value, float) and (math.isnan(value) or math.isinf(value)):
+        return "NULL"
+    if isinstance(value, Decimal) and (value.is_nan() or value.is_infinite()):
+        return "NULL"
+    return str(value)
+
+
+def _format_complex(value: Any, config: dict[str, str]) -> str:
+    """Format UUID, JSON, and other complex types."""
+    if isinstance(value, uuid.UUID):
+        return _quote_string(str(value), config)
+    if isinstance(value, (dict, list)):
+        json_str = json.dumps(value, default=str)
+        return _quote_string(json_str, config)
+    return _quote_string(str(value), config)
+
+
+def _quote_string(value: str, config: dict[str, str]) -> str:
+    """Quote a string value with dialect-appropriate escaping."""
+    if config["escape"] == "backslash":
+        escaped = value.replace("\\", "\\\\").replace("'", "\\'")
+    else:
+        escaped = value.replace("'", "''")
+    return f"'{escaped}'"
+
+
+def quote_identifier(name: str, config: dict[str, str]) -> str:
+    """Quote a SQL identifier (table/column name)."""
+    q = config["quote"]
+    escaped = name.replace(q, q + q)
+    return f"{q}{escaped}{q}"
+
+
+def build_insert(
+    table_name: str,
+    columns: list[str],
+    rows: list[dict[str, Any]],
+    config: dict[str, str],
+) -> str:
+    """Build a batch INSERT statement."""
+    quoted_table = quote_identifier(table_name, config)
+    quoted_cols = ", ".join(quote_identifier(c, config) for c in columns)
+
+    value_rows: list[str] = []
+    for row in rows:
+        vals = ", ".join(format_value(row.get(c), config) for c in columns)
+        value_rows.append(f"({vals})")
+
+    values_str = ",\n".join(value_rows)
+    return f"INSERT INTO {quoted_table} ({quoted_cols}) VALUES\n{values_str};\n"  # nosec B608
+
+
+class SQLWriter:
+    """Write generated data as SQL INSERT files."""
+
+    def write(  # noqa: PLR0913
+        self,
+        tables_data: dict[str, list[dict[str, Any]]],
+        schema: DatabaseSchema,
+        insertion_order: list[str],
+        output_dir: Path,
+        dialect: str = "postgresql",
+        batch_size: int = 1000,
+    ) -> list[Path]:
+        """Write SQL INSERT files for each table.
+
+        Returns list of written file paths.
+        """
+        config = get_dialect_config(dialect)
+        output_dir.mkdir(parents=True, exist_ok=True)
+        written: list[Path] = []
+
+        for idx, table_name in enumerate(insertion_order):
+            rows = tables_data.get(table_name, [])
+            if not rows:
+                continue
+
+            table_schema = schema.get_table(table_name)
+            columns = (
+                [col.name for col in table_schema.columns] if table_schema else list(rows[0].keys())
+            )
+
+            filename = f"{idx + 1:03d}_{table_name}.sql"
+            filepath = output_dir / filename
+
+            content = _build_file(table_name, columns, rows, config, batch_size)
+            filepath.write_text(content, encoding="utf-8")
+            written.append(filepath)
+
+        return written
+
+
+def _build_file(
+    table_name: str,
+    columns: list[str],
+    rows: list[dict[str, Any]],
+    config: dict[str, str],
+    batch_size: int,
+) -> str:
+    """Build the full SQL file content with transaction wrapping."""
+    parts: list[str] = [
+        "-- Generated by dbsprout",
+        f"-- Table: {table_name} ({len(rows)} rows)",
+        "",
+        "BEGIN;",
+        "",
+    ]
+
+    for i in range(0, len(rows), batch_size):
+        batch = rows[i : i + batch_size]
+        parts.append(build_insert(table_name, columns, batch, config))
+
+    parts.append("COMMIT;")
+    parts.append("")
+    return "\n".join(parts)
