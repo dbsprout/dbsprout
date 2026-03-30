@@ -62,6 +62,7 @@ llm = [
     "litellm>=1.0",
     "instructor>=1.0",
     "llama-cpp-python>=0.3",
+    "huggingface-hub>=0.20",
 ]
 cloud = [
     "litellm>=1.0",

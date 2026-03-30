@@ -612,6 +612,7 @@ dependencies = [
 all = [
     { name = "faker" },
     { name = "fastapi" },
+    { name = "huggingface-hub" },
     { name = "instructor" },
     { name = "jinja2" },
     { name = "litellm" },
@@ -655,6 +656,7 @@ gen = [
     { name = "numpy", version = "2.4.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
 ]
 llm = [
+    { name = "huggingface-hub" },
     { name = "instructor" },
     { name = "litellm" },
     { name = "llama-cpp-python" },
@@ -689,6 +691,7 @@ requires-dist = [
     { name = "faker", specifier = ">=33.0" },
     { name = "faker", marker = "extra == 'gen'", specifier = ">=33.0" },
     { name = "fastapi", marker = "extra == 'web'", specifier = ">=0.115" },
+    { name = "huggingface-hub", marker = "extra == 'llm'", specifier = ">=0.20" },
     { name = "instructor", marker = "extra == 'cloud'", specifier = ">=1.0" },
     { name = "instructor", marker = "extra == 'llm'", specifier = ">=1.0" },
     { name = "jinja2", marker = "extra == 'web'", specifier = ">=3.1" },
