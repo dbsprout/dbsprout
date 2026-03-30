@@ -94,7 +94,8 @@ def _emit_rule(
 
     # Handle enum
     if "enum" in schema:
-        alternatives = " | ".join(f'"\\"{v}\\""' for v in schema["enum"])
+        escaped = [str(v).replace('"', '\\"') for v in schema["enum"]]
+        alternatives = " | ".join(f'"\\"{e}\\""' for e in escaped)
         rules.append(f"{name} ::= {alternatives}")
         return
 
@@ -134,6 +135,15 @@ def _emit_object(
     """Emit rules for a JSON Schema object type."""
     props = schema.get("properties", {})
     required = set(schema.get("required", []))
+
+    # Handle additionalProperties (e.g., dict[str, GeneratorConfig])
+    add_props = schema.get("additionalProperties")
+    if not props and add_props and isinstance(add_props, dict):
+        val_rule = f"{name}_val"
+        _emit_rule(add_props, val_rule, defs, rules, visited)
+        kv = f'string ws ":" ws {val_rule}'
+        rules.append(f'{name} ::= "{{" ws "}}" | "{{" ws {kv} (ws "," ws {kv})* ws "}}"')
+        return
 
     if not props:
         rules.append(f"{name} ::= object")

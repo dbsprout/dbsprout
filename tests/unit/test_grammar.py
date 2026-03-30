@@ -100,3 +100,21 @@ class TestGBNFFromSchema:
         }
         gbnf = json_schema_to_gbnf(schema, "root")
         assert "Item" in gbnf or "item" in gbnf
+
+    def test_additional_properties(self) -> None:
+        """additionalProperties (dict[str, T]) constrains value types."""
+        schema = {
+            "type": "object",
+            "additionalProperties": {"type": "integer"},
+        }
+        gbnf = json_schema_to_gbnf(schema, "test")
+        assert "test_val" in gbnf
+        assert "integer" in gbnf
+
+    def test_enum_with_quotes(self) -> None:
+        """Enum values with quotes must be escaped."""
+        schema = {"enum": ['it"s', "normal"]}
+        gbnf = json_schema_to_gbnf(schema, "test")
+        assert "normal" in gbnf
+        # Should not produce broken GBNF
+        assert "test ::=" in gbnf
