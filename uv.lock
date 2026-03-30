@@ -594,6 +594,7 @@ name = "dbsprout"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
+    { name = "diskcache" },
     { name = "faker" },
     { name = "mimesis" },
     { name = "networkx", version = "3.4.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
@@ -684,6 +685,7 @@ web = [
 requires-dist = [
     { name = "bandit", extras = ["toml"], marker = "extra == 'dev'", specifier = ">=1.8" },
     { name = "dbsprout", extras = ["db", "gen", "llm", "stats", "web", "tui"], marker = "extra == 'all'" },
+    { name = "diskcache", specifier = ">=5.6" },
     { name = "faker", specifier = ">=33.0" },
     { name = "faker", marker = "extra == 'gen'", specifier = ">=33.0" },
     { name = "fastapi", marker = "extra == 'web'", specifier = ">=0.115" },
