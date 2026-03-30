@@ -68,7 +68,7 @@ class SpecAnalyzer:
             try:
                 logger.info("Spec generation attempt %d/%d", attempt, _MAX_RETRIES)
                 return self._provider.generate_spec(schema)
-            except Exception as exc:
+            except (ValueError, RuntimeError, OSError, TypeError) as exc:
                 logger.warning(
                     "Spec generation attempt %d failed: %s",
                     attempt,

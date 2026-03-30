@@ -118,7 +118,7 @@ class TestRetry:
         mock_provider = MagicMock()
         # First call raises, second succeeds
         mock_provider.generate_spec.side_effect = [
-            Exception("LLM error"),
+            ValueError("LLM output invalid"),
             mock_spec,
         ]
 
@@ -138,7 +138,7 @@ class TestFallback:
         schema = _simple_schema()
 
         mock_provider = MagicMock()
-        mock_provider.generate_spec.side_effect = Exception("always fails")
+        mock_provider.generate_spec.side_effect = ValueError("always fails")
 
         analyzer = SpecAnalyzer(provider=mock_provider, cache_dir=tmp_path / "cache")
         try:
