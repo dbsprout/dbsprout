@@ -11,7 +11,7 @@ from rich.table import Table
 
 from dbsprout.config.models import DBSproutConfig
 from dbsprout.generate.orchestrator import orchestrate
-from dbsprout.quality.integrity import validate_integrity
+from dbsprout.quality.integrity import IntegrityReport, validate_integrity
 from dbsprout.schema.models import DatabaseSchema
 
 console = Console()
@@ -83,11 +83,8 @@ def _resolve_schema_path(explicit: Path | None) -> Path | None:
     return None
 
 
-def _print_rich(report: object) -> None:
+def _print_rich(report: IntegrityReport) -> None:
     """Print Rich table with validation results."""
-    from dbsprout.quality.integrity import IntegrityReport  # noqa: PLC0415
-
-    assert isinstance(report, IntegrityReport)
 
     if not report.checks:
         console.print("[green]No checks to run (empty schema).[/green]")
@@ -111,11 +108,8 @@ def _print_rich(report: object) -> None:
     console.print(f"\n{passed}/{total} checks passed.")
 
 
-def _print_json(report: object) -> None:
+def _print_json(report: IntegrityReport) -> None:
     """Print JSON output for CI integration."""
-    from dbsprout.quality.integrity import IntegrityReport  # noqa: PLC0415
-
-    assert isinstance(report, IntegrityReport)
 
     data = {
         "passed": report.passed,

@@ -62,10 +62,10 @@ def orchestrate(
     all_table_specs = None
     if use_spec:
         from dbsprout.generate.engines.spec_driven import SpecDrivenEngine  # noqa: PLC0415
-        from dbsprout.spec.analyzer import _heuristic_fallback  # noqa: PLC0415
+        from dbsprout.spec.analyzer import heuristic_fallback  # noqa: PLC0415
 
         spec_engine = SpecDrivenEngine(seed=seed)
-        dataspec = _heuristic_fallback(schema)
+        dataspec = heuristic_fallback(schema)
         all_table_specs = {ts.table_name: ts for ts in dataspec.tables}
 
     parent_data: dict[str, list[dict[str, Any]]] = {}

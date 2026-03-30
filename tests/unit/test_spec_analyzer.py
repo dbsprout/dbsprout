@@ -11,7 +11,7 @@ from dbsprout.schema.models import (
     DatabaseSchema,
     TableSchema,
 )
-from dbsprout.spec.analyzer import SpecAnalyzer, _build_spec_prompt, _heuristic_fallback
+from dbsprout.spec.analyzer import SpecAnalyzer, _build_spec_prompt, heuristic_fallback
 from dbsprout.spec.models import DataSpec, GeneratorConfig, TableSpec
 
 if TYPE_CHECKING:
@@ -152,11 +152,11 @@ class TestFallback:
         finally:
             analyzer.close()
 
-    def test_heuristic_fallback_produces_valid_dataspec(self) -> None:
-        """_heuristic_fallback converts heuristic mappings to DataSpec."""
+    def testheuristic_fallback_produces_valid_dataspec(self) -> None:
+        """heuristic_fallback converts heuristic mappings to DataSpec."""
         schema = _simple_schema()
 
-        result = _heuristic_fallback(schema)
+        result = heuristic_fallback(schema)
 
         assert isinstance(result, DataSpec)
         ts = result.get_table_spec("users")

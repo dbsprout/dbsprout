@@ -83,7 +83,7 @@ class SpecAnalyzer:
             _MAX_RETRIES,
             last_error,
         )
-        return _heuristic_fallback(schema)
+        return heuristic_fallback(schema)
 
     def close(self) -> None:
         """Close the cache connection."""
@@ -126,7 +126,7 @@ def _build_spec_prompt(schema: DatabaseSchema) -> str:
     )
 
 
-def _heuristic_fallback(schema: DatabaseSchema) -> DataSpec:
+def heuristic_fallback(schema: DatabaseSchema) -> DataSpec:
     """Convert heuristic mappings to a DataSpec as a fallback.
 
     Uses Sprint 2's ``map_columns`` to produce GeneratorMapping objects,
