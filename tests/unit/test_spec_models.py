@@ -237,3 +237,51 @@ class TestDataSpec:
         assert spec.version == "2.0"
         assert spec.global_seed == 123
         assert spec.created_at == "2026-01-01T00:00:00Z"
+
+
+# ── Boundary validation tests ───────────────────────────────────────
+
+
+class TestBoundaryValidation:
+    def test_nullable_rate_too_high(self) -> None:
+        """nullable_rate > 1.0 must be rejected."""
+        with pytest.raises(ValidationError):
+            GeneratorConfig(provider="test", nullable_rate=1.5)
+
+    def test_nullable_rate_negative(self) -> None:
+        """nullable_rate < 0.0 must be rejected."""
+        with pytest.raises(ValidationError):
+            GeneratorConfig(provider="test", nullable_rate=-0.1)
+
+    def test_row_count_zero(self) -> None:
+        """row_count=0 must be rejected."""
+        with pytest.raises(ValidationError):
+            TableSpec(
+                table_name="t",
+                row_count=0,
+                columns={"c": GeneratorConfig(provider="test")},
+            )
+
+    def test_global_seed_negative(self) -> None:
+        """Negative global_seed must be rejected."""
+        with pytest.raises(ValidationError):
+            DataSpec(tables=[], global_seed=-1)
+
+
+class TestTableSpecCardinality:
+    def test_cardinality_default_none(self) -> None:
+        """Cardinality defaults to None."""
+        ts = TableSpec(
+            table_name="t",
+            columns={"c": GeneratorConfig(provider="test")},
+        )
+        assert ts.cardinality is None
+
+    def test_cardinality_with_value(self) -> None:
+        """Cardinality can be set."""
+        ts = TableSpec(
+            table_name="t",
+            columns={"c": GeneratorConfig(provider="test")},
+            cardinality={"fk_ratio": 0.5},
+        )
+        assert ts.cardinality == {"fk_ratio": 0.5}

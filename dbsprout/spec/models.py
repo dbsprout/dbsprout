@@ -79,6 +79,7 @@ class TableSpec(BaseModel):
     columns: dict[str, GeneratorConfig]
     derived: list[DerivedColumn] = Field(default_factory=list)
     correlations: list[CorrelationRule] = Field(default_factory=list)
+    cardinality: dict[str, Any] | None = None
 
 
 class DataSpec(BaseModel):
