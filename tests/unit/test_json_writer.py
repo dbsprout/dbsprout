@@ -285,6 +285,22 @@ class TestJSONTypeFormatting:
         assert parsed[0]["email"] is None
         assert parsed[1]["email"] is None
 
+    def test_decimal_nan_as_null(self, tmp_path: Path) -> None:
+        """Decimal NaN/Inf should be serialized as null."""
+        schema = _simple_schema()
+        data: dict[str, list[dict[str, Any]]] = {
+            "users": [
+                {"id": 1, "email": Decimal("NaN")},
+                {"id": 2, "email": Decimal("Infinity")},
+            ],
+        }
+        writer = JSONWriter()
+        paths = writer.write(data, schema, ["users"], tmp_path)
+
+        parsed = json.loads(paths[0].read_text(encoding="utf-8"))
+        assert parsed[0]["email"] is None
+        assert parsed[1]["email"] is None
+
 
 # ── Column ordering test ────────────────────────────────────────────
 

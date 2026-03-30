@@ -32,13 +32,15 @@ class _SeedDataEncoder(json.JSONEncoder):
         if isinstance(o, Decimal):
             return None if (o.is_nan() or o.is_infinite()) else float(o)
         if isinstance(o, (set, frozenset)):
-            return list(o)
+            return sorted(o, key=str)
         return super().default(o)
 
 
 def _sanitize_nan(value: Any) -> Any:
-    """Convert float NaN/Inf to None for valid JSON."""
+    """Convert float/Decimal NaN/Inf to None for valid JSON."""
     if isinstance(value, float) and (math.isnan(value) or math.isinf(value)):
+        return None
+    if isinstance(value, Decimal) and (value.is_nan() or value.is_infinite()):
         return None
     return value
 
