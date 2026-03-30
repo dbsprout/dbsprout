@@ -478,6 +478,60 @@ class TestCompositeUniqueIndex:
         assert not unique_checks[0].passed
 
 
+class TestNonNullableFKWithNull:
+    def test_non_nullable_fk_with_null_fails(self) -> None:
+        """Non-nullable FK column with None must fail NOT NULL check."""
+        schema = _parent_child_schema()
+        data: dict[str, list[dict[str, Any]]] = {
+            "users": [{"id": 1, "email": "a@b.com"}],
+            "orders": [{"id": 1, "user_id": None}],  # non-nullable FK with None
+        }
+
+        report = validate_integrity(data, schema)
+
+        nn_checks = [c for c in report.checks if c.check == "not_null" and c.column == "user_id"]
+        assert len(nn_checks) == 1
+        assert not nn_checks[0].passed
+
+
+class TestEdgeCases:
+    def test_parent_missing_from_data(self) -> None:
+        """FK check skips when parent table not in tables_data."""
+        schema = _parent_child_schema()
+        data: dict[str, list[dict[str, Any]]] = {
+            "orders": [{"id": 1, "user_id": 1}],
+            # "users" key missing entirely
+        }
+
+        report = validate_integrity(data, schema)
+
+        # FK check should not appear (parent missing)
+        fk_checks = [c for c in report.checks if c.check == "fk_satisfaction"]
+        assert len(fk_checks) == 0
+
+    def test_table_with_no_pk(self) -> None:
+        """Table with no PK produces no PK uniqueness check."""
+        schema = DatabaseSchema(
+            tables=[
+                TableSchema(
+                    name="logs",
+                    columns=[
+                        _col("message", data_type=ColumnType.VARCHAR),
+                    ],
+                    primary_key=[],
+                ),
+            ],
+        )
+        data: dict[str, list[dict[str, Any]]] = {
+            "logs": [{"message": "hello"}, {"message": "hello"}],
+        }
+
+        report = validate_integrity(data, schema)
+
+        pk_checks = [c for c in report.checks if c.check == "pk_uniqueness"]
+        assert len(pk_checks) == 0
+
+
 class TestEmptySchema:
     def test_empty_schema_passes(self) -> None:
         """No tables → passes with empty checks."""

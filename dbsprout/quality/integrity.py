@@ -200,13 +200,10 @@ def _check_not_null(
 ) -> list[CheckResult]:
     """Check NOT NULL constraints on non-nullable columns."""
     results: list[CheckResult] = []
-    fk_cols = {col for fk in table.foreign_keys for col in fk.columns}
 
     for col in table.columns:
         if col.nullable:
             continue
-        if col.name in fk_cols:
-            continue  # FK columns checked by FK satisfaction
         null_count = sum(1 for row in rows if row.get(col.name) is None)
         passed = null_count == 0
         details = "" if passed else f"{null_count} NULL values"
