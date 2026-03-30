@@ -1,3 +1,3 @@
 """DBSprout — realistic database seed data from your schema."""
 
-__version__ = "0.1.0"
+__version__ = "0.1.1"
