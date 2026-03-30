@@ -7,8 +7,10 @@ transaction wrapping, and correct per-dialect quoting/escaping.
 from __future__ import annotations
 
 import json
+import math
 import uuid
 from datetime import date, datetime, time
+from decimal import Decimal
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -53,19 +55,28 @@ def format_value(value: Any, config: dict[str, str]) -> str:
         return "NULL"
     if isinstance(value, bool):
         return config["bool_true"] if value else config["bool_false"]
-    if isinstance(value, (int, float)):
-        return str(value)
+    if isinstance(value, (int, float, Decimal)):
+        return _format_numeric(value)
     if isinstance(value, (datetime, date, time)):
-        return f"'{value}'"
+        return _quote_string(str(value), config)
     if isinstance(value, bytes):
         return f"X'{value.hex()}'"
     return _format_complex(value, config)
 
 
+def _format_numeric(value: int | float | Decimal) -> str:
+    """Format numeric values, converting NaN/Inf to NULL."""
+    if isinstance(value, float) and (math.isnan(value) or math.isinf(value)):
+        return "NULL"
+    if isinstance(value, Decimal) and (value.is_nan() or value.is_infinite()):
+        return "NULL"
+    return str(value)
+
+
 def _format_complex(value: Any, config: dict[str, str]) -> str:
     """Format UUID, JSON, and other complex types."""
     if isinstance(value, uuid.UUID):
-        return f"'{value}'"
+        return _quote_string(str(value), config)
     if isinstance(value, (dict, list)):
         json_str = json.dumps(value, default=str)
         return _quote_string(json_str, config)
@@ -84,7 +95,8 @@ def _quote_string(value: str, config: dict[str, str]) -> str:
 def quote_identifier(name: str, config: dict[str, str]) -> str:
     """Quote a SQL identifier (table/column name)."""
     q = config["quote"]
-    return f"{q}{name}{q}"
+    escaped = name.replace(q, q + q)
+    return f"{q}{escaped}{q}"
 
 
 def build_insert(

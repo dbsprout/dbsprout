@@ -5,7 +5,10 @@ from __future__ import annotations
 import json
 import uuid
 from datetime import date, datetime, time, timezone
+from decimal import Decimal
 from typing import TYPE_CHECKING, Any
+
+import pytest
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -105,6 +108,25 @@ class TestFormatValueDatetime:
         assert format_value(t, _pg()) == "'10:30:00'"
 
 
+class TestFormatValueNanInf:
+    def test_nan_is_null(self) -> None:
+        assert format_value(float("nan"), _pg()) == "NULL"
+
+    def test_inf_is_null(self) -> None:
+        assert format_value(float("inf"), _pg()) == "NULL"
+
+    def test_neg_inf_is_null(self) -> None:
+        assert format_value(float("-inf"), _my()) == "NULL"
+
+
+class TestFormatValueDecimal:
+    def test_decimal(self) -> None:
+        assert format_value(Decimal("3.14"), _pg()) == "3.14"
+
+    def test_decimal_integer(self) -> None:
+        assert format_value(Decimal("42"), _pg()) == "42"
+
+
 class TestFormatValueBytes:
     def test_bytes_hex(self) -> None:
         assert format_value(b"\xde\xad\xbe\xef", _pg()) == "X'deadbeef'"
@@ -138,12 +160,23 @@ class TestFormatValueUUID:
 # ── quote_identifier tests ──────────────────────────────────────────
 
 
+class TestGetDialectConfig:
+    def test_unsupported_dialect_raises(self) -> None:
+        with pytest.raises(ValueError, match="Unsupported dialect"):
+            get_dialect_config("oracle")
+
+
 class TestQuoteIdentifier:
     def test_postgresql(self) -> None:
         assert quote_identifier("email", _pg()) == '"email"'
 
     def test_mysql(self) -> None:
         assert quote_identifier("email", _my()) == "`email`"
+
+    def test_escapes_embedded_quote(self) -> None:
+        """Identifier containing the quote char must be escaped by doubling."""
+        assert quote_identifier('col"name', _pg()) == '"col""name"'
+        assert quote_identifier("col`name", _my()) == "`col``name`"
 
     def test_sqlite(self) -> None:
         assert quote_identifier("email", _sq()) == '"email"'
