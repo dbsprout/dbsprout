@@ -1,8 +1,7 @@
 """DBSprout CLI entry point.
 
 Commands are lazy-imported to avoid pulling in heavy dependencies
-(sqlalchemy, mimesis, numpy) at startup. This allows ``dbsprout --help``
-to work with a minimal install (no optional extras).
+(sqlalchemy, mimesis, numpy) at startup.
 """
 
 from __future__ import annotations
@@ -19,9 +18,9 @@ app = typer.Typer(
 @app.command(name="init")
 def init_proxy(
     db: str | None = typer.Option(None, "--db", help="Database URL."),
-    file: str | None = typer.Option(None, "--file", help="DDL file path."),
-    output_dir: str = typer.Option(".", "--output-dir", "-o", help="Output dir."),
-    dry_run: bool = typer.Option(False, "--dry-run", help="Preview only."),
+    file: str | None = typer.Option(None, "--file", help="DDL file."),
+    output_dir: str = typer.Option(".", "--output-dir", "-o"),
+    dry_run: bool = typer.Option(False, "--dry-run"),
 ) -> None:
     """Introspect a database schema and generate configuration."""
     from pathlib import Path  # noqa: PLC0415
@@ -41,13 +40,8 @@ def generate_proxy(  # noqa: PLR0913
     schema_snapshot: str | None = typer.Option(
         None,
         "--schema-snapshot",
-        help="Schema JSON path.",
     ),
-    config_path: str | None = typer.Option(
-        None,
-        "--config",
-        help="Path to dbsprout.toml.",
-    ),
+    config_path: str | None = typer.Option(None, "--config"),
     rows: int = typer.Option(100, "--rows", "-n", min=1),
     seed: int = typer.Option(42, "--seed", "-s", min=0),
     output_format: str = typer.Option("sql", "--output-format", "-f"),
@@ -77,13 +71,8 @@ def validate_proxy(  # noqa: PLR0913
     schema_snapshot: str | None = typer.Option(
         None,
         "--schema-snapshot",
-        help="Schema JSON path.",
     ),
-    config_path: str | None = typer.Option(
-        None,
-        "--config",
-        help="Path to dbsprout.toml.",
-    ),
+    config_path: str | None = typer.Option(None, "--config"),
     rows: int = typer.Option(100, "--rows", "-n", min=1),
     seed: int = typer.Option(42, "--seed", "-s", min=0),
     output_format: str = typer.Option("rich", "--format", "-f"),
