@@ -1,6 +1,6 @@
 [project]
 name = "dbsprout"
-version = "0.1.2"
+version = "0.1.3"
 description = "CLI tool that reads database schemas and generates realistic seed data"
 readme = "README.md"
 license = "MIT"

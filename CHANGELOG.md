@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.1.3](https://github.com/dbsprout/dbsprout/compare/v0.1.2...v0.1.3) (2026-03-31)
+
+
+### Bug Fixes
+
+* version test no longer hardcodes version string ([e0fa2cc](https://github.com/dbsprout/dbsprout/commit/e0fa2cc6ac0c2bcb6dfb4f8f0713603cd9881d55))
+
+
+### Miscellaneous
+
+* trigger release for PyPI publish ([e0fa2cc](https://github.com/dbsprout/dbsprout/commit/e0fa2cc6ac0c2bcb6dfb4f8f0713603cd9881d55))
+
 ## [0.1.2](https://github.com/dbsprout/dbsprout/compare/v0.1.1...v0.1.2) (2026-03-30)
 
 
