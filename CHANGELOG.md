@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.1.4](https://github.com/dbsprout/dbsprout/compare/v0.1.3...v0.1.4) (2026-03-31)
+
+
+### Bug Fixes
+
+* clean up app.py lint errors (line length, unused noqa) ([e85b08a](https://github.com/dbsprout/dbsprout/commit/e85b08adb5b714110416946a34ac0271a5b397f6))
+* lazy-import all commands for minimal install (sqlalchemy optional) ([73423ee](https://github.com/dbsprout/dbsprout/commit/73423eead95e7bbb9032b14b30f84b9d76a2898f))
+* lazy-import sqlalchemy in init command for minimal install ([17c5ba0](https://github.com/dbsprout/dbsprout/commit/17c5ba0351de268de2737479e29e389f9877b45c))
+* pass file as str to init_command (mypy strict) ([8814f4d](https://github.com/dbsprout/dbsprout/commit/8814f4df36b48aadac6826884cc2972a70a3a2d8))
+* ruff lint errors + source_file str conversion for DDL parsing ([f16c57c](https://github.com/dbsprout/dbsprout/commit/f16c57c6ac8435849c50f98750d3f606b4ff670f))
+
+
+### CI/CD
+
+* add workflow_dispatch to publish (GITHUB_TOKEN doesn't trigger cross-workflows) ([d71adae](https://github.com/dbsprout/dbsprout/commit/d71adaedc505c181b7ab0d958371a866bbf95d3d))
+
 ## [0.1.3](https://github.com/dbsprout/dbsprout/compare/v0.1.2...v0.1.3) (2026-03-31)
 
 
