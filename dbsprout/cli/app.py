@@ -29,7 +29,7 @@ def init_proxy(
 
     init_command(
         db=db,
-        file=Path(file) if file else None,
+        file=file,
         output_dir=Path(output_dir),
         dry_run=dry_run,
     )
