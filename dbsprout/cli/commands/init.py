@@ -5,7 +5,6 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-import sqlalchemy as sa
 import typer
 from rich.panel import Panel
 from rich.table import Table
@@ -27,6 +26,8 @@ def init_command(
     dry_run: bool = typer.Option(False, "--dry-run", help="Preview without writing files"),
 ) -> None:
     """Introspect a database schema and generate configuration."""
+    import sqlalchemy as sa  # noqa: PLC0415
+
     # ── Validate arguments ───────────────────────────────────────────────
     if file is not None and db is not None:
         console.print("[red]Error:[/red] Provide --db or --file, not both.")
