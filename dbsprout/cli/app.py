@@ -1,4 +1,9 @@
-"""DBSprout CLI entry point."""
+"""DBSprout CLI entry point.
+
+Commands are lazy-imported to avoid pulling in heavy dependencies
+(sqlalchemy, mimesis, numpy) at startup. This allows ``dbsprout --help``
+to work with a minimal install (no optional extras).
+"""
 
 from __future__ import annotations
 
@@ -12,11 +17,11 @@ app = typer.Typer(
 
 
 @app.command(name="init")
-def init_proxy(  # noqa: PLR0913
-    db: str | None = typer.Option(None, "--db", help="Database connection URL."),
-    file: str | None = typer.Option(None, "--file", help="Path to SQL DDL file."),
-    output_dir: str = typer.Option(".", "--output-dir", "-o", help="Output directory."),
-    dry_run: bool = typer.Option(False, "--dry-run", help="Preview without writing."),
+def init_proxy(
+    db: str | None = typer.Option(None, "--db", help="Database URL."),
+    file: str | None = typer.Option(None, "--file", help="DDL file path."),
+    output_dir: str = typer.Option(".", "--output-dir", "-o", help="Output dir."),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Preview only."),
 ) -> None:
     """Introspect a database schema and generate configuration."""
     from pathlib import Path  # noqa: PLC0415
@@ -33,14 +38,22 @@ def init_proxy(  # noqa: PLR0913
 
 @app.command(name="generate")
 def generate_proxy(  # noqa: PLR0913
-    schema_snapshot: str | None = typer.Option(None, "--schema-snapshot", help="Schema snapshot JSON path."),
-    config_path: str | None = typer.Option(None, "--config", help="Path to dbsprout.toml."),
-    rows: int = typer.Option(100, "--rows", "-n", help="Default row count per table.", min=1),
-    seed: int = typer.Option(42, "--seed", "-s", help="Global seed.", min=0),
-    output_format: str = typer.Option("sql", "--output-format", "-f", help="Output format: sql, csv, json, jsonl."),
-    output_dir: str = typer.Option("./seeds", "--output-dir", "-o", help="Output directory."),
-    dialect: str = typer.Option("postgresql", "--dialect", "-d", help="SQL dialect."),
-    engine: str = typer.Option("heuristic", "--engine", "-e", help="Generation engine: heuristic or spec."),
+    schema_snapshot: str | None = typer.Option(
+        None,
+        "--schema-snapshot",
+        help="Schema JSON path.",
+    ),
+    config_path: str | None = typer.Option(
+        None,
+        "--config",
+        help="Path to dbsprout.toml.",
+    ),
+    rows: int = typer.Option(100, "--rows", "-n", min=1),
+    seed: int = typer.Option(42, "--seed", "-s", min=0),
+    output_format: str = typer.Option("sql", "--output-format", "-f"),
+    output_dir: str = typer.Option("./seeds", "--output-dir", "-o"),
+    dialect: str = typer.Option("postgresql", "--dialect", "-d"),
+    engine: str = typer.Option("heuristic", "--engine", "-e"),
 ) -> None:
     """Generate seed data from a schema snapshot."""
     from pathlib import Path  # noqa: PLC0415
@@ -61,12 +74,20 @@ def generate_proxy(  # noqa: PLR0913
 
 @app.command(name="validate")
 def validate_proxy(  # noqa: PLR0913
-    schema_snapshot: str | None = typer.Option(None, "--schema-snapshot", help="Schema snapshot JSON path."),
-    config_path: str | None = typer.Option(None, "--config", help="Path to dbsprout.toml."),
-    rows: int = typer.Option(100, "--rows", "-n", help="Row count per table.", min=1),
-    seed: int = typer.Option(42, "--seed", "-s", help="Global seed.", min=0),
-    output_format: str = typer.Option("rich", "--format", "-f", help="Output format: rich or json."),
-    engine: str = typer.Option("heuristic", "--engine", "-e", help="Generation engine."),
+    schema_snapshot: str | None = typer.Option(
+        None,
+        "--schema-snapshot",
+        help="Schema JSON path.",
+    ),
+    config_path: str | None = typer.Option(
+        None,
+        "--config",
+        help="Path to dbsprout.toml.",
+    ),
+    rows: int = typer.Option(100, "--rows", "-n", min=1),
+    seed: int = typer.Option(42, "--seed", "-s", min=0),
+    output_format: str = typer.Option("rich", "--format", "-f"),
+    engine: str = typer.Option("heuristic", "--engine", "-e"),
 ) -> None:
     """Validate integrity of generated seed data."""
     from pathlib import Path  # noqa: PLC0415

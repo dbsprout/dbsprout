@@ -241,7 +241,7 @@ def _init_from_file(file_path: str, output_dir: Path, dry_run: bool) -> None:
 
     try:
         sql_text = path.read_text(encoding="utf-8")
-        schema = parse_ddl(sql_text, source_file=file_path)
+        schema = parse_ddl(sql_text, source_file=str(file_path))
     except (ValueError, OSError) as exc:
         console.print(f"[red]Error:[/red] {exc}")
         raise typer.Exit(code=1) from None
