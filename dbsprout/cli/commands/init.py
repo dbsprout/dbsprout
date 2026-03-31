@@ -241,10 +241,15 @@ def _init_from_file(file_path: str, output_dir: Path, dry_run: bool) -> None:
 
     try:
         file_text = path.read_text(encoding="utf-8")
-        if path.suffix.lower() == ".dbml":
+        suffix = path.suffix.lower()
+        if suffix == ".dbml":
             from dbsprout.schema.parsers.dbml import parse_dbml  # noqa: PLC0415
 
             schema = parse_dbml(file_text, source_file=str(file_path))
+        elif suffix == ".prisma":
+            from dbsprout.schema.parsers.prisma import parse_prisma  # noqa: PLC0415
+
+            schema = parse_prisma(file_text, source_file=str(file_path))
         else:
             schema = parse_ddl(file_text, source_file=str(file_path))
     except (ValueError, OSError) as exc:
