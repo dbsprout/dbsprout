@@ -77,18 +77,21 @@ def parse_dbml(
         msg = f"Failed to parse DBML: {exc}"
         raise ValueError(msg) from exc
 
-    # Extract enums
+    # Extract enums (preserve original case in dict, build lowercase lookup)
     enums: dict[str, list[str]] = {}
+    enum_lower: dict[str, list[str]] = {}
     for enum in parsed.enums:
-        enums[enum.name] = [item.name for item in enum.items]
+        values = [item.name for item in enum.items]
+        enums[enum.name] = values
+        enum_lower[enum.name.lower()] = values
 
     # Convert tables
     tables: list[TableSchema] = []
     for dbml_table in parsed.tables:
-        tables.append(_convert_table(dbml_table, enums))
+        tables.append(_convert_table(dbml_table, enum_lower))
 
     # Convert refs to FKs
-    _apply_refs(parsed.refs, tables)
+    tables = _apply_refs(parsed.refs, tables)
 
     return DatabaseSchema(
         tables=tables,
@@ -158,18 +161,15 @@ def _is_autoincrement(col: Any) -> bool:
 def _apply_refs(
     refs: Any,
     tables: list[TableSchema],
-) -> None:
-    """Convert pydbml refs to ForeignKeySchema and apply to tables."""
+) -> list[TableSchema]:
+    """Convert pydbml refs to ForeignKeySchema and return updated tables."""
     table_map = {t.name: t for t in tables}
 
     for ref in refs:
-        # ref.col1 is the "from" side, ref.col2 is the "to" side
-        # ref.type: '>' means col1 references col2 (many-to-one)
         from_cols = ref.col1
         to_cols = ref.col2
 
         if ref.type == "<":
-            # Reverse: col2 references col1
             from_cols, to_cols = to_cols, from_cols
         elif ref.type == "<>":
             logger.warning(
@@ -191,15 +191,10 @@ def _apply_refs(
             ref_columns=[c.name for c in to_cols],
         )
 
-        # Apply FK to the source table (need to rebuild frozen model)
         source = table_map.get(from_table_name)
         if source is not None:
-            updated = source.model_copy(
+            table_map[from_table_name] = source.model_copy(
                 update={"foreign_keys": [*source.foreign_keys, fk]},
             )
-            table_map[from_table_name] = updated
-            # Update in the list
-            for i, t in enumerate(tables):
-                if t.name == from_table_name:
-                    tables[i] = updated
-                    break
+
+    return [table_map[t.name] for t in tables]
