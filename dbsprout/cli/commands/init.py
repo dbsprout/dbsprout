@@ -254,6 +254,10 @@ def _init_from_file(file_path: str, output_dir: Path, dry_run: bool) -> None:
             from dbsprout.schema.parsers.plantuml import parse_plantuml  # noqa: PLC0415
 
             schema = parse_plantuml(file_text, source_file=str(file_path))
+        elif suffix == ".prisma":
+            from dbsprout.schema.parsers.prisma import parse_prisma  # noqa: PLC0415
+
+            schema = parse_prisma(file_text, source_file=str(file_path))
         else:
             schema = parse_ddl(file_text, source_file=str(file_path))
     except (ValueError, OSError) as exc:
