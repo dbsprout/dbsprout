@@ -32,6 +32,7 @@ dependencies = [
     "faker>=33.0",
     "numpy>=1.26",
     "diskcache>=5.6",
+    "pydbml>=1.0",
 ]
 
 [project.urls]
