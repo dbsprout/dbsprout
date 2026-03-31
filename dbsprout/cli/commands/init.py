@@ -250,6 +250,10 @@ def _init_from_file(file_path: str, output_dir: Path, dry_run: bool) -> None:
             from dbsprout.schema.parsers.mermaid import parse_mermaid  # noqa: PLC0415
 
             schema = parse_mermaid(file_text, source_file=str(file_path))
+        elif suffix in (".puml", ".plantuml", ".pu"):
+            from dbsprout.schema.parsers.plantuml import parse_plantuml  # noqa: PLC0415
+
+            schema = parse_plantuml(file_text, source_file=str(file_path))
         else:
             schema = parse_ddl(file_text, source_file=str(file_path))
     except (ValueError, OSError) as exc:
