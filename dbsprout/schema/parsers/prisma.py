@@ -28,8 +28,8 @@ _PRISMA_TYPE_MAP: dict[str, ColumnType] = {
     "bytes": ColumnType.BINARY,
 }
 
-_RE_MODEL = re.compile(r"model\s+(\w+)\s*\{([^}]*)\}", re.DOTALL)
-_RE_ENUM = re.compile(r"enum\s+(\w+)\s*\{([^}]*)\}")
+_RE_MODEL = re.compile(r"^model\s+(\w+)\s*\{(.*?)^\}", re.DOTALL | re.MULTILINE)
+_RE_ENUM = re.compile(r"^enum\s+(\w+)\s*\{(.*?)^\}", re.DOTALL | re.MULTILINE)
 _RE_FIELD = re.compile(r"^\s*(\w+)\s+(\w+)(\?)?(\[\])?(.*?)$", re.MULTILINE)
 _RE_RELATION = re.compile(
     r"@relation\(\s*fields:\s*\[([^\]]*)\]\s*,\s*references:\s*\[([^\]]*)\]\s*\)"
@@ -41,7 +41,7 @@ def can_parse_prisma(source: str) -> bool:
     lower = source.strip().lower()
     if lower.endswith(".prisma"):
         return True
-    return bool(re.search(r"\bmodel\s+\w+\s*\{", source))
+    return bool(re.search(r"\b(model|datasource|generator)\s+\w+\s*\{", source))
 
 
 def parse_prisma(
