@@ -1,7 +1,7 @@
 """Database introspection via SQLAlchemy Inspector.
 
 Connects to a live database, reads its schema, and returns a unified
-``DatabaseSchema``. Supports SQLite, PostgreSQL, and MySQL.
+``DatabaseSchema``. Supports SQLite, PostgreSQL, MySQL, and MSSQL.
 """
 
 from __future__ import annotations
@@ -33,7 +33,7 @@ from dbsprout.schema.models import (
     TableSchema,
 )
 
-_SUPPORTED_DIALECTS = frozenset({"sqlite", "postgresql", "mysql"})
+_SUPPORTED_DIALECTS = frozenset({"sqlite", "postgresql", "mysql", "mssql"})
 
 
 def introspect(url: str) -> DatabaseSchema:
@@ -100,7 +100,7 @@ def _create_engine(url: str) -> Engine:
     """
     parsed = sa.engine.make_url(url)
     connect_args: dict[str, Any] = {}
-    if parsed.get_backend_name() in ("postgresql", "mysql"):
+    if parsed.get_backend_name() in ("postgresql", "mysql", "mssql"):
         connect_args["connect_timeout"] = _CONNECT_TIMEOUT
     try:
         engine = sa.create_engine(url, connect_args=connect_args)

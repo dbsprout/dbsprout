@@ -556,9 +556,12 @@ class TestValidateUrl:
     def test_mysql_allowed(self) -> None:
         _validate_url("mysql://user:pass@localhost/db")
 
+    def test_mssql_allowed(self) -> None:
+        _validate_url("mssql://user:pass@localhost/db")
+
     def test_unsupported_dialect_rejected(self) -> None:
         with pytest.raises(ValueError, match="Unsupported dialect"):
-            _validate_url("mssql://user:pass@localhost/db")
+            _validate_url("oracle://user:pass@localhost/db")
 
 
 class TestConnectionTimeout:
