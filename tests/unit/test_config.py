@@ -11,6 +11,7 @@ from dbsprout.config.loader import load_config
 from dbsprout.config.models import (
     DBSproutConfig,
     GenerationConfig,
+    PrivacyConfig,
     SchemaConfig,
     TableOverride,
 )
@@ -212,3 +213,36 @@ class TestLoadConfig:
         assert cfg.schema_.snapshot == ".dbsprout/snapshots/abc123.json"
         assert cfg.generation.output_format == "sql"
         assert cfg.generation.output_dir == "./seeds"
+
+
+class TestPrivacyConfig:
+    def test_default_tier_is_local(self) -> None:
+        pc = PrivacyConfig()
+        assert pc.tier == "local"
+
+    def test_tier_redacted(self) -> None:
+        pc = PrivacyConfig(tier="redacted")
+        assert pc.tier == "redacted"
+
+    def test_tier_cloud(self) -> None:
+        pc = PrivacyConfig(tier="cloud")
+        assert pc.tier == "cloud"
+
+    def test_rejects_invalid_tier(self) -> None:
+        with pytest.raises(ValidationError):
+            PrivacyConfig(tier="none")  # type: ignore[arg-type]
+
+    def test_frozen(self) -> None:
+        pc = PrivacyConfig()
+        with pytest.raises(ValidationError):
+            pc.tier = "cloud"  # type: ignore[misc]
+
+    def test_in_dbsprout_config(self) -> None:
+        cfg = DBSproutConfig()
+        assert cfg.privacy.tier == "local"
+
+    def test_from_toml(self, tmp_path: Path) -> None:
+        p = tmp_path / "dbsprout.toml"
+        p.write_text('[privacy]\ntier = "redacted"\n')
+        cfg = load_config(p)
+        assert cfg.privacy.tier == "redacted"
