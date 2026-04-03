@@ -53,6 +53,16 @@ class TestMssqlTypesAlreadyHandled:
         assert col_type is ColumnType.UUID
         assert meta == {}
 
+    def test_varbinary(self) -> None:
+        col_type, meta = normalize_type(mssql.VARBINARY(), "mssql", "varbinary")
+        assert col_type is ColumnType.BINARY
+        assert meta == {}
+
+    def test_sql_variant(self) -> None:
+        col_type, meta = normalize_type(mssql.SQL_VARIANT(), "mssql", "sql_variant")
+        assert col_type is ColumnType.UNKNOWN
+        assert meta == {}
+
 
 class TestMssqlTypeMapEntries:
     """MSSQL types that need explicit _MSSQL_TYPE_MAP entries."""

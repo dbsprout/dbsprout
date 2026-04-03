@@ -586,6 +586,15 @@ class TestConnectionTimeout:
             _, kwargs = mock_create.call_args
             assert kwargs["connect_args"]["connect_timeout"] == 10
 
+    def test_mssql_url_gets_connect_timeout(self) -> None:
+        with patch("sqlalchemy.create_engine") as mock_create:
+            mock_engine = MagicMock()
+            mock_engine.dialect.name = "mssql"
+            mock_create.return_value = mock_engine
+            _create_engine("mssql+pyodbc://user:pass@localhost/db")
+            _, kwargs = mock_create.call_args
+            assert kwargs["connect_args"]["connect_timeout"] == 10
+
     def test_sqlite_url_no_connect_timeout(self) -> None:
         _mod = sys.modules["dbsprout.schema.introspect"]
         with patch("sqlalchemy.create_engine") as mock_create, patch.object(_mod, "event"):
