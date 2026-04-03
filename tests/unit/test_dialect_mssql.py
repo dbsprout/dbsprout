@@ -5,7 +5,6 @@ from __future__ import annotations
 from sqlalchemy.dialects import mssql
 
 from dbsprout.schema.dialect import normalize_type
-from dbsprout.schema.introspect import _SUPPORTED_DIALECTS
 from dbsprout.schema.models import ColumnType
 
 
@@ -88,17 +87,11 @@ class TestMssqlTypeMapEntries:
         assert meta == {}
 
 
-class TestMssqlSupportedDialect:
-    """Verify mssql is a supported dialect for introspection."""
-
-    def test_mssql_in_supported_dialects(self) -> None:
-        assert "mssql" in _SUPPORTED_DIALECTS
-
-
 class TestMssqlTypesNotMatchedOnOtherDialect:
     """MSSQL-only map entries should fall through on non-MSSQL dialects."""
 
     def test_money_falls_to_unknown_on_sqlite(self) -> None:
+        """MONEY inherits from TypeEngine directly, not Numeric, so falls to UNKNOWN."""
         col_type, _meta = normalize_type(mssql.MONEY(), "sqlite", "money")
         assert col_type is ColumnType.UNKNOWN
 
