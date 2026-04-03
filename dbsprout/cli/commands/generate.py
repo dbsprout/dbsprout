@@ -68,6 +68,11 @@ def generate_command(  # noqa: PLR0913
         "-e",
         help="Generation engine: heuristic or spec.",
     ),
+    privacy: str = typer.Option(  # noqa: ARG001
+        "local",
+        "--privacy",
+        help="Privacy tier: local, redacted, cloud.",
+    ),
 ) -> None:
     """Generate seed data from a schema snapshot."""
     # Load schema

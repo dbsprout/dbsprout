@@ -78,6 +78,9 @@ cloud = [
     "litellm>=1.0",
     "instructor>=1.0",
 ]
+privacy = [
+    "presidio-analyzer>=2.0",
+]
 stats = [
     "scipy>=1.14",
     "scikit-learn>=1.5",
