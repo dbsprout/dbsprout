@@ -9,10 +9,13 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import logging
 import os
 from typing import TYPE_CHECKING
 
 from pydantic import BaseModel, ConfigDict
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from dbsprout.schema.models import DatabaseSchema, TableSchema
@@ -24,6 +27,11 @@ class RedactionMap(BaseModel):
 
     Returned alongside the redacted schema so that LLM responses
     using hashed names can be mapped back to original column names.
+
+    **Security:** This object contains the HMAC salt and the full
+    forward mapping (original names → hashed names). It must NEVER
+    be sent to a cloud provider, persisted alongside cloud-bound data,
+    or serialized to shared storage. Keep it in local memory only.
     """
 
     model_config = ConfigDict(frozen=True)
@@ -100,6 +108,8 @@ def de_redact_spec(spec: DataSpec, redaction_map: RedactionMap) -> DataSpec:
     new_tables: list[TableSpec] = []
     for table_spec in spec.tables:
         original_table = reverse_table.get(table_spec.table_name, table_spec.table_name)
+        if table_spec.table_name not in reverse_table:
+            logger.warning("De-redaction: unmapped table name %r", table_spec.table_name)
         col_reverse = reverse_columns.get(original_table, {})
         new_columns = {
             col_reverse.get(col_name, col_name): config

@@ -47,6 +47,19 @@ class TestPIIDetectorSingleColumn:
     def test_detects_drivers_license(self) -> None:
         assert PIIDetector().is_pii("drivers_license") is True
 
+    def test_detects_email(self) -> None:
+        assert PIIDetector().is_pii("email") is True
+
+    def test_detects_email_address(self) -> None:
+        assert PIIDetector().is_pii("email_address") is True
+
+    def test_detects_address(self) -> None:
+        assert PIIDetector().is_pii("address") is True
+
+    def test_ignores_headphone(self) -> None:
+        """'phone' pattern should not match 'headphone'."""
+        assert PIIDetector().is_pii("headphone_count") is False
+
     def test_case_insensitive(self) -> None:
         assert PIIDetector().is_pii("SSN") is True
         assert PIIDetector().is_pii("Credit_Card") is True

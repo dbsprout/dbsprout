@@ -87,7 +87,7 @@ def _make_schema() -> DatabaseSchema:
     )
 
 
-class TestRedactSchemaReturnsTyple:
+class TestRedactSchemaReturnsTuple:
     """redact_schema returns (DatabaseSchema, RedactionMap)."""
 
     def test_returns_tuple(self) -> None:

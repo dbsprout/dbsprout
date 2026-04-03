@@ -17,6 +17,7 @@ logger = logging.getLogger(__name__)
 _PII_PATTERNS: tuple[re.Pattern[str], ...] = tuple(
     re.compile(pattern, re.IGNORECASE)
     for pattern in (
+        # Compound patterns (safe as substrings)
         r"social_security",
         r"credit_card",
         r"card_number",
@@ -26,14 +27,18 @@ _PII_PATTERNS: tuple[re.Pattern[str], ...] = tuple(
         r"national_id",
         r"drivers_license",
         r"medical_record",
-        r"passport",
-        r"phone",
-        r"mobile",
-        r"salary",
-        r"income",
+        r"email_address",
         r"zip_code",
         r"postal_code",
-        r"tax_id",
+        # Word-boundary patterns (short, risk false positives without \b)
+        r"(?:^|_)passport(?:$|_)",
+        r"(?:^|_)phone(?:$|_)",
+        r"(?:^|_)mobile(?:$|_)",
+        r"(?:^|_)salary(?:$|_)",
+        r"(?:^|_)income(?:$|_)",
+        r"(?:^|_)address(?:$|_)",
+        r"(?:^|_)email(?:$|_)",
+        r"(?:^|_)tax_id(?:$|_)",
         r"\bssn\b",
         r"\bdob\b",
         r"\bcvv\b",
