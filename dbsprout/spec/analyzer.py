@@ -16,7 +16,7 @@ if TYPE_CHECKING:
     from dbsprout.spec.providers.base import SpecProvider
 
 from dbsprout.privacy.enforcer import PrivacyEnforcer, PrivacyTier
-from dbsprout.privacy.redactor import redact_schema
+from dbsprout.privacy.redactor import de_redact_spec, redact_schema
 from dbsprout.spec.cache import SpecCache
 from dbsprout.spec.models import DataSpec, GeneratorConfig, TableSpec
 
@@ -68,12 +68,17 @@ class SpecAnalyzer:
 
         # Redact schema for cloud providers under redacted tier
         provider_schema = schema
+        redaction_map = None
         if self._privacy_tier == PrivacyTier.REDACTED and provider_locality == "cloud":
             logger.info("Redacting schema for redacted tier before cloud call")
-            provider_schema = redact_schema(schema)
+            provider_schema, redaction_map = redact_schema(schema)
 
         # Provider call with retry
         spec = self._call_with_retry(provider_schema)
+
+        # De-redact spec if schema was redacted
+        if redaction_map is not None:
+            spec = de_redact_spec(spec, redaction_map)
 
         # Cache result
         spec = spec.model_copy(update={"schema_hash": schema_hash})

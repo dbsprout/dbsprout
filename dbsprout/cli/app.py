@@ -48,6 +48,7 @@ def generate_proxy(  # noqa: PLR0913
     output_dir: str = typer.Option("./seeds", "--output-dir", "-o"),
     dialect: str = typer.Option("postgresql", "--dialect", "-d"),
     engine: str = typer.Option("heuristic", "--engine", "-e"),
+    privacy: str = typer.Option("local", "--privacy"),
 ) -> None:
     """Generate seed data from a schema snapshot."""
     from pathlib import Path  # noqa: PLC0415
@@ -63,6 +64,7 @@ def generate_proxy(  # noqa: PLR0913
         output_dir=Path(output_dir),
         dialect=dialect,
         engine=engine,
+        privacy=privacy,
     )
 
 
