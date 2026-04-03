@@ -45,6 +45,14 @@ class TableOverride(BaseModel):
     exclude: bool = False
 
 
+class PrivacyConfig(BaseModel):
+    """Privacy settings from ``[privacy]`` section."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    tier: Literal["local", "redacted", "cloud"] = "local"
+
+
 class DBSproutConfig(BaseModel):
     """Root configuration loaded from ``dbsprout.toml``."""
 
@@ -52,6 +60,7 @@ class DBSproutConfig(BaseModel):
 
     schema_: SchemaConfig = Field(default_factory=SchemaConfig, alias="schema")
     generation: GenerationConfig = Field(default_factory=GenerationConfig)
+    privacy: PrivacyConfig = Field(default_factory=PrivacyConfig)
     tables: dict[str, TableOverride] = Field(default_factory=dict)
 
     @classmethod

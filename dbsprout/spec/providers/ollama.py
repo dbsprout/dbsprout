@@ -26,6 +26,8 @@ _DEFAULT_HOST = "http://localhost:11434"
 class OllamaProvider:
     """Spec provider using a local Ollama instance via LiteLLM."""
 
+    provider_locality: str = "local"
+
     def __init__(
         self,
         model: str = _DEFAULT_MODEL,

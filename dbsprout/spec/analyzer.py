@@ -1,6 +1,7 @@
 """LLM spec analyzer — orchestrates schema DDL → DataSpec JSON pipeline.
 
-Manages cache, provider calls, retry logic, and heuristic fallback.
+Manages cache, provider calls, retry logic, privacy enforcement,
+and heuristic fallback.
 """
 
 from __future__ import annotations
@@ -14,6 +15,8 @@ if TYPE_CHECKING:
     from dbsprout.schema.models import DatabaseSchema
     from dbsprout.spec.providers.base import SpecProvider
 
+from dbsprout.privacy.enforcer import PrivacyEnforcer, PrivacyTier
+from dbsprout.privacy.redactor import redact_schema
 from dbsprout.spec.cache import SpecCache
 from dbsprout.spec.models import DataSpec, GeneratorConfig, TableSpec
 
@@ -25,25 +28,36 @@ _MAX_RETRIES = 3
 class SpecAnalyzer:
     """Orchestrates the spec generation pipeline.
 
-    Flow: cache check → provider call → validate → retry → fallback.
+    Flow: privacy check → cache check → provider call → validate → retry → fallback.
     """
 
     def __init__(
         self,
         provider: SpecProvider,
         cache_dir: Path | str = ".dbsprout/cache",
+        privacy_tier: PrivacyTier = PrivacyTier.LOCAL,
     ) -> None:
         self._provider = provider
         self._cache = SpecCache(cache_dir=cache_dir)
+        self._privacy_tier = privacy_tier
+        self._enforcer = PrivacyEnforcer()
 
     def analyze(self, schema: DatabaseSchema) -> DataSpec:
         """Analyze a schema and produce a DataSpec.
 
-        1. Check cache (by schema_hash)
-        2. On miss: call provider with retry
-        3. On total failure: heuristic fallback
-        4. Cache and return
+        1. Validate privacy tier against provider locality
+        2. Check cache (by schema_hash)
+        3. On miss: redact schema if ``redacted`` tier, then call provider
+        4. On total failure: heuristic fallback
+        5. Cache and return
         """
+        # Privacy enforcement — blocks cloud providers under local tier
+        provider_locality: str = getattr(self._provider, "provider_locality", "cloud")
+        self._enforcer.validate_provider(
+            provider_locality=provider_locality,
+            tier=self._privacy_tier,
+        )
+
         schema_hash = schema.schema_hash()
 
         # Cache check
@@ -52,8 +66,14 @@ class SpecAnalyzer:
             logger.info("Spec cache hit for hash %s", schema_hash)
             return cached
 
+        # Redact schema for cloud providers under redacted tier
+        provider_schema = schema
+        if self._privacy_tier == PrivacyTier.REDACTED and provider_locality == "cloud":
+            logger.info("Redacting schema for redacted tier before cloud call")
+            provider_schema = redact_schema(schema)
+
         # Provider call with retry
-        spec = self._call_with_retry(schema)
+        spec = self._call_with_retry(provider_schema)
 
         # Cache result
         spec = spec.model_copy(update={"schema_hash": schema_hash})
