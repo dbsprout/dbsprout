@@ -23,7 +23,8 @@ def redact_schema(schema: DatabaseSchema) -> DatabaseSchema:
     - FK references updated to use consistent hashed names
     - All other fields (types, nullable, PK, precision, etc.) preserved
 
-    The hash is ``sha256(name)[:8]``, making it deterministic and irreversible.
+    The hash is ``sha256(name)[:12]``, deterministic but reversible for common
+    names via dictionary attack. Salted hashing is planned for S-040.
     """
     table_map = {t.name: _hash_table(t.name) for t in schema.tables}
     col_maps: dict[str, dict[str, str]] = {}
@@ -41,7 +42,7 @@ def redact_schema(schema: DatabaseSchema) -> DatabaseSchema:
 
 def _hash_name(name: str, prefix: str) -> str:
     """Hash a name with SHA-256 and prepend a prefix."""
-    digest = hashlib.sha256(name.encode()).hexdigest()[:8]
+    digest = hashlib.sha256(name.encode()).hexdigest()[:12]
     return f"{prefix}{digest}"
 
 
@@ -92,7 +93,7 @@ def _redact_table(
     redacted_indexes = [
         idx.model_copy(
             update={
-                "columns": [col_map.get(c, c) for c in idx.columns],
+                "columns": [col_map[c] for c in idx.columns],
             },
         )
         for idx in table.indexes

@@ -24,6 +24,8 @@ _MAX_RETRIES = 3
 class CloudProvider:
     """Spec provider using cloud LLM APIs via LiteLLM + Instructor."""
 
+    provider_locality: str = "cloud"
+
     def __init__(
         self,
         model: str = _DEFAULT_MODEL,
