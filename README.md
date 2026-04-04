@@ -2,19 +2,25 @@
 
 Generate realistic seed data from your database schema.
 
-DBSprout reads your database schema (live connection or DDL file), analyzes foreign key dependencies, and generates realistic seed data with 100% FK integrity. It works offline by default and supports SQLite, PostgreSQL, and MySQL.
+DBSprout reads your database schema (live connection or schema file), analyzes foreign key dependencies, and generates realistic seed data with 100% FK integrity. It works offline by default with an optional embedded AI model, supports SQLite, PostgreSQL, MySQL, and SQL Server, and accepts schemas from live databases, SQL DDL, DBML, Mermaid ERD, PlantUML, and Prisma files.
 
 ## Features
 
-- **Schema-first** -- point at your DB or DDL file, no config required
+- **Schema-first** -- point at your DB or schema file, no config required
+- **7 schema inputs** -- live DB (SQLite, PostgreSQL, MySQL, SQL Server) or file (SQL DDL, DBML, Mermaid ERD, PlantUML, Prisma)
 - **100% FK integrity** -- topological ordering + FK sampling from parent PKs
-- **Realistic values** -- 89 pattern rules map columns to appropriate generators (email, name, phone, etc.)
+- **Realistic values** -- 100+ pattern rules map columns to appropriate generators (email, name, phone, etc.)
+- **AI-powered specs** -- optional embedded LLM (Qwen 2.5-1.5B) or cloud LLM (OpenAI, Anthropic, etc.) for smarter column mapping
 - **Deterministic** -- same seed produces identical output for CI/testing
 - **Multiple output formats** -- SQL INSERT, CSV, JSON, JSONL
 - **3 SQL dialects** -- PostgreSQL, MySQL, SQLite with correct quoting and escaping
-- **Constraint enforcement** -- UNIQUE dedup, NOT NULL, auto-increment PKs
+- **Constraint enforcement** -- UNIQUE dedup, NOT NULL, CHECK constraints (AC-3), auto-increment PKs
+- **Geo coherence** -- city/state/zip tuples stay consistent across related columns
 - **Integrity validation** -- automatic post-generation validation with detailed report
 - **Cycle handling** -- detects and resolves circular FK dependencies automatically
+- **Privacy tiers** -- Local, Redacted, and Cloud tiers control where data flows
+- **PII redaction** -- Presidio-based detection and masking of sensitive data in LLM prompts
+- **Audit logging** -- append-only JSON Lines log of all LLM interactions with cost tracking
 
 ## Installation
 
@@ -33,8 +39,12 @@ uv add dbsprout
 ### Optional extras
 
 ```bash
-pip install dbsprout[db]      # SQLAlchemy + database drivers (psycopg2, pymysql)
-pip install dbsprout[dev]     # Development tools (pytest, ruff, mypy)
+pip install dbsprout[db]       # SQLAlchemy + drivers (PostgreSQL, MySQL)
+pip install dbsprout[mssql]    # SQL Server support (pyodbc)
+pip install dbsprout[llm]      # Embedded LLM (llama-cpp-python + Qwen 2.5-1.5B)
+pip install dbsprout[cloud]    # Cloud LLM providers (LiteLLM + Instructor)
+pip install dbsprout[privacy]  # PII redaction (Presidio)
+pip install dbsprout[dev]      # Development tools (pytest, ruff, mypy)
 ```
 
 ## Quick Start
@@ -50,19 +60,29 @@ dbsprout init --db postgresql://user:pass@localhost:5432/mydb
 
 # MySQL
 dbsprout init --db mysql+pymysql://user:pass@localhost:3306/mydb
+
+# SQL Server
+dbsprout init --db mssql+pyodbc://user:pass@localhost:1433/mydb?driver=ODBC+Driver+18+for+SQL+Server
 ```
 
-Or from a DDL file:
+Or from a schema file:
 
 ```bash
-dbsprout init --file schema.sql
+dbsprout init --file schema.sql       # SQL DDL
+dbsprout init --file schema.dbml      # DBML
+dbsprout init --file schema.mmd       # Mermaid ERD
+dbsprout init --file schema.puml      # PlantUML
+dbsprout init --file schema.prisma    # Prisma
 ```
 
 ### 2. Generate seed data
 
 ```bash
-# Generate SQL INSERT files (default)
+# Generate SQL INSERT files (default heuristic engine)
 dbsprout generate
+
+# Use AI-powered spec engine for smarter column mapping
+dbsprout generate --engine spec
 
 # Generate 500 rows per table with CSV output
 dbsprout generate --rows 500 --output-format csv
@@ -72,6 +92,9 @@ dbsprout generate --output-format json --seed 123
 
 # MySQL dialect
 dbsprout generate --dialect mysql --output-dir ./mysql-seeds
+
+# Cloud LLM with privacy tier (requires OPENAI_API_KEY or similar)
+dbsprout generate --engine spec --privacy cloud
 ```
 
 ### Example output
@@ -134,7 +157,7 @@ Introspect a database schema and generate configuration.
 
 ```
 dbsprout init --db <connection-url>    # From live database
-dbsprout init --file <schema.sql>      # From DDL file
+dbsprout init --file <schema-file>     # From schema file (.sql, .dbml, .mmd, .puml, .prisma)
 dbsprout init --dry-run                # Preview without writing files
 dbsprout init --output-dir ./config    # Custom output directory
 ```
@@ -152,8 +175,30 @@ dbsprout generate --output-format json         # JSON (pretty-printed array)
 dbsprout generate --output-format jsonl        # JSONL (one object per line)
 dbsprout generate --dialect mysql              # MySQL SQL dialect
 dbsprout generate --output-dir ./my-seeds      # Custom output directory
+dbsprout generate --engine spec                # AI-powered spec engine
+dbsprout generate --privacy cloud              # Allow cloud LLM providers
 dbsprout generate --schema-snapshot path.json  # Explicit schema path
 dbsprout generate --config dbsprout.toml       # Explicit config path
+```
+
+### `dbsprout validate`
+
+Validate integrity of generated seed data.
+
+```
+dbsprout validate                              # Validate with defaults
+dbsprout validate --rows 500                   # Validate 500 rows per table
+dbsprout validate --engine spec                # Validate spec-driven output
+dbsprout validate --format json                # JSON output (for CI pipelines)
+```
+
+### `dbsprout audit`
+
+Display the LLM interaction audit log.
+
+```
+dbsprout audit                                 # Show all audit entries
+dbsprout audit --last 10                       # Show 10 most recent entries
 ```
 
 ## Configuration
@@ -183,14 +228,14 @@ exclude = true
 ## How it Works
 
 ```
-SCHEMA INPUT ──> FK GRAPH ──> GENERATION ──> CONSTRAINTS ──> VALIDATION ──> OUTPUT
+SCHEMA INPUT ──> SPEC GENERATION ──> FK GRAPH ──> DATA GENERATION ──> VALIDATION ──> OUTPUT
 ```
 
-1. **Schema Input** -- Reads schema via live DB introspection (SQLAlchemy) or DDL file parsing (sqlglot)
-2. **FK Graph** -- Builds dependency graph, detects cycles (Tarjan SCC), resolves via nullable FK deferral
-3. **Generation** -- Heuristic column mapping (89 patterns) + Mimesis/NumPy value generation in topological order
-4. **FK Sampling** -- FK columns sample from parent PKs using NumPy vectorized random selection
-5. **Constraints** -- UNIQUE dedup with retry, NOT NULL enforcement, auto-increment PK assignment
+1. **Schema Input** -- Reads schema via live DB introspection (SQLAlchemy for 4 databases) or file parsing (SQL DDL, DBML, Mermaid, PlantUML, Prisma)
+2. **Spec Generation** -- Heuristic regex matching (100+ patterns) or LLM-powered analysis (one call per schema, cached) produces a DataSpec
+3. **FK Graph** -- Builds dependency graph, detects cycles (Tarjan SCC), resolves via nullable FK deferral
+4. **Data Generation** -- Mimesis/NumPy value generation in topological order with FK sampling from parent PKs
+5. **Constraints** -- UNIQUE dedup, NOT NULL, CHECK constraint enforcement (AC-3), auto-increment PKs, geo coherence
 6. **Validation** -- FK satisfaction, PK uniqueness, UNIQUE, NOT NULL checks (all must be 100%)
 7. **Output** -- SQL INSERT (3 dialects), CSV, JSON, JSONL with insertion-order file numbering
 
@@ -201,24 +246,53 @@ SCHEMA INPUT ──> FK GRAPH ──> GENERATION ──> CONSTRAINTS ──> VAL
 | SQLite     | Yes               | Yes              |
 | PostgreSQL | Yes               | Yes              |
 | MySQL      | Yes               | Yes              |
+| SQL Server | Yes (`[mssql]`)   | Yes              |
+
+## Supported Schema Formats
+
+| Format   | Extension    | Notes                                |
+|----------|-------------|--------------------------------------|
+| SQL DDL  | `.sql`      | Auto-detects dialect via sqlglot     |
+| DBML     | `.dbml`     | Full DBML spec via pydbml            |
+| Mermaid  | `.mmd`      | erDiagram blocks with relationships  |
+| PlantUML | `.puml`     | entity blocks with FK arrows         |
+| Prisma   | `.prisma`   | Model definitions via DMMF extraction|
 
 ## Project Status
 
-DBSprout is in active development.
+DBSprout is in active development. Sprints 1-4 complete (41 stories, 154 story points).
 
-**v0.1.0** (current) -- Sprint 1 + Sprint 2 complete:
+**Sprints 1-2** -- Core generation pipeline:
 - Schema introspection for SQLite, PostgreSQL, MySQL
 - SQL DDL file parsing with auto dialect detection
 - FK dependency graph with topological sort and cycle resolution
 - `dbsprout init` and `dbsprout generate` CLI commands
-- Heuristic generation engine with 89 column pattern rules
+- Heuristic generation engine with 100+ column pattern rules
 - Vectorized NumPy generation + deterministic seeding
 - FK sampling, UNIQUE/NOT NULL constraint enforcement
 - SQL INSERT (3 dialects), CSV, JSON/JSONL output writers
 - Automatic integrity validation
-- 600+ tests, 95%+ coverage
 
-**Coming next:** Embedded LLM spec generation, additional schema parsers (DBML, Prisma, Mermaid), cloud LLM support, and migration-aware incremental seeding.
+**Sprint 3** -- AI-powered spec engine:
+- Embedded LLM provider (Qwen 2.5-1.5B via llama-cpp-python)
+- LLM spec analyzer with retry logic and spec caching
+- Spec-driven generation engine (`--engine spec`)
+- `dbsprout validate` command
+- Geo coherence (563 US city/state/zip tuples)
+- CHECK constraint enforcement (AC-3 arc consistency)
+
+**Sprint 4** -- Schema everywhere + privacy:
+- 4 new schema parsers: DBML, Mermaid ERD, PlantUML, Prisma
+- Cloud LLM provider (OpenAI, Anthropic, etc. via LiteLLM + Instructor)
+- Ollama provider for local LLM inference
+- SQL Server introspection
+- Privacy tier enforcement (Local / Redacted / Cloud)
+- PII redaction via Presidio
+- Append-only audit logging with `dbsprout audit` command
+
+**1,400+ tests, 95%+ coverage**
+
+**Coming next:** Direct database insertion (PostgreSQL COPY, MySQL LOAD DATA), Parquet output, UPSERT mode, quality metrics (fidelity, detection), and Django model introspection.
 
 ## Development
 
