@@ -95,6 +95,16 @@ def validate_proxy(  # noqa: PLR0913
     )
 
 
+@app.command(name="audit")
+def audit_proxy(
+    last: int | None = typer.Option(None, "--last", "-n", min=1),
+) -> None:
+    """Show the LLM interaction audit log."""
+    from dbsprout.cli.commands.audit import audit_command  # noqa: PLC0415
+
+    audit_command(last=last)
+
+
 @app.callback()
 def main() -> None:
     """DBSprout — realistic database seed data from your schema."""
