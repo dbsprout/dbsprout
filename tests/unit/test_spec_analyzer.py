@@ -7,6 +7,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from dbsprout.privacy.audit import AuditLog
 from dbsprout.privacy.enforcer import PrivacyError, PrivacyTier
 from dbsprout.schema.models import (
     ColumnSchema,
@@ -14,7 +15,7 @@ from dbsprout.schema.models import (
     DatabaseSchema,
     TableSchema,
 )
-from dbsprout.spec.analyzer import SpecAnalyzer, _build_spec_prompt, heuristic_fallback
+from dbsprout.spec.analyzer import SpecAnalyzer, heuristic_fallback
 from dbsprout.spec.models import DataSpec, GeneratorConfig, TableSpec
 
 if TYPE_CHECKING:
@@ -169,19 +170,6 @@ class TestFallback:
         assert ts.columns["email"].provider != ""
 
 
-class TestPrompt:
-    def test_prompt_includes_ddl_and_example(self) -> None:
-        """Prompt must contain schema DDL and example output."""
-        schema = _simple_schema()
-        prompt = _build_spec_prompt(schema)
-
-        assert "CREATE TABLE" in prompt
-        assert "users" in prompt
-        assert "email" in prompt
-        # Should contain example or instruction
-        assert "DataSpec" in prompt or "JSON" in prompt
-
-
 class TestPrivacyEnforcement:
     """Privacy tier enforcement in SpecAnalyzer."""
 
@@ -307,5 +295,100 @@ class TestPrivacyEnforcement:
         try:
             with pytest.raises(PrivacyError):
                 analyzer.analyze(_simple_schema())
+        finally:
+            analyzer.close()
+
+
+class TestAuditIntegration:
+    """AuditLog integration in SpecAnalyzer."""
+
+    def test_audit_event_on_cache_hit(self, tmp_path: Path) -> None:
+        from dbsprout.spec.cache import SpecCache  # noqa: PLC0415
+
+        schema = _simple_schema()
+        cache = SpecCache(cache_dir=tmp_path / "cache")
+        spec = _mock_dataspec(schema.schema_hash())
+        cache.put(schema.schema_hash(), spec)
+        cache.close()
+
+        mock_provider = MagicMock()
+        mock_provider.provider_locality = "local"
+        mock_provider._model = "test-model"
+        log_path = tmp_path / "audit.log"
+        audit = AuditLog(path=log_path)
+
+        analyzer = SpecAnalyzer(
+            provider=mock_provider,
+            cache_dir=tmp_path / "cache",
+            audit_log=audit,
+        )
+        try:
+            analyzer.analyze(schema)
+            events = audit.read()
+            assert len(events) == 1
+            assert events[0].cached is True
+        finally:
+            analyzer.close()
+
+    def test_audit_event_on_provider_call(self, tmp_path: Path) -> None:
+        mock_spec = _mock_dataspec()
+        mock_provider = MagicMock()
+        mock_provider.provider_locality = "local"
+        mock_provider._model = "test-model"
+        mock_provider.generate_spec.return_value = mock_spec
+
+        log_path = tmp_path / "audit.log"
+        audit = AuditLog(path=log_path)
+
+        analyzer = SpecAnalyzer(
+            provider=mock_provider,
+            cache_dir=tmp_path / "cache",
+            audit_log=audit,
+        )
+        try:
+            analyzer.analyze(_simple_schema())
+            events = audit.read()
+            assert len(events) == 1
+            assert events[0].cached is False
+            assert events[0].provider == "MagicMock"
+        finally:
+            analyzer.close()
+
+    def test_audit_event_includes_schema_hash(self, tmp_path: Path) -> None:
+        mock_spec = _mock_dataspec()
+        mock_provider = MagicMock()
+        mock_provider.provider_locality = "local"
+        mock_provider._model = "test-model"
+        mock_provider.generate_spec.return_value = mock_spec
+
+        log_path = tmp_path / "audit.log"
+        audit = AuditLog(path=log_path)
+        schema = _simple_schema()
+
+        analyzer = SpecAnalyzer(
+            provider=mock_provider,
+            cache_dir=tmp_path / "cache",
+            audit_log=audit,
+        )
+        try:
+            analyzer.analyze(schema)
+            events = audit.read()
+            assert events[0].schema_hash == schema.schema_hash()
+        finally:
+            analyzer.close()
+
+    def test_no_audit_when_log_is_none(self, tmp_path: Path) -> None:
+        """Backward compat: no audit_log = no recording."""
+        mock_spec = _mock_dataspec()
+        mock_provider = MagicMock()
+        mock_provider.provider_locality = "local"
+        mock_provider.generate_spec.return_value = mock_spec
+
+        analyzer = SpecAnalyzer(
+            provider=mock_provider,
+            cache_dir=tmp_path / "cache",
+        )
+        try:
+            analyzer.analyze(_simple_schema())
         finally:
             analyzer.close()
