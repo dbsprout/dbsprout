@@ -70,7 +70,6 @@ class SpecAnalyzer:
         if cached is not None:
             logger.info("Spec cache hit for hash %s", schema_hash)
             self._record_audit(
-                provider_locality=provider_locality,
                 schema_hash=schema_hash,
                 cached=True,
             )
@@ -94,7 +93,6 @@ class SpecAnalyzer:
 
         # Audit
         self._record_audit(
-            provider_locality=provider_locality,
             schema_hash=schema_hash,
             cached=False,
             duration_seconds=duration,
@@ -133,7 +131,6 @@ class SpecAnalyzer:
     def _record_audit(
         self,
         *,
-        provider_locality: str,
         schema_hash: str,
         cached: bool,
         duration_seconds: float | None = None,
@@ -141,9 +138,12 @@ class SpecAnalyzer:
         """Record an audit event if an audit log is configured."""
         if self._audit_log is None:
             return
+        provider_name = type(self._provider).__name__
+        model_name: str | None = getattr(self._provider, "_model", None)
         event = AuditEvent(
             timestamp=datetime.now(tz=timezone.utc).isoformat(),
-            provider=provider_locality,
+            provider=provider_name,
+            model=model_name,
             privacy_tier=self._privacy_tier.value,
             schema_hash=schema_hash,
             cached=cached,

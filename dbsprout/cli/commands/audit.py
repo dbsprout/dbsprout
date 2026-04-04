@@ -2,17 +2,13 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-
 import typer
 from rich.console import Console
 from rich.table import Table
 
-from dbsprout.privacy.audit import AuditLog
+from dbsprout.privacy.audit import _DEFAULT_PATH, AuditLog
 
 console = Console()
-
-_DEFAULT_LOG = Path(".dbsprout/audit.log")
 
 
 def audit_command(
@@ -25,7 +21,7 @@ def audit_command(
     ),
 ) -> None:
     """Show the LLM interaction audit log."""
-    audit = AuditLog(path=_DEFAULT_LOG)
+    audit = AuditLog(path=_DEFAULT_PATH)
     events = audit.read(limit=last)
 
     if not events:

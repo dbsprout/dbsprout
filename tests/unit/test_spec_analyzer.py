@@ -313,6 +313,7 @@ class TestAuditIntegration:
 
         mock_provider = MagicMock()
         mock_provider.provider_locality = "local"
+        mock_provider._model = "test-model"
         log_path = tmp_path / "audit.log"
         audit = AuditLog(path=log_path)
 
@@ -333,6 +334,7 @@ class TestAuditIntegration:
         mock_spec = _mock_dataspec()
         mock_provider = MagicMock()
         mock_provider.provider_locality = "local"
+        mock_provider._model = "test-model"
         mock_provider.generate_spec.return_value = mock_spec
 
         log_path = tmp_path / "audit.log"
@@ -348,7 +350,7 @@ class TestAuditIntegration:
             events = audit.read()
             assert len(events) == 1
             assert events[0].cached is False
-            assert events[0].provider == "local"
+            assert events[0].provider == "MagicMock"
         finally:
             analyzer.close()
 
@@ -356,6 +358,7 @@ class TestAuditIntegration:
         mock_spec = _mock_dataspec()
         mock_provider = MagicMock()
         mock_provider.provider_locality = "local"
+        mock_provider._model = "test-model"
         mock_provider.generate_spec.return_value = mock_spec
 
         log_path = tmp_path / "audit.log"

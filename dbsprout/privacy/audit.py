@@ -7,9 +7,12 @@ Records every LLM call (and cache hit) as a JSON Lines entry in
 from __future__ import annotations
 
 import json
+import logging
 from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict
+
+logger = logging.getLogger(__name__)
 
 
 class AuditEvent(BaseModel):
@@ -69,7 +72,12 @@ class AuditLog:
         lines = [ln for ln in lines if ln]
         if not lines:
             return []
-        events = [AuditEvent.model_validate(json.loads(ln)) for ln in lines]
+        events: list[AuditEvent] = []
+        for ln in lines:
+            try:
+                events.append(AuditEvent.model_validate(json.loads(ln)))
+            except (json.JSONDecodeError, ValueError):
+                logger.warning("Skipping malformed audit log line: %s", ln[:80])
         if limit is not None:
             events = events[-limit:]
         return events
