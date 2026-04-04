@@ -556,9 +556,12 @@ class TestValidateUrl:
     def test_mysql_allowed(self) -> None:
         _validate_url("mysql://user:pass@localhost/db")
 
+    def test_mssql_allowed(self) -> None:
+        _validate_url("mssql://user:pass@localhost/db")
+
     def test_unsupported_dialect_rejected(self) -> None:
         with pytest.raises(ValueError, match="Unsupported dialect"):
-            _validate_url("mssql://user:pass@localhost/db")
+            _validate_url("oracle://user:pass@localhost/db")
 
 
 class TestConnectionTimeout:
@@ -582,6 +585,16 @@ class TestConnectionTimeout:
             _create_engine("mysql+pymysql://user:pass@localhost/db")
             _, kwargs = mock_create.call_args
             assert kwargs["connect_args"]["connect_timeout"] == 10
+
+    def test_mssql_url_gets_timeout(self) -> None:
+        """pyodbc uses 'timeout' (not 'connect_timeout') for login timeout."""
+        with patch("sqlalchemy.create_engine") as mock_create:
+            mock_engine = MagicMock()
+            mock_engine.dialect.name = "mssql"
+            mock_create.return_value = mock_engine
+            _create_engine("mssql+pyodbc://user:pass@localhost/db")
+            _, kwargs = mock_create.call_args
+            assert kwargs["connect_args"]["timeout"] == 10
 
     def test_sqlite_url_no_connect_timeout(self) -> None:
         _mod = sys.modules["dbsprout.schema.introspect"]

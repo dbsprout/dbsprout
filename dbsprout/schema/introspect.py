@@ -1,7 +1,7 @@
 """Database introspection via SQLAlchemy Inspector.
 
 Connects to a live database, reads its schema, and returns a unified
-``DatabaseSchema``. Supports SQLite, PostgreSQL, and MySQL.
+``DatabaseSchema``. Supports SQLite, PostgreSQL, MySQL, and MSSQL.
 """
 
 from __future__ import annotations
@@ -33,7 +33,7 @@ from dbsprout.schema.models import (
     TableSchema,
 )
 
-_SUPPORTED_DIALECTS = frozenset({"sqlite", "postgresql", "mysql"})
+_SUPPORTED_DIALECTS = frozenset({"sqlite", "postgresql", "mysql", "mssql"})
 
 
 def introspect(url: str) -> DatabaseSchema:
@@ -95,13 +95,17 @@ _CONNECT_TIMEOUT = 10
 def _create_engine(url: str) -> Engine:
     """Create a SQLAlchemy engine with dialect-specific setup.
 
-    Applies connection timeouts for network databases (PG, MySQL) and
-    sanitizes credentials in error messages.
+    Applies connection timeouts for network databases (PG, MySQL, MSSQL)
+    and sanitizes credentials in error messages.
     """
     parsed = sa.engine.make_url(url)
     connect_args: dict[str, Any] = {}
-    if parsed.get_backend_name() in ("postgresql", "mysql"):
+    backend = parsed.get_backend_name()
+    if backend in ("postgresql", "mysql"):
         connect_args["connect_timeout"] = _CONNECT_TIMEOUT
+    elif backend == "mssql":
+        # pyodbc uses "timeout" (not "connect_timeout") for login timeout
+        connect_args["timeout"] = _CONNECT_TIMEOUT
     try:
         engine = sa.create_engine(url, connect_args=connect_args)
     except sa.exc.SQLAlchemyError as err:

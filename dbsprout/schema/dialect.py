@@ -60,10 +60,22 @@ _MYSQL_TYPE_MAP: dict[str, ColumnType] = {
     "BIT": ColumnType.INTEGER,
 }
 
+# MSSQL types that either have no generic SA superclass or need an override.
+# UNIQUEIDENTIFIER, BIT, IMAGE, NVARCHAR, NCHAR, NTEXT, XML, SMALLDATETIME
+# are handled by generic SA dispatch (Uuid, Boolean, LargeBinary, String,
+# Text, DateTime) and do NOT need entries here.
+_MSSQL_TYPE_MAP: dict[str, ColumnType] = {
+    "DATETIME2": ColumnType.TIMESTAMP,
+    "DATETIMEOFFSET": ColumnType.TIMESTAMP,
+    "MONEY": ColumnType.DECIMAL,
+    "SMALLMONEY": ColumnType.DECIMAL,
+}
+
 # Registry of dialect-specific type maps.
 _DIALECT_TYPE_MAPS: dict[str, dict[str, ColumnType]] = {
     "postgresql": _PG_TYPE_MAP,
     "mysql": _MYSQL_TYPE_MAP,
+    "mssql": _MSSQL_TYPE_MAP,
 }
 
 

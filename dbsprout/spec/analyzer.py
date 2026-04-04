@@ -1,11 +1,14 @@
 """LLM spec analyzer — orchestrates schema DDL → DataSpec JSON pipeline.
 
-Manages cache, provider calls, retry logic, and heuristic fallback.
+Manages cache, provider calls, retry logic, privacy enforcement,
+audit logging, and heuristic fallback.
 """
 
 from __future__ import annotations
 
 import logging
+import time
+from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -14,6 +17,9 @@ if TYPE_CHECKING:
     from dbsprout.schema.models import DatabaseSchema
     from dbsprout.spec.providers.base import SpecProvider
 
+from dbsprout.privacy.audit import AuditEvent, AuditLog
+from dbsprout.privacy.enforcer import PrivacyEnforcer, PrivacyTier
+from dbsprout.privacy.redactor import de_redact_spec, redact_schema
 from dbsprout.spec.cache import SpecCache
 from dbsprout.spec.models import DataSpec, GeneratorConfig, TableSpec
 
@@ -25,35 +31,72 @@ _MAX_RETRIES = 3
 class SpecAnalyzer:
     """Orchestrates the spec generation pipeline.
 
-    Flow: cache check → provider call → validate → retry → fallback.
+    Flow: privacy check → cache check → provider call → validate → retry → fallback.
     """
 
     def __init__(
         self,
         provider: SpecProvider,
         cache_dir: Path | str = ".dbsprout/cache",
+        privacy_tier: PrivacyTier = PrivacyTier.LOCAL,
+        audit_log: AuditLog | None = None,
     ) -> None:
         self._provider = provider
         self._cache = SpecCache(cache_dir=cache_dir)
+        self._privacy_tier = privacy_tier
+        self._enforcer = PrivacyEnforcer()
+        self._audit_log = audit_log
 
     def analyze(self, schema: DatabaseSchema) -> DataSpec:
         """Analyze a schema and produce a DataSpec.
 
-        1. Check cache (by schema_hash)
-        2. On miss: call provider with retry
-        3. On total failure: heuristic fallback
-        4. Cache and return
+        1. Validate privacy tier against provider locality
+        2. Check cache (by schema_hash)
+        3. On miss: redact schema if ``redacted`` tier, then call provider
+        4. On total failure: heuristic fallback
+        5. Cache and return
         """
+        # Privacy enforcement — blocks cloud providers under local tier
+        provider_locality: str = getattr(self._provider, "provider_locality", "cloud")
+        self._enforcer.validate_provider(
+            provider_locality=provider_locality,
+            tier=self._privacy_tier,
+        )
+
         schema_hash = schema.schema_hash()
 
         # Cache check
         cached = self._cache.get(schema_hash)
         if cached is not None:
             logger.info("Spec cache hit for hash %s", schema_hash)
+            self._record_audit(
+                schema_hash=schema_hash,
+                cached=True,
+            )
             return cached
 
+        # Redact schema for cloud providers under redacted tier
+        provider_schema = schema
+        redaction_map = None
+        if self._privacy_tier == PrivacyTier.REDACTED and provider_locality == "cloud":
+            logger.info("Redacting schema for redacted tier before cloud call")
+            provider_schema, redaction_map = redact_schema(schema)
+
         # Provider call with retry
-        spec = self._call_with_retry(schema)
+        start = time.monotonic()
+        spec = self._call_with_retry(provider_schema)
+        duration = time.monotonic() - start
+
+        # De-redact spec if schema was redacted
+        if redaction_map is not None:
+            spec = de_redact_spec(spec, redaction_map)
+
+        # Audit
+        self._record_audit(
+            schema_hash=schema_hash,
+            cached=False,
+            duration_seconds=duration,
+        )
 
         # Cache result
         spec = spec.model_copy(update={"schema_hash": schema_hash})
@@ -85,45 +128,32 @@ class SpecAnalyzer:
         )
         return heuristic_fallback(schema)
 
+    def _record_audit(
+        self,
+        *,
+        schema_hash: str,
+        cached: bool,
+        duration_seconds: float | None = None,
+    ) -> None:
+        """Record an audit event if an audit log is configured."""
+        if self._audit_log is None:
+            return
+        provider_name = type(self._provider).__name__
+        model_name: str | None = getattr(self._provider, "_model", None)
+        event = AuditEvent(
+            timestamp=datetime.now(tz=timezone.utc).isoformat(),
+            provider=provider_name,
+            model=model_name,
+            privacy_tier=self._privacy_tier.value,
+            schema_hash=schema_hash,
+            cached=cached,
+            duration_seconds=duration_seconds,
+        )
+        self._audit_log.record(event)
+
     def close(self) -> None:
         """Close the cache connection."""
         self._cache.close()
-
-
-def _build_spec_prompt(schema: DatabaseSchema) -> str:
-    """Build the LLM prompt from a database schema.
-
-    Includes schema DDL, provider examples, and output format instructions.
-    """
-    ddl = schema.to_ddl()
-    return (
-        "Generate a DataSpec JSON for the following database schema.\n\n"
-        "## Schema DDL\n\n"
-        f"```sql\n{ddl}\n```\n\n"
-        "## Instructions\n\n"
-        "For each column in each table, produce a GeneratorConfig with:\n"
-        "- `provider`: data generator (e.g., mimesis.Person.email, "
-        "mimesis.Person.full_name, numpy.integers, builtin.autoincrement, "
-        "builtin.uuid4)\n"
-        "- `distribution`: for numeric columns (uniform, normal, zipf)\n"
-        "- `min_value`/`max_value`: for numeric ranges\n"
-        "- `unique`: true for UNIQUE columns\n"
-        "- `nullable_rate`: fraction of rows that should be NULL (0.0-1.0)\n\n"
-        "## Example\n\n"
-        "For a table `products(id INT PK, name VARCHAR, price DECIMAL)`:\n"
-        "```json\n"
-        "{\n"
-        '  "table_name": "products",\n'
-        '  "columns": {\n'
-        '    "id": {"provider": "builtin.autoincrement"},\n'
-        '    "name": {"provider": "mimesis.Text.word"},\n'
-        '    "price": {"provider": "numpy.uniform", '
-        '"min_value": 1.0, "max_value": 999.99}\n'
-        "  }\n"
-        "}\n"
-        "```\n\n"
-        "Output the complete DataSpec JSON with all tables."
-    )
 
 
 def heuristic_fallback(schema: DatabaseSchema) -> DataSpec:

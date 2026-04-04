@@ -69,6 +69,12 @@ class TestGenerateHelp:
         assert "--seed" in output
         assert "--output-format" in output
 
+    def test_privacy_flag_in_help(self) -> None:
+        """--privacy flag must appear in help output."""
+        result = runner.invoke(app, ["generate", "--help"])
+        output = _strip_ansi(result.output)
+        assert "--privacy" in output
+
 
 class TestGenerateRequiresSchema:
     def test_errors_without_schema(self, tmp_path: Path) -> None:

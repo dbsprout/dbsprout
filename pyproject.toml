@@ -32,6 +32,7 @@ dependencies = [
     "faker>=33.0",
     "numpy>=1.26",
     "diskcache>=5.6",
+    "pydbml>=1.0",
 ]
 
 [project.urls]
@@ -58,6 +59,10 @@ db = [
     "psycopg2-binary>=2.9",
     "pymysql>=1.1",
 ]
+mssql = [
+    "sqlalchemy>=2.0",
+    "pyodbc>=5.0",
+]
 gen = [
     "mimesis>=18.0",
     "faker>=33.0",
@@ -72,6 +77,9 @@ llm = [
 cloud = [
     "litellm>=1.0",
     "instructor>=1.0",
+]
+privacy = [
+    "presidio-analyzer>=2.0",
 ]
 stats = [
     "scipy>=1.14",

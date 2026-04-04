@@ -240,8 +240,26 @@ def _init_from_file(file_path: str, output_dir: Path, dry_run: bool) -> None:
         raise typer.Exit(code=1)
 
     try:
-        sql_text = path.read_text(encoding="utf-8")
-        schema = parse_ddl(sql_text, source_file=str(file_path))
+        file_text = path.read_text(encoding="utf-8")
+        suffix = path.suffix.lower()
+        if suffix == ".dbml":
+            from dbsprout.schema.parsers.dbml import parse_dbml  # noqa: PLC0415
+
+            schema = parse_dbml(file_text, source_file=str(file_path))
+        elif suffix in (".mermaid", ".mmd"):
+            from dbsprout.schema.parsers.mermaid import parse_mermaid  # noqa: PLC0415
+
+            schema = parse_mermaid(file_text, source_file=str(file_path))
+        elif suffix in (".puml", ".plantuml", ".pu"):
+            from dbsprout.schema.parsers.plantuml import parse_plantuml  # noqa: PLC0415
+
+            schema = parse_plantuml(file_text, source_file=str(file_path))
+        elif suffix == ".prisma":
+            from dbsprout.schema.parsers.prisma import parse_prisma  # noqa: PLC0415
+
+            schema = parse_prisma(file_text, source_file=str(file_path))
+        else:
+            schema = parse_ddl(file_text, source_file=str(file_path))
     except (ValueError, OSError) as exc:
         console.print(f"[red]Error:[/red] {exc}")
         raise typer.Exit(code=1) from None

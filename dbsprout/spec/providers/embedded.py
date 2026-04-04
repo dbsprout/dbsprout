@@ -35,6 +35,8 @@ class EmbeddedProvider:
     5. Store in cache and return
     """
 
+    provider_locality: str = "local"
+
     def __init__(
         self,
         cache_dir: Path | str = ".dbsprout/cache",
