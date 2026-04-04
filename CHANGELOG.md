@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.1.5](https://github.com/dbsprout/dbsprout/compare/v0.1.4...v0.1.5) (2026-04-04)
+
+
+### Features
+
+* cloud LLM provider via LiteLLM + Instructor (S-036) ([#45](https://github.com/dbsprout/dbsprout/issues/45)) ([7c7d468](https://github.com/dbsprout/dbsprout/commit/7c7d468378fe67d359c0127cf0ed9e884d6e8a8e))
+* Mermaid ERD parser with regex-based extraction (S-033) ([#42](https://github.com/dbsprout/dbsprout/issues/42)) ([ff1c494](https://github.com/dbsprout/dbsprout/commit/ff1c49423a007d495cd7c5b6edb9d829bb2766b9))
+* Ollama provider for local LLM spec generation (S-037) ([#46](https://github.com/dbsprout/dbsprout/issues/46)) ([e5ad58f](https://github.com/dbsprout/dbsprout/commit/e5ad58f2834f5bea0a2e8b718f60806dfeb77343))
+
 ## [0.1.4](https://github.com/dbsprout/dbsprout/compare/v0.1.3...v0.1.4) (2026-03-31)
 
 
