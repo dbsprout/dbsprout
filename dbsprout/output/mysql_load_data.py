@@ -102,6 +102,11 @@ def _parse_mysql_url(url: str) -> dict[str, Any]:
     return params
 
 
+def _quote_mysql_identifier(name: str) -> str:
+    """Quote a MySQL identifier, escaping embedded backticks."""
+    return f"`{name.replace('`', '``')}`"
+
+
 def _write_temp_file(content: str) -> str:
     """Write content to a temp .tsv file and return its path."""
     with tempfile.NamedTemporaryFile(
@@ -129,7 +134,10 @@ class MysqlLoadDataWriter:
         db_url: str,
         batch_size: int = 10_000,
     ) -> Any:
-        """Insert data via LOAD DATA for each table in topological order."""
+        """Insert data via LOAD DATA for each table in topological order.
+
+        Returns an InsertResult with counts and duration.
+        """
         from dbsprout.output.pg_copy import InsertResult  # noqa: PLC0415
 
         if pymysql is None:
@@ -157,21 +165,25 @@ class MysqlLoadDataWriter:
 
             try:
                 cur = conn.cursor()
-                cur.execute("SET FOREIGN_KEY_CHECKS=0")
-                tables_inserted, total_rows = self._load_tables(
-                    cur, tables_data, schema, insertion_order, batch_size, temp_files
-                )
-                cur.execute("SET FOREIGN_KEY_CHECKS=1")
-                conn.commit()
-            except (ImportError, RuntimeError):
-                raise
-            except Exception as exc:
-                conn.rollback()
-                msg = (
-                    f"MySQL insertion failed: {type(exc).__name__}. "
-                    "Verify the --db URL and ensure the server is reachable."
-                )
-                raise RuntimeError(msg) from exc
+                try:
+                    cur.execute("SET FOREIGN_KEY_CHECKS=0")
+                    tables_inserted, total_rows = self._load_tables(
+                        cur, tables_data, schema, insertion_order, batch_size, temp_files
+                    )
+                    conn.commit()
+                except RuntimeError:
+                    raise
+                except Exception as exc:
+                    conn.rollback()
+                    msg = (
+                        f"MySQL insertion failed: {type(exc).__name__}. "
+                        "Verify the --db URL and ensure the server is reachable."
+                    )
+                    raise RuntimeError(msg) from exc
+                finally:
+                    with contextlib.suppress(Exception):
+                        cur.execute("SET FOREIGN_KEY_CHECKS=1")
+                    cur.close()
             finally:
                 conn.close()
         finally:
@@ -213,10 +225,12 @@ class MysqlLoadDataWriter:
                 tmp_path = _write_temp_file(content)
                 temp_files.append(tmp_path)
 
-                quoted_cols = ", ".join(f"`{c}`" for c in columns)
+                quoted_table = _quote_mysql_identifier(table_name)
+                quoted_cols = ", ".join(_quote_mysql_identifier(c) for c in columns)
+                safe_path = tmp_path.replace("'", "\\'")
                 load_sql = (
-                    f"LOAD DATA LOCAL INFILE '{tmp_path}' "
-                    f"INTO TABLE `{table_name}` "
+                    f"LOAD DATA LOCAL INFILE '{safe_path}' "
+                    f"INTO TABLE {quoted_table} "
                     "FIELDS TERMINATED BY '\\t' "
                     "LINES TERMINATED BY '\\n' "
                     f"({quoted_cols})"
