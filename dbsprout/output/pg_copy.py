@@ -21,7 +21,7 @@ if TYPE_CHECKING:
     from dbsprout.schema.models import DatabaseSchema
 
 try:
-    import psycopg
+    import psycopg  # type: ignore[import-not-found,unused-ignore]
 except ImportError:  # pragma: no cover
     psycopg: ModuleType | None = None  # type: ignore[no-redef]
 
