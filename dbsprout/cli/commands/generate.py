@@ -120,14 +120,7 @@ def _write_output(  # noqa: PLR0913
         if not target_db:
             console.print("[red]Error:[/red] --db is required when using --output-format direct")
             raise typer.Exit(code=1)
-        from dbsprout.output.pg_copy import PgCopyWriter  # noqa: PLC0415
-
-        insert_result = PgCopyWriter().write(result.tables_data, schema, insertion_order, target_db)
-        console.print(
-            f"[green]Inserted {insert_result.total_rows} rows "
-            f"into {insert_result.tables_inserted} tables "
-            f"in {insert_result.duration_seconds:.3f}s[/green]"
-        )
+        _run_direct_insert(result, schema, insertion_order, target_db)
     else:
         console.print(f"[red]Error:[/red] Unknown output format: {output_format}")
         raise typer.Exit(code=1)
@@ -150,6 +143,49 @@ def _print_validation(report: IntegrityReport) -> None:
         table.add_row(check.check, check.table, check.column, status, check.details)
 
     console.print(table)
+
+
+def _detect_direct_dialect(url: str) -> str:
+    """Detect database dialect from a connection URL prefix."""
+    lower = url.lower()
+    if lower.startswith(("postgresql", "postgres")):
+        return "postgresql"
+    if lower.startswith("mysql"):
+        return "mysql"
+    return lower.split("://")[0].split("+")[0] if "://" in lower else "unknown"
+
+
+def _run_direct_insert(
+    result: GenerateResult,
+    schema: DatabaseSchema,
+    insertion_order: list[str],
+    target_db: str,
+) -> None:
+    """Dispatch direct insertion to the appropriate dialect writer."""
+    from dbsprout.output.pg_copy import InsertResult  # noqa: PLC0415
+
+    dialect = _detect_direct_dialect(target_db)
+
+    insert_result: InsertResult
+    if dialect == "postgresql":
+        from dbsprout.output.pg_copy import PgCopyWriter  # noqa: PLC0415
+
+        insert_result = PgCopyWriter().write(result.tables_data, schema, insertion_order, target_db)
+    elif dialect == "mysql":
+        from dbsprout.output.mysql_load_data import MysqlLoadDataWriter  # noqa: PLC0415
+
+        insert_result = MysqlLoadDataWriter().write(
+            result.tables_data, schema, insertion_order, target_db
+        )
+    else:
+        console.print(f"[red]Error:[/red] Direct insertion not supported for dialect: {dialect}")
+        raise typer.Exit(code=1)
+
+    console.print(
+        f"[green]Inserted {insert_result.total_rows} rows "
+        f"into {insert_result.tables_inserted} tables "
+        f"in {insert_result.duration_seconds:.3f}s[/green]"
+    )
 
 
 def _print_summary(
