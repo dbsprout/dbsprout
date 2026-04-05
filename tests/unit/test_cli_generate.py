@@ -208,3 +208,37 @@ class TestGenerateProducesOutput:
         )
 
         assert result.exit_code != 0
+
+
+class TestGenerateDirectFormat:
+    def test_direct_format_requires_db(self, tmp_path: Path) -> None:
+        """--output-format direct without --db must error."""
+        project_dir = _write_schema(tmp_path)
+
+        result = runner.invoke(
+            app,
+            [
+                "generate",
+                "--schema-snapshot",
+                str(project_dir / ".dbsprout" / "schema.json"),
+                "--output-format",
+                "direct",
+                "--rows",
+                "3",
+            ],
+        )
+        output = _strip_ansi(result.output)
+        assert result.exit_code != 0
+        assert "--db" in output
+
+    def test_direct_format_in_help(self) -> None:
+        """--output-format help text mentions direct."""
+        result = runner.invoke(app, ["generate", "--help"])
+        output = _strip_ansi(result.output)
+        assert "direct" in output
+
+    def test_db_flag_in_help(self) -> None:
+        """--db flag must appear in generate help."""
+        result = runner.invoke(app, ["generate", "--help"])
+        output = _strip_ansi(result.output)
+        assert "--db" in output

@@ -44,11 +44,14 @@ def generate_proxy(  # noqa: PLR0913
     config_path: str | None = typer.Option(None, "--config"),
     rows: int = typer.Option(100, "--rows", "-n", min=1),
     seed: int = typer.Option(42, "--seed", "-s", min=0),
-    output_format: str = typer.Option("sql", "--output-format", "-f"),
+    output_format: str = typer.Option(
+        "sql", "--output-format", "-f", help="Output format: sql, csv, json, jsonl, direct."
+    ),
     output_dir: str = typer.Option("./seeds", "--output-dir", "-o"),
     dialect: str = typer.Option("postgresql", "--dialect", "-d"),
     engine: str = typer.Option("heuristic", "--engine", "-e"),
     privacy: str = typer.Option("local", "--privacy"),
+    db: str | None = typer.Option(None, "--db", help="Target database URL for direct insertion."),
 ) -> None:
     """Generate seed data from a schema snapshot."""
     from pathlib import Path  # noqa: PLC0415
@@ -65,6 +68,7 @@ def generate_proxy(  # noqa: PLR0913
         dialect=dialect,
         engine=engine,
         privacy=privacy,
+        target_db=db,
     )
 
 

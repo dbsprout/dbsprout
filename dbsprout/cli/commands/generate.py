@@ -20,59 +20,16 @@ console = Console()
 
 
 def generate_command(  # noqa: PLR0913
-    schema_snapshot: Path | None = typer.Option(
-        None,
-        "--schema-snapshot",
-        help="Path to schema snapshot JSON. Default: .dbsprout/schema.json",
-    ),
-    config_path: Path | None = typer.Option(
-        None,
-        "--config",
-        help="Path to dbsprout.toml. Default: ./dbsprout.toml",
-    ),
-    rows: int = typer.Option(
-        100,
-        "--rows",
-        "-n",
-        help="Default row count per table.",
-        min=1,
-    ),
-    seed: int = typer.Option(
-        42,
-        "--seed",
-        "-s",
-        help="Global seed for deterministic output.",
-        min=0,
-    ),
-    output_format: str = typer.Option(
-        "sql",
-        "--output-format",
-        "-f",
-        help="Output format: sql, csv, json, jsonl.",
-    ),
-    output_dir: Path = typer.Option(
-        Path("./seeds"),
-        "--output-dir",
-        "-o",
-        help="Output directory for generated files.",
-    ),
-    dialect: str = typer.Option(
-        "postgresql",
-        "--dialect",
-        "-d",
-        help="SQL dialect: postgresql, mysql, sqlite.",
-    ),
-    engine: str = typer.Option(
-        "heuristic",
-        "--engine",
-        "-e",
-        help="Generation engine: heuristic or spec.",
-    ),
-    privacy: str = typer.Option(  # noqa: ARG001
-        "local",
-        "--privacy",
-        help="Privacy tier: local, redacted, cloud.",
-    ),
+    schema_snapshot: Path | None = None,
+    config_path: Path | None = None,
+    rows: int = 100,
+    seed: int = 42,
+    output_format: str = "sql",
+    output_dir: Path = Path("./seeds"),
+    dialect: str = "postgresql",
+    engine: str = "heuristic",
+    privacy: str = "local",  # noqa: ARG001
+    target_db: str | None = None,
 ) -> None:
     """Generate seed data from a schema snapshot."""
     # Load schema
@@ -97,7 +54,9 @@ def generate_command(  # noqa: PLR0913
         raise typer.Exit(code=0)
 
     # Write output
-    _write_output(result, schema, result.insertion_order, output_dir, output_format, dialect)
+    _write_output(
+        result, schema, result.insertion_order, output_dir, output_format, dialect, target_db
+    )
 
     # Validate integrity
     from dbsprout.quality.integrity import validate_integrity  # noqa: PLC0415
@@ -130,6 +89,7 @@ def _write_output(  # noqa: PLR0913
     output_dir: Path,
     output_format: str,
     dialect: str,
+    target_db: str | None = None,
 ) -> None:
     """Write generated data using the selected output writer."""
     if output_format == "sql":
@@ -155,6 +115,18 @@ def _write_output(  # noqa: PLR0913
             insertion_order,
             output_dir,
             fmt=output_format,  # type: ignore[arg-type]
+        )
+    elif output_format == "direct":
+        if not target_db:
+            console.print("[red]Error:[/red] --db is required when using --output-format direct")
+            raise typer.Exit(code=1)
+        from dbsprout.output.pg_copy import PgCopyWriter  # noqa: PLC0415
+
+        insert_result = PgCopyWriter().write(result.tables_data, schema, insertion_order, target_db)
+        console.print(
+            f"[green]Inserted {insert_result.total_rows} rows "
+            f"into {insert_result.tables_inserted} tables "
+            f"in {insert_result.duration_seconds:.3f}s[/green]"
         )
     else:
         console.print(f"[red]Error:[/red] Unknown output format: {output_format}")
