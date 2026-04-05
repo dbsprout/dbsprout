@@ -93,9 +93,7 @@ class TestFormatCopyValueTemporal:
 
     def test_datetime_with_tz(self) -> None:
         dt = datetime(2026, 4, 5, 12, 30, 45, tzinfo=timezone.utc)
-        result = format_copy_value(dt)
-        assert "2026-04-05" in result
-        assert "12:30:45" in result
+        assert format_copy_value(dt) == "2026-04-05 12:30:45+00:00"
 
     def test_date(self) -> None:
         d = date(2026, 4, 5)
@@ -128,11 +126,10 @@ class TestFormatCopyValueComplex:
 
     def test_dict_with_special_chars(self) -> None:
         result = format_copy_value({"k": "a\tb"})
-        # JSON serialization should keep literal \t, then COPY escaping applies
         assert "\\t" in result
 
 
-# ── build_copy_data ──────────────────────────────────────────────────
+# ── build_copy_data ────────���─────────────────────────────────────────
 
 
 class TestBuildCopyData:
@@ -179,7 +176,7 @@ class TestBuildCopyData:
         assert result.endswith("\n")
 
 
-# ── PgCopyWriter ─────────────────────────────────────────────────────
+# ─��� PgCopyWriter ─────────���───────────────────────────────────────────
 
 
 def _simple_schema() -> DatabaseSchema:
@@ -234,8 +231,7 @@ class TestPgCopyWriterConnect:
         mock_connect = _make_mock_connect(mock_conn)
         monkeypatch.setattr("dbsprout.output.pg_copy.psycopg", _mock_psycopg(mock_connect))
 
-        writer = PgCopyWriter()
-        writer.write(
+        PgCopyWriter().write(
             _simple_data(), _simple_schema(), ["users", "orders"], "postgres://localhost/test"
         )
         mock_connect.assert_called_once_with("postgres://localhost/test")
@@ -247,8 +243,7 @@ class TestPgCopyWriterTransaction:
         mock_connect = _make_mock_connect(mock_conn)
         monkeypatch.setattr("dbsprout.output.pg_copy.psycopg", _mock_psycopg(mock_connect))
 
-        writer = PgCopyWriter()
-        writer.write(
+        PgCopyWriter().write(
             _simple_data(), _simple_schema(), ["users", "orders"], "postgres://localhost/test"
         )
         mock_conn.transaction.assert_called_once()
@@ -260,45 +255,39 @@ class TestPgCopyWriterCopy:
         mock_connect = _make_mock_connect(mock_conn)
         monkeypatch.setattr("dbsprout.output.pg_copy.psycopg", _mock_psycopg(mock_connect))
 
-        writer = PgCopyWriter()
-        writer.write(
+        PgCopyWriter().write(
             _simple_data(), _simple_schema(), ["users", "orders"], "postgres://localhost/test"
         )
         cursor = mock_conn.cursor.return_value.__enter__.return_value
         copy_calls = cursor.copy.call_args_list
+        # 2 tables = 2 copy calls (one batch each)
         assert len(copy_calls) == 2
-        assert "users" in str(copy_calls[0])
-        assert "orders" in str(copy_calls[1])
 
     def test_skips_empty_tables(self, monkeypatch: pytest.MonkeyPatch) -> None:
         mock_conn = _make_mock_conn()
         mock_connect = _make_mock_connect(mock_conn)
         monkeypatch.setattr("dbsprout.output.pg_copy.psycopg", _mock_psycopg(mock_connect))
 
-        data = {"users": [{"id": 1, "email": "a@b.com"}], "orders": []}
-        writer = PgCopyWriter()
-        writer.write(data, _simple_schema(), ["users", "orders"], "postgres://localhost/test")
+        data: dict[str, list[dict[str, Any]]] = {
+            "users": [{"id": 1, "email": "a@b.com"}],
+            "orders": [],
+        }
+        PgCopyWriter().write(data, _simple_schema(), ["users", "orders"], "pg://localhost/test")
         cursor = mock_conn.cursor.return_value.__enter__.return_value
-        copy_calls = cursor.copy.call_args_list
-        assert len(copy_calls) == 1
-        assert "users" in str(copy_calls[0])
+        assert len(cursor.copy.call_args_list) == 1
 
-    def test_copy_sql_format(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_batching_splits_large_tables(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """With batch_size=2 and 5 rows, there should be 3 COPY calls for one table."""
         mock_conn = _make_mock_conn()
         mock_connect = _make_mock_connect(mock_conn)
         monkeypatch.setattr("dbsprout.output.pg_copy.psycopg", _mock_psycopg(mock_connect))
 
-        writer = PgCopyWriter()
         data: dict[str, list[dict[str, Any]]] = {
-            "users": [{"id": 1, "email": "a@b.com"}],
+            "users": [{"id": i, "email": f"u{i}@x.com"} for i in range(1, 6)],
         }
-        writer.write(data, _simple_schema(), ["users"], "postgres://localhost/test")
+        PgCopyWriter().write(data, _simple_schema(), ["users"], "pg://localhost/test", batch_size=2)
         cursor = mock_conn.cursor.return_value.__enter__.return_value
-        sql_arg = cursor.copy.call_args_list[0][0][0]
-        assert 'COPY "users"' in sql_arg
-        assert '"id"' in sql_arg
-        assert '"email"' in sql_arg
-        assert "FROM STDIN" in sql_arg
+        assert len(cursor.copy.call_args_list) == 3  # 2+2+1
 
 
 class TestPgCopyWriterSequences:
@@ -307,14 +296,25 @@ class TestPgCopyWriterSequences:
         mock_connect = _make_mock_connect(mock_conn)
         monkeypatch.setattr("dbsprout.output.pg_copy.psycopg", _mock_psycopg(mock_connect))
 
-        writer = PgCopyWriter()
-        writer.write(
-            _simple_data(), _simple_schema(), ["users", "orders"], "postgres://localhost/test"
+        PgCopyWriter().write(
+            _simple_data(), _simple_schema(), ["users", "orders"], "pg://localhost/test"
         )
         cursor = mock_conn.cursor.return_value.__enter__.return_value
-        execute_calls = [str(c) for c in cursor.execute.call_args_list]
-        setval_calls = [c for c in execute_calls if "setval" in c]
-        assert len(setval_calls) >= 2  # one per table with autoincrement PK
+        # Exactly 2 autoincrement PK columns → 2 setval execute calls
+        assert cursor.execute.call_count == 2
+
+    def test_skips_sequence_reset_for_none_pk_values(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """If PK column values are all None, sequence reset is skipped."""
+        mock_conn = _make_mock_conn()
+        mock_connect = _make_mock_connect(mock_conn)
+        monkeypatch.setattr("dbsprout.output.pg_copy.psycopg", _mock_psycopg(mock_connect))
+
+        data: dict[str, list[dict[str, Any]]] = {
+            "users": [{"id": None, "email": "a@b.com"}],
+        }
+        PgCopyWriter().write(data, _simple_schema(), ["users"], "pg://localhost/test")
+        cursor = mock_conn.cursor.return_value.__enter__.return_value
+        assert cursor.execute.call_count == 0
 
 
 class TestPgCopyWriterResult:
@@ -323,9 +323,8 @@ class TestPgCopyWriterResult:
         mock_connect = _make_mock_connect(mock_conn)
         monkeypatch.setattr("dbsprout.output.pg_copy.psycopg", _mock_psycopg(mock_connect))
 
-        writer = PgCopyWriter()
-        result = writer.write(
-            _simple_data(), _simple_schema(), ["users", "orders"], "postgres://localhost/test"
+        result = PgCopyWriter().write(
+            _simple_data(), _simple_schema(), ["users", "orders"], "pg://localhost/test"
         )
         assert isinstance(result, InsertResult)
         assert result.tables_inserted == 2
@@ -337,13 +336,28 @@ class TestPgCopyWriterImportError:
     def test_raises_on_missing_psycopg(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr("dbsprout.output.pg_copy.psycopg", None)
 
-        writer = PgCopyWriter()
         with pytest.raises(ImportError, match="pip install dbsprout\\[pg\\]"):
-            writer.write(
+            PgCopyWriter().write(
                 _simple_data(),
                 _simple_schema(),
                 ["users", "orders"],
-                "postgres://localhost/test",
+                "pg://localhost/test",
+            )
+
+
+class TestPgCopyWriterErrorHandling:
+    def test_db_error_wrapped_with_friendly_message(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Database errors should be wrapped without leaking connection string."""
+        mock_psycopg_mod = MagicMock()
+        mock_psycopg_mod.connect.side_effect = Exception("connection refused")
+        monkeypatch.setattr("dbsprout.output.pg_copy.psycopg", mock_psycopg_mod)
+
+        with pytest.raises(RuntimeError, match="Database insertion failed"):
+            PgCopyWriter().write(
+                _simple_data(),
+                _simple_schema(),
+                ["users"],
+                "pg://user:secret@host/db",
             )
 
 
@@ -353,6 +367,10 @@ class TestPgCopyWriterImportError:
 def _make_mock_conn() -> MagicMock:
     """Create a mock psycopg connection with transaction and cursor support."""
     conn = MagicMock()
+    # connection as context manager
+    conn.__enter__ = Mock(return_value=conn)
+    conn.__exit__ = Mock(return_value=False)
+
     # transaction() returns a context manager
     tx = MagicMock()
     conn.transaction.return_value = tx

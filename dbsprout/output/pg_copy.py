@@ -68,7 +68,11 @@ def _format_numeric(value: int | float | Decimal) -> str:
 
 
 def _escape_copy_str(value: str) -> str:
-    """Escape a string for COPY text format."""
+    """Escape a string for COPY text format.
+
+    Backslash is escaped first to avoid double-escaping. The ``\\.`` end-of-data
+    marker cannot appear because any literal ``\\`` becomes ``\\\\\\\\``.
+    """
     return (
         value.replace("\\", "\\\\").replace("\t", "\\t").replace("\n", "\\n").replace("\r", "\\r")
     )
@@ -124,9 +128,8 @@ class PgCopyWriter:
         tables_inserted = 0
         total_rows = 0
 
-        conn = psycopg.connect(db_url)
         try:
-            with conn.transaction(), conn.cursor() as cur:
+            with psycopg.connect(db_url) as conn, conn.transaction(), conn.cursor() as cur:
                 for table_name in insertion_order:
                     rows = tables_data.get(table_name, [])
                     if not rows:
@@ -139,8 +142,10 @@ class PgCopyWriter:
                         else list(rows[0].keys())
                     )
 
-                    quoted_cols = ", ".join(f'"{c}"' for c in columns)
-                    copy_sql = f'COPY "{table_name}" ({quoted_cols}) FROM STDIN'
+                    copy_sql = psycopg.sql.SQL("COPY {} ({}) FROM STDIN").format(
+                        psycopg.sql.Identifier(table_name),
+                        psycopg.sql.SQL(", ").join(psycopg.sql.Identifier(c) for c in columns),
+                    )
 
                     for i in range(0, len(rows), batch_size):
                         batch = rows[i : i + batch_size]
@@ -151,10 +156,15 @@ class PgCopyWriter:
                     tables_inserted += 1
                     total_rows += len(rows)
 
-                # Reset sequences for autoincrement PKs
                 _reset_sequences(cur, tables_data, schema, insertion_order)
-        finally:
-            conn.close()
+        except ImportError:
+            raise
+        except Exception as exc:
+            msg = (
+                f"Database insertion failed: {type(exc).__name__}. "
+                "Verify the --db URL and ensure the server is reachable."
+            )
+            raise RuntimeError(msg) from exc
 
         duration = time_mod.monotonic() - start
         return InsertResult(
@@ -180,8 +190,16 @@ def _reset_sequences(
             continue
         for col in table_schema.columns:
             if col.autoincrement and col.primary_key:
-                max_val = max(row.get(col.name, 0) for row in rows)
+                int_vals = [v for v in (row.get(col.name) for row in rows) if isinstance(v, int)]
+                if not int_vals:
+                    continue
+                max_val = max(int_vals)
                 cur.execute(
-                    f"SELECT setval(pg_get_serial_sequence('{table_name}', "
-                    f"'{col.name}'), {max_val})"
+                    psycopg.sql.SQL(
+                        "SELECT setval(pg_get_serial_sequence({table}, {col}), {val})"
+                    ).format(
+                        table=psycopg.sql.Literal(table_name),
+                        col=psycopg.sql.Literal(col.name),
+                        val=psycopg.sql.Literal(max_val),
+                    )
                 )
