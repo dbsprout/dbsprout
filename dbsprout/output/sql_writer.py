@@ -186,10 +186,10 @@ def _build_on_conflict(
             f"{quote_identifier(c, config)} = {excluded}.{quote_identifier(c, config)}"
             for c in update_cols
         )
-        conflict_action = f"DO UPDATE SET {sets}"
+        conflict_action = f"DO UPDATE SET {sets}"  # nosec B608
 
     return (  # nosec B608
-        f"INSERT INTO {quoted_table} ({quoted_cols}) VALUES\n{values_str}\n"
+        f"INSERT INTO {quoted_table} ({quoted_cols}) VALUES\n{values_str}\n"  # nosec B608
         f"ON CONFLICT ({conflict_cols}) {conflict_action};\n"
     )
 
@@ -223,7 +223,7 @@ def _build_on_duplicate_key(
         for c in update_cols
     )
     return (  # nosec B608
-        f"INSERT INTO {quoted_table} ({quoted_cols}) VALUES\n{values_str}\n"
+        f"INSERT INTO {quoted_table} ({quoted_cols}) VALUES\n{values_str}\n"  # nosec B608
         f"ON DUPLICATE KEY UPDATE {sets};\n"
     )
 
@@ -262,7 +262,7 @@ def _build_merge(
             f"target.{quote_identifier(c, config)} = src.{quote_identifier(c, config)}"
             for c in update_cols
         )
-        parts.append(f"WHEN MATCHED THEN UPDATE SET {update_sets}")
+        parts.append(f"WHEN MATCHED THEN UPDATE SET {update_sets}")  # nosec B608
 
     src_cols = ", ".join(f"src.{quote_identifier(c, config)}" for c in columns)
     insert_clause = f"WHEN NOT MATCHED THEN INSERT ({quoted_cols}) VALUES ({src_cols});"  # noqa: S608
