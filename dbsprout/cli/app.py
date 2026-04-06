@@ -85,6 +85,9 @@ def validate_proxy(  # noqa: PLR0913
     seed: int = typer.Option(42, "--seed", "-s", min=0),
     output_format: str = typer.Option("rich", "--format", "-f"),
     engine: str = typer.Option("heuristic", "--engine", "-e"),
+    reference_data: str | None = typer.Option(
+        None, "--reference-data", help="Path to reference CSV for fidelity comparison."
+    ),
 ) -> None:
     """Validate integrity of generated seed data."""
     from pathlib import Path  # noqa: PLC0415
@@ -98,6 +101,7 @@ def validate_proxy(  # noqa: PLR0913
         seed=seed,
         output_format=output_format,
         engine=engine,
+        reference_data=Path(reference_data) if reference_data else None,
     )
 
 

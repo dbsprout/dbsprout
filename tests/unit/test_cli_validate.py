@@ -119,9 +119,10 @@ class TestValidateJSONFormat:
 
         assert result.exit_code == 0
         parsed = json.loads(result.output)
-        assert "checks" in parsed
         assert "passed" in parsed
-        assert isinstance(parsed["checks"], list)
+        assert "integrity" in parsed
+        assert "checks" in parsed["integrity"]
+        assert isinstance(parsed["integrity"]["checks"], list)
 
 
 class TestValidateSummary:
@@ -144,3 +145,109 @@ class TestValidateSummary:
         output = _strip_ansi(result.output)
         # Should contain check count info
         assert "check" in output.lower() or "pass" in output.lower()
+
+
+class TestValidateFidelity:
+    def test_reference_data_rich(self, tmp_path: Path) -> None:
+        """--reference-data with Rich output should show fidelity metrics."""
+        project_dir = _write_schema(tmp_path)
+
+        # Write reference CSV
+        ref_dir = tmp_path / "reference"
+        ref_dir.mkdir()
+        csv_path = ref_dir / "items.csv"
+        csv_path.write_text("id,name\n1,Widget\n2,Gadget\n3,Doohickey\n")
+
+        result = runner.invoke(
+            app,
+            [
+                "validate",
+                "--schema-snapshot",
+                str(project_dir / ".dbsprout" / "schema.json"),
+                "--rows",
+                "3",
+                "--reference-data",
+                str(ref_dir),
+            ],
+        )
+
+        assert result.exit_code == 0
+        output = _strip_ansi(result.output)
+        assert "Fidelity" in output or "fidelity" in output.lower()
+
+    def test_reference_data_json(self, tmp_path: Path) -> None:
+        """--reference-data with JSON output should include fidelity section."""
+        project_dir = _write_schema(tmp_path)
+
+        ref_dir = tmp_path / "reference"
+        ref_dir.mkdir()
+        csv_path = ref_dir / "items.csv"
+        csv_path.write_text("id,name\n1,Alpha\n2,Beta\n3,Gamma\n")
+
+        result = runner.invoke(
+            app,
+            [
+                "validate",
+                "--schema-snapshot",
+                str(project_dir / ".dbsprout" / "schema.json"),
+                "--rows",
+                "3",
+                "--format",
+                "json",
+                "--reference-data",
+                str(ref_dir),
+            ],
+        )
+
+        assert result.exit_code == 0
+        parsed = json.loads(result.output)
+        assert "fidelity" in parsed
+        assert "overall_score" in parsed["fidelity"]
+        assert "metrics" in parsed["fidelity"]
+
+    def test_reference_data_single_file(self, tmp_path: Path) -> None:
+        """--reference-data with a single CSV file."""
+        project_dir = _write_schema(tmp_path)
+
+        csv_path = tmp_path / "items.csv"
+        csv_path.write_text("id,name\n1,Widget\n2,Gadget\n3,Doohickey\n")
+
+        result = runner.invoke(
+            app,
+            [
+                "validate",
+                "--schema-snapshot",
+                str(project_dir / ".dbsprout" / "schema.json"),
+                "--rows",
+                "3",
+                "--reference-data",
+                str(csv_path),
+            ],
+        )
+
+        assert result.exit_code == 0
+
+    def test_reference_data_help(self) -> None:
+        """--reference-data should be a recognised validate option."""
+        result = runner.invoke(app, ["validate", "--reference-data", "dummy.csv"])
+        # Exit code 2 = unknown option; anything else means the flag was accepted.
+        assert result.exit_code != 2
+
+    def test_missing_reference_file(self, tmp_path: Path) -> None:
+        """Missing reference data path should not crash."""
+        project_dir = _write_schema(tmp_path)
+
+        result = runner.invoke(
+            app,
+            [
+                "validate",
+                "--schema-snapshot",
+                str(project_dir / ".dbsprout" / "schema.json"),
+                "--rows",
+                "3",
+                "--reference-data",
+                str(tmp_path / "nonexistent"),
+            ],
+        )
+
+        assert result.exit_code == 0
