@@ -8,11 +8,12 @@ from decimal import Decimal
 from typing import TYPE_CHECKING, Any
 from unittest.mock import patch
 
-import polars as pl
 import pytest
 
-from dbsprout.output.parquet_writer import ParquetWriter
-from dbsprout.schema.models import (
+pl = pytest.importorskip("polars", reason="polars not installed (optional [data] extra)")
+
+from dbsprout.output.parquet_writer import ParquetWriter  # noqa: E402
+from dbsprout.schema.models import (  # noqa: E402
     ColumnSchema,
     ColumnType,
     DatabaseSchema,
