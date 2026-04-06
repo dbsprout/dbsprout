@@ -172,7 +172,8 @@ class TestPostgresUpsert:
         ]
         result = build_upsert("users", ["id", "name", "email"], rows, _pg(), ["id"])
 
-        assert result.count("(") >= 3  # 2 value rows + column list
+        assert "'Alice'" in result
+        assert "'Bob'" in result
 
 
 # ── MySQL UPSERT ────────────────────────────────────────────────────
@@ -246,14 +247,44 @@ class TestSqliteUpsert:
 
 class TestMssqlUpsert:
     def test_basic_merge(self) -> None:
-        """SQL Server MERGE syntax."""
+        """SQL Server MERGE syntax with bracket quoting."""
         rows: list[dict[str, Any]] = [{"id": 1, "name": "Alice", "email": "a@b.com"}]
         result = build_upsert("users", ["id", "name", "email"], rows, _ms(), ["id"])
 
         assert "MERGE" in result
         assert "WHEN MATCHED" in result
         assert "WHEN NOT MATCHED" in result
-        assert "target" in result.lower() or "AS target" in result
+        assert "AS target" in result
+        assert "[users]" in result
+        assert "[id]" in result
+        assert "target.[id] = src.[id]" in result
+
+    def test_composite_pk(self) -> None:
+        """MSSQL MERGE with composite PK — ON clause joined with AND."""
+        rows: list[dict[str, Any]] = [{"user_id": 1, "role_id": 2, "granted_at": None}]
+        result = build_upsert(
+            "user_roles",
+            ["user_id", "role_id", "granted_at"],
+            rows,
+            _ms(),
+            ["user_id", "role_id"],
+        )
+
+        assert "target.[user_id] = src.[user_id]" in result
+        assert "AND" in result
+        assert "target.[role_id] = src.[role_id]" in result
+        assert "src.[granted_at]" in result
+
+    def test_all_columns_pk(self) -> None:
+        """MSSQL MERGE with all PKs — no WHEN MATCHED clause."""
+        rows: list[dict[str, Any]] = [{"tag_id": 1, "item_id": 2}]
+        result = build_upsert(
+            "tag_items", ["tag_id", "item_id"], rows, _ms(), ["tag_id", "item_id"]
+        )
+
+        assert "MERGE" in result
+        assert "WHEN NOT MATCHED" in result
+        assert "WHEN MATCHED" not in result
 
 
 # ── No Primary Key ──────────────────────────────────────────────────
