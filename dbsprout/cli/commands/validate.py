@@ -16,6 +16,7 @@ from dbsprout.quality.integrity import IntegrityReport, validate_integrity
 from dbsprout.schema.models import DatabaseSchema
 
 if TYPE_CHECKING:
+    from dbsprout.quality.detection import DetectionReport
     from dbsprout.quality.fidelity import FidelityReport
 
 console = Console()
@@ -29,6 +30,7 @@ def validate_command(  # noqa: PLR0913
     output_format: str = "rich",
     engine: str = "heuristic",
     reference_data: Path | None = None,
+    detection: bool = False,
 ) -> None:
     """Validate integrity of generated seed data."""
     # Resolve schema
@@ -56,17 +58,29 @@ def validate_command(  # noqa: PLR0913
     if reference_data is not None:
         fidelity_report = _run_fidelity(result.tables_data, reference_data, schema)
 
+    # Validate detection (optional — requires --reference-data and [stats] extra)
+    detection_report: DetectionReport | None = None
+    if detection:
+        if reference_data is None:
+            console.print("[red]Error:[/red] --detection requires --reference-data.")
+            raise typer.Exit(code=1)
+        detection_report = _run_detection(result.tables_data, reference_data, schema, seed)
+
     # Output
     if output_format == "json":
-        _print_json(integrity_report, fidelity_report)
+        _print_json(integrity_report, fidelity_report, detection_report)
     else:
         _print_rich(integrity_report)
         if fidelity_report is not None:
             _print_fidelity_rich(fidelity_report)
+        if detection_report is not None:
+            _print_detection_rich(detection_report)
 
     if not integrity_report.passed:
         raise typer.Exit(code=1)
     if fidelity_report is not None and not fidelity_report.passed:
+        raise typer.Exit(code=1)
+    if detection_report is not None and not detection_report.passed:
         raise typer.Exit(code=1)
 
 
@@ -104,23 +118,20 @@ def _print_rich(report: IntegrityReport) -> None:
     console.print(f"\n{passed}/{total} checks passed.")
 
 
-def _run_fidelity(
-    tables_data: dict[str, list[dict[str, Any]]],
+def _load_reference_data(
     reference_path: Path,
     schema: DatabaseSchema,
-) -> FidelityReport:
-    """Load reference data and compute fidelity metrics."""
-    from dbsprout.quality.fidelity import (  # noqa: PLC0415
-        FidelityReport,
-        load_reference_csv,
-        validate_fidelity,
-    )
+) -> dict[str, list[dict[str, Any]]] | None:
+    """Load reference CSV data for fidelity/detection comparison.
+
+    Returns None if the reference path does not exist (caller handles error).
+    """
+    from dbsprout.quality.fidelity import load_reference_csv  # noqa: PLC0415
 
     if not reference_path.exists():
         console.print(f"[red]Error:[/red] Reference data not found: {reference_path}")
-        return FidelityReport()
+        return None
 
-    # Load reference CSV — one file per table, match by table name
     ref_data: dict[str, list[dict[str, Any]]] = {}
     if reference_path.is_dir():
         for table in schema.tables:
@@ -130,11 +141,73 @@ def _run_fidelity(
             if csv_path.exists():
                 ref_data[table.name] = load_reference_csv(csv_path, table.name)
     else:
-        # Single file — assume table name from stem
         table_name = reference_path.stem
         ref_data[table_name] = load_reference_csv(reference_path, table_name)
 
+    return ref_data
+
+
+def _run_fidelity(
+    tables_data: dict[str, list[dict[str, Any]]],
+    reference_path: Path,
+    schema: DatabaseSchema,
+) -> FidelityReport:
+    """Load reference data and compute fidelity metrics."""
+    from dbsprout.quality.fidelity import (  # noqa: PLC0415
+        FidelityReport,
+        validate_fidelity,
+    )
+
+    ref_data = _load_reference_data(reference_path, schema)
+    if ref_data is None:
+        return FidelityReport()
+
     return validate_fidelity(tables_data, ref_data, schema)
+
+
+def _run_detection(
+    tables_data: dict[str, list[dict[str, Any]]],
+    reference_path: Path,
+    schema: DatabaseSchema,
+    seed: int = 42,
+) -> DetectionReport:
+    """Load reference data and compute detection (C2ST) metrics."""
+    from dbsprout.quality.detection import (  # noqa: PLC0415
+        DetectionReport,
+        validate_detection,
+    )
+
+    ref_data = _load_reference_data(reference_path, schema)
+    if ref_data is None:
+        return DetectionReport()
+
+    return validate_detection(tables_data, ref_data, schema, seed=seed)
+
+
+def _print_detection_rich(report: DetectionReport) -> None:
+    """Print detection metrics as a Rich table."""
+    if not report.metrics:
+        return
+
+    table = Table(title="Detection Validation (C2ST)")
+    table.add_column("Metric", style="bold")
+    table.add_column("Table")
+    table.add_column("Accuracy")
+    table.add_column("Details")
+
+    for m in report.metrics:
+        acc_str = f"{m.accuracy:.3f}"
+        if m.accuracy <= 0.55:
+            acc_display = f"[green]{acc_str}[/green]"
+        elif m.accuracy <= 0.7:
+            acc_display = f"[yellow]{acc_str}[/yellow]"
+        else:
+            acc_display = f"[red]{acc_str}[/red]"
+        table.add_row(m.metric, m.table, acc_display, m.details)
+
+    console.print(table)
+    status = "[green]PASS[/green]" if report.passed else "[red]FAIL[/red]"
+    console.print(f"\nDetection overall: {report.overall_score:.3f} {status}")
 
 
 def _print_fidelity_rich(report: FidelityReport) -> None:
@@ -167,6 +240,7 @@ def _print_fidelity_rich(report: FidelityReport) -> None:
 def _print_json(
     integrity_report: IntegrityReport,
     fidelity_report: FidelityReport | None = None,
+    detection_report: DetectionReport | None = None,
 ) -> None:
     """Print JSON output for CI integration."""
     data: dict[str, Any] = {
@@ -199,7 +273,23 @@ def _print_json(
                 for m in fidelity_report.metrics
             ],
         }
-    data["passed"] = integrity_report.passed and (
-        fidelity_report.passed if fidelity_report else True
+    if detection_report is not None:
+        data["detection"] = {
+            "passed": detection_report.passed,
+            "overall_score": detection_report.overall_score,
+            "metrics": [
+                {
+                    "metric": m.metric,
+                    "table": m.table,
+                    "accuracy": m.accuracy,
+                    "details": m.details,
+                }
+                for m in detection_report.metrics
+            ],
+        }
+    data["passed"] = (
+        integrity_report.passed
+        and (fidelity_report.passed if fidelity_report else True)
+        and (detection_report.passed if detection_report else True)
     )
     console.print(json.dumps(data, indent=2))

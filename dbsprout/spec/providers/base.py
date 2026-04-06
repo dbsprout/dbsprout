@@ -9,7 +9,7 @@ if TYPE_CHECKING:
     from dbsprout.spec.models import DataSpec
 
 
-class SpecProvider(Protocol):
+class SpecProvider(Protocol):  # pragma: no cover
     """Protocol for spec generation providers (embedded, cloud, etc.)."""
 
     def generate_spec(self, schema: DatabaseSchema) -> DataSpec:

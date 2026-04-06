@@ -88,6 +88,7 @@ def validate_proxy(  # noqa: PLR0913
     reference_data: str | None = typer.Option(
         None, "--reference-data", help="Path to reference CSV for fidelity comparison."
     ),
+    detection: bool = typer.Option(False, "--detection", help="Run C2ST detection metrics."),
 ) -> None:
     """Validate integrity of generated seed data."""
     from pathlib import Path  # noqa: PLC0415
@@ -102,6 +103,7 @@ def validate_proxy(  # noqa: PLR0913
         output_format=output_format,
         engine=engine,
         reference_data=Path(reference_data) if reference_data else None,
+        detection=detection,
     )
 
 
