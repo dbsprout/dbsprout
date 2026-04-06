@@ -116,6 +116,10 @@ def _write_output(  # noqa: PLR0913
             output_dir,
             fmt=output_format,  # type: ignore[arg-type]
         )
+    elif output_format == "parquet":
+        from dbsprout.output.parquet_writer import ParquetWriter  # noqa: PLC0415
+
+        ParquetWriter().write(result.tables_data, schema, insertion_order, output_dir)
     elif output_format == "direct":
         if not target_db:
             console.print("[red]Error:[/red] --db is required when using --output-format direct")

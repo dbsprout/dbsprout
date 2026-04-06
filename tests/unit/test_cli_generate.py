@@ -190,6 +190,28 @@ class TestGenerateProducesOutput:
         lines = jsonl_files[0].read_text().strip().split("\n")
         assert len(lines) == 3
 
+    def test_parquet_format(self, tmp_path: Path) -> None:
+        """--output-format parquet should produce .parquet files."""
+        project_dir = _write_schema(tmp_path)
+        seeds_dir = tmp_path / "seeds"
+
+        result = runner.invoke(
+            app,
+            [
+                "generate",
+                "--schema-snapshot",
+                str(project_dir / ".dbsprout" / "schema.json"),
+                "--output-dir",
+                str(seeds_dir),
+                "--output-format",
+                "parquet",
+            ],
+        )
+
+        assert result.exit_code == 0
+        parquet_files = list(seeds_dir.glob("*.parquet"))
+        assert len(parquet_files) == 1
+
     def test_invalid_format_errors(self, tmp_path: Path) -> None:
         """Invalid output format should exit with error."""
         project_dir = _write_schema(tmp_path)
@@ -203,7 +225,7 @@ class TestGenerateProducesOutput:
                 "--output-dir",
                 str(tmp_path / "seeds"),
                 "--output-format",
-                "parquet",
+                "xlsx",
             ],
         )
 
