@@ -206,9 +206,10 @@ class TestCardinalitySimilarity:
         assert score < 1.0
 
     def test_empty_input(self) -> None:
-        """Empty lists should return 1.0."""
+        """Both empty → 1.0; one empty → 0.0 (maximally different)."""
         assert cardinality_similarity([], []) == 1.0
-        assert cardinality_similarity([], ["a"]) == 1.0
+        assert cardinality_similarity([], ["a"]) == 0.0
+        assert cardinality_similarity(["a"], []) == 0.0
 
 
 # ── validate_fidelity (end-to-end) ─────────────────────────────────

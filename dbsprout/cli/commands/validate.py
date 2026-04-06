@@ -66,6 +66,8 @@ def validate_command(  # noqa: PLR0913
 
     if not integrity_report.passed:
         raise typer.Exit(code=1)
+    if fidelity_report is not None and not fidelity_report.passed:
+        raise typer.Exit(code=1)
 
 
 def _resolve_schema_path(explicit: Path | None) -> Path | None:
@@ -122,7 +124,9 @@ def _run_fidelity(
     ref_data: dict[str, list[dict[str, Any]]] = {}
     if reference_path.is_dir():
         for table in schema.tables:
-            csv_path = reference_path / f"{table.name}.csv"
+            csv_path = (reference_path / f"{table.name}.csv").resolve()
+            if not csv_path.is_relative_to(reference_path.resolve()):
+                continue
             if csv_path.exists():
                 ref_data[table.name] = load_reference_csv(csv_path, table.name)
     else:

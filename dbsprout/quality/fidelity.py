@@ -126,14 +126,10 @@ def cardinality_similarity(real: list[Any], synthetic: list[Any]) -> float:
     if not real and not synthetic:
         return 1.0
     if not real or not synthetic:
-        return 1.0
+        return 0.0
 
     real_unique = len(set(real))
     syn_unique = len(set(synthetic))
-
-    if real_unique == 0 and syn_unique == 0:
-        return 1.0
-
     max_unique = max(real_unique, syn_unique)
     return 1.0 - abs(real_unique - syn_unique) / max_unique
 
