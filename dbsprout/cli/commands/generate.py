@@ -30,6 +30,7 @@ def generate_command(  # noqa: PLR0913
     engine: str = "heuristic",
     privacy: str = "local",  # noqa: ARG001
     target_db: str | None = None,
+    upsert: bool = False,
 ) -> None:
     """Generate seed data from a schema snapshot."""
     # Load schema
@@ -55,7 +56,14 @@ def generate_command(  # noqa: PLR0913
 
     # Write output
     _write_output(
-        result, schema, result.insertion_order, output_dir, output_format, dialect, target_db
+        result,
+        schema,
+        result.insertion_order,
+        output_dir,
+        output_format,
+        dialect,
+        target_db,
+        upsert,
     )
 
     # Validate integrity
@@ -90,6 +98,7 @@ def _write_output(  # noqa: PLR0913
     output_format: str,
     dialect: str,
     target_db: str | None = None,
+    upsert: bool = False,
 ) -> None:
     """Write generated data using the selected output writer."""
     if output_format == "sql":
@@ -101,6 +110,7 @@ def _write_output(  # noqa: PLR0913
             insertion_order,
             output_dir,
             dialect=dialect,
+            upsert=upsert,
         )
     elif output_format == "csv":
         from dbsprout.output.csv_writer import CSVWriter  # noqa: PLC0415
