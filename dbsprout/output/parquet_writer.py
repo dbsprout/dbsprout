@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import math
+import re
 import uuid
 from decimal import Decimal
 from typing import TYPE_CHECKING, Any, Literal
@@ -25,6 +26,7 @@ except ImportError:
     pl = None  # type: ignore[assignment]
 
 _COMPRESSION: Literal["lz4", "uncompressed", "snappy", "gzip", "brotli", "zstd"] = "snappy"
+_SAFE_TABLE_NAME = re.compile(r"^[A-Za-z0-9_.\- ]+$")
 
 _COLUMN_TYPE_MAP: dict[ColumnType, Any] = {
     ColumnType.INTEGER: "Int64",
@@ -49,8 +51,11 @@ _COLUMN_TYPE_MAP: dict[ColumnType, Any] = {
 
 
 def _polars_dtype(column_type: ColumnType) -> Any:
-    """Map a ColumnType to a Polars data type."""
-    name = _COLUMN_TYPE_MAP.get(column_type, "Utf8")
+    """Map a ColumnType to a Polars data type.
+
+    Must only be called when ``pl`` is not None (i.e. after the import guard).
+    """
+    name = _COLUMN_TYPE_MAP[column_type]
     if name == "Datetime":
         return pl.Datetime("us")
     return getattr(pl, name)
@@ -72,14 +77,16 @@ def _is_nan_or_inf(value: Any) -> bool:
 
 def _sanitize_value(value: Any) -> Any:
     """Sanitize a Python value for Polars DataFrame construction."""
-    if value is None:
-        return None
-    if _is_nan_or_inf(value):
+    if value is None or _is_nan_or_inf(value):
         return None
     if isinstance(value, uuid.UUID):
         return str(value)
-    if isinstance(value, (dict, list)):
-        return json.dumps(value, default=str)
+    if isinstance(value, (dict, list, set, frozenset)):
+        serializable = sorted(value, key=str) if isinstance(value, (set, frozenset)) else value
+        try:
+            return json.dumps(serializable, default=str)
+        except (ValueError, TypeError):
+            return None
     if isinstance(value, Decimal):
         return float(value)
     return value
@@ -90,11 +97,7 @@ def _sanitize_rows(
     schema: dict[str, Any],
 ) -> dict[str, list[Any]]:
     """Convert list-of-dicts to column-oriented dict with sanitized values."""
-    columns: dict[str, list[Any]] = {col: [] for col in schema}
-    for row in rows:
-        for col in schema:
-            columns[col].append(_sanitize_value(row.get(col)))
-    return columns
+    return {col: [_sanitize_value(row.get(col)) for row in rows] for col in schema}
 
 
 class ParquetWriter:
@@ -127,9 +130,15 @@ class ParquetWriter:
             if table_schema is None:
                 continue
 
+            safe_name = table_name
+            if not _SAFE_TABLE_NAME.match(table_name):
+                safe_name = re.sub(r"[^\w]", "_", table_name)
             polars_schema = _build_schema(table_schema)
-            filename = f"{idx + 1:03d}_{table_name}.parquet"
+            filename = f"{idx + 1:03d}_{safe_name}.parquet"
             filepath = output_dir / filename
+
+            if not filepath.resolve().is_relative_to(output_dir.resolve()):
+                continue
 
             if not rows:
                 df = pl.DataFrame(schema=polars_schema)

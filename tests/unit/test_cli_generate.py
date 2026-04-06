@@ -210,7 +210,7 @@ class TestGenerateProducesOutput:
 
         assert result.exit_code == 0
         parquet_files = list(seeds_dir.glob("*.parquet"))
-        assert len(parquet_files) >= 1
+        assert len(parquet_files) == 1
 
     def test_invalid_format_errors(self, tmp_path: Path) -> None:
         """Invalid output format should exit with error."""

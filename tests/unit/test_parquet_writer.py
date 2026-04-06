@@ -569,6 +569,102 @@ class TestParquetSpecial:
         assert paths1[0].read_bytes() == paths2[0].read_bytes()
 
 
+class TestParquetSecurity:
+    def test_path_traversal_sanitized(self, tmp_path: Path) -> None:
+        """Table names with path separators should be sanitized."""
+        schema = DatabaseSchema(
+            tables=[
+                TableSchema(
+                    name="../escape",
+                    columns=[
+                        ColumnSchema(
+                            name="id",
+                            data_type=ColumnType.INTEGER,
+                            nullable=False,
+                            primary_key=True,
+                        ),
+                    ],
+                    primary_key=["id"],
+                ),
+            ],
+            dialect="postgresql",
+        )
+        data: dict[str, list[dict[str, Any]]] = {
+            "../escape": [{"id": 1}],
+        }
+        paths = ParquetWriter().write(data, schema, ["../escape"], tmp_path)
+
+        assert len(paths) == 1
+        assert paths[0].resolve().is_relative_to(tmp_path.resolve())
+        assert "/" not in paths[0].name.replace(".parquet", "")
+
+    def test_circular_reference_returns_null(self, tmp_path: Path) -> None:
+        """Circular dict references should not crash, returning null instead."""
+        schema = DatabaseSchema(
+            tables=[
+                TableSchema(
+                    name="configs",
+                    columns=[
+                        ColumnSchema(
+                            name="id",
+                            data_type=ColumnType.INTEGER,
+                            nullable=False,
+                            primary_key=True,
+                        ),
+                        ColumnSchema(
+                            name="settings",
+                            data_type=ColumnType.JSON,
+                            nullable=True,
+                        ),
+                    ],
+                    primary_key=["id"],
+                ),
+            ],
+            dialect="postgresql",
+        )
+        circular: dict[str, Any] = {}
+        circular["self"] = circular
+        data: dict[str, list[dict[str, Any]]] = {
+            "configs": [{"id": 1, "settings": circular}],
+        }
+        paths = ParquetWriter().write(data, schema, ["configs"], tmp_path)
+        df = pl.read_parquet(paths[0])
+
+        assert df["settings"][0] is None
+
+    def test_set_value_serialized(self, tmp_path: Path) -> None:
+        """Set values should be JSON-serialized without crashing."""
+        schema = DatabaseSchema(
+            tables=[
+                TableSchema(
+                    name="tags",
+                    columns=[
+                        ColumnSchema(
+                            name="id",
+                            data_type=ColumnType.INTEGER,
+                            nullable=False,
+                            primary_key=True,
+                        ),
+                        ColumnSchema(
+                            name="labels",
+                            data_type=ColumnType.JSON,
+                            nullable=True,
+                        ),
+                    ],
+                    primary_key=["id"],
+                ),
+            ],
+            dialect="postgresql",
+        )
+        data: dict[str, list[dict[str, Any]]] = {
+            "tags": [{"id": 1, "labels": {"a", "b", "c"}}],
+        }
+        paths = ParquetWriter().write(data, schema, ["tags"], tmp_path)
+        df = pl.read_parquet(paths[0])
+
+        assert df["labels"][0] == '["a", "b", "c"]'
+
+
 class TestParquetImportGuard:
     def test_import_error_without_polars(self, tmp_path: Path) -> None:
         """Should raise ImportError with helpful message when polars is missing."""
@@ -576,11 +672,11 @@ class TestParquetImportGuard:
 
         import dbsprout.output.parquet_writer as mod  # noqa: PLC0415
 
-        with patch.dict("sys.modules", {"polars": None}):
+        try:
+            with patch.dict("sys.modules", {"polars": None}):
+                importlib.reload(mod)
+
+                with pytest.raises(ImportError, match="polars"):
+                    mod.ParquetWriter().write({}, _simple_schema(), [], tmp_path)
+        finally:
             importlib.reload(mod)
-
-            with pytest.raises(ImportError, match="polars"):
-                mod.ParquetWriter().write({}, _simple_schema(), [], tmp_path)
-
-        # Restore module
-        importlib.reload(mod)
