@@ -251,3 +251,127 @@ class TestValidateFidelity:
         )
 
         assert result.exit_code == 0
+
+
+def _write_detection_schema(tmp_path: Path) -> Path:
+    """Write a schema with enough numeric columns for C2ST and return project dir."""
+    schema = DatabaseSchema(
+        tables=[
+            TableSchema(
+                name="products",
+                columns=[
+                    ColumnSchema(
+                        name="id",
+                        data_type=ColumnType.INTEGER,
+                        nullable=False,
+                        primary_key=True,
+                        autoincrement=True,
+                    ),
+                    ColumnSchema(
+                        name="price",
+                        data_type=ColumnType.FLOAT,
+                        nullable=False,
+                    ),
+                    ColumnSchema(
+                        name="quantity",
+                        data_type=ColumnType.INTEGER,
+                        nullable=False,
+                    ),
+                ],
+                primary_key=["id"],
+            ),
+        ],
+    )
+    snapshot_dir = tmp_path / ".dbsprout"
+    snapshot_dir.mkdir()
+    snapshot_path = snapshot_dir / "schema.json"
+    snapshot_path.write_text(schema.model_dump_json(indent=2), encoding="utf-8")
+    return tmp_path
+
+
+def _write_detection_reference_csv(tmp_path: Path) -> Path:
+    """Write reference CSV with enough rows for C2ST (>=10 per class)."""
+    ref_dir = tmp_path / "reference"
+    ref_dir.mkdir(exist_ok=True)
+    csv_path = ref_dir / "products.csv"
+    lines = ["id,price,quantity"]
+    for i in range(1, 21):
+        lines.append(f"{i},{i * 10.5},{i * 2}")
+    csv_path.write_text("\n".join(lines) + "\n")
+    return ref_dir
+
+
+class TestValidateDetection:
+    def test_detection_flag_accepted(self, tmp_path: Path) -> None:
+        """--detection with --reference-data should not fail with exit code 2."""
+        project_dir = _write_detection_schema(tmp_path)
+        ref_dir = _write_detection_reference_csv(tmp_path)
+
+        result = runner.invoke(
+            app,
+            [
+                "validate",
+                "--schema-snapshot",
+                str(project_dir / ".dbsprout" / "schema.json"),
+                "--rows",
+                "20",
+                "--seed",
+                "42",
+                "--detection",
+                "--reference-data",
+                str(ref_dir),
+            ],
+        )
+
+        assert result.exit_code != 2, f"Flag not recognised: {result.output}"
+
+    def test_detection_without_reference(self, tmp_path: Path) -> None:
+        """--detection without --reference-data should print error and exit 1."""
+        project_dir = _write_detection_schema(tmp_path)
+
+        result = runner.invoke(
+            app,
+            [
+                "validate",
+                "--schema-snapshot",
+                str(project_dir / ".dbsprout" / "schema.json"),
+                "--rows",
+                "5",
+                "--detection",
+            ],
+        )
+
+        assert result.exit_code == 1
+        output = _strip_ansi(result.output)
+        assert "reference-data" in output.lower()
+
+    def test_detection_json_output(self, tmp_path: Path) -> None:
+        """--detection --format json should include 'detection' key."""
+        project_dir = _write_detection_schema(tmp_path)
+        ref_dir = _write_detection_reference_csv(tmp_path)
+
+        result = runner.invoke(
+            app,
+            [
+                "validate",
+                "--schema-snapshot",
+                str(project_dir / ".dbsprout" / "schema.json"),
+                "--rows",
+                "20",
+                "--seed",
+                "42",
+                "--detection",
+                "--reference-data",
+                str(ref_dir),
+                "--format",
+                "json",
+            ],
+        )
+
+        assert result.exit_code in {0, 1}
+        parsed = json.loads(result.output)
+        assert "detection" in parsed
+        assert "passed" in parsed["detection"]
+        assert "overall_score" in parsed["detection"]
+        assert "metrics" in parsed["detection"]
+        assert isinstance(parsed["detection"]["metrics"], list)
