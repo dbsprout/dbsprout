@@ -47,15 +47,6 @@ _NUMERIC_TYPES = frozenset(
     }
 )
 
-_CATEGORICAL_TYPES = frozenset(
-    {
-        ColumnType.VARCHAR,
-        ColumnType.TEXT,
-        ColumnType.ENUM,
-        ColumnType.BOOLEAN,
-    }
-)
-
 _MIN_ROWS_PER_CLASS = 10
 
 
@@ -129,15 +120,15 @@ def c2st_accuracy(
     synthetic = _subsample(synthetic_features, rng)
 
     # Label: real=1, synthetic=0
-    y_real = np.ones(real.shape[0], dtype=np.int32)
-    y_syn = np.zeros(synthetic.shape[0], dtype=np.int32)
+    y_real = np.ones(real.shape[0], dtype=np.intp)
+    y_syn = np.zeros(synthetic.shape[0], dtype=np.intp)
 
     x_combined = np.vstack([real, synthetic])
     y_combined = np.concatenate([y_real, y_syn])
 
     skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=seed)
     clf = LogisticRegression(random_state=seed, max_iter=1000)
-    scores: np.ndarray = cross_val_score(clf, x_combined, y_combined, cv=skf, scoring="accuracy")
+    scores = cross_val_score(clf, x_combined, y_combined, cv=skf, scoring="accuracy")
 
     return float(np.mean(scores))
 
@@ -153,27 +144,42 @@ def _subsample(features: np.ndarray, rng: np.random.Generator) -> np.ndarray:
 # ── Feature matrix builder ─────────────────────────────────────────────
 
 
-def _build_feature_matrix(
-    rows: list[dict[str, Any]],
+def _safe_float(val: Any) -> float:
+    """Convert a value to float, returning 0.0 on failure."""
+    if val is None:
+        return 0.0
+    try:
+        return float(val)
+    except (ValueError, TypeError):
+        return 0.0
+
+
+def _build_feature_matrix_combined(
+    real_rows: list[dict[str, Any]],
+    synthetic_rows: list[dict[str, Any]],
     columns: list[str],
     schema_columns: dict[str, ColumnType],
-) -> np.ndarray:
-    """Build a numeric feature matrix from row dicts.
+) -> tuple[np.ndarray, np.ndarray]:
+    """Build feature matrices for real and synthetic data with shared preprocessing.
 
-    Numeric columns are standardised via StandardScaler.
-    Categorical columns are ordinal-encoded.
-    Constant columns (zero variance) are dropped.
+    Fits StandardScaler and OrdinalEncoder on the combined dataset so both
+    halves share the same feature space. This is critical for a fair C2ST.
 
     Args:
-        rows: Row data as list of dicts.
+        real_rows: Reference/real row data.
+        synthetic_rows: Synthetic row data.
         columns: Column names to include.
         schema_columns: Mapping from column name to ColumnType.
 
     Returns:
-        2-D numpy array of shape (n_rows, n_features).
+        Tuple of (real_features, synthetic_features), each a 2-D numpy array.
     """
-    if not rows or not columns:
-        return np.empty((len(rows), 0))
+    combined_rows = [*real_rows, *synthetic_rows]
+    n_real = len(real_rows)
+
+    if not combined_rows or not columns:
+        empty = np.empty((0, 0))
+        return empty, empty
 
     numeric_cols: list[str] = []
     categorical_cols: list[str] = []
@@ -183,44 +189,39 @@ def _build_feature_matrix(
         if col_type in _NUMERIC_TYPES:
             numeric_cols.append(col)
         else:
-            # Treat unknown types as categorical (safe fallback)
             categorical_cols.append(col)
 
     feature_blocks: list[np.ndarray] = []
 
-    # Numeric features
+    # Numeric features — vectorized extraction
     if numeric_cols:
-        num_data = np.zeros((len(rows), len(numeric_cols)), dtype=np.float64)
-        for j, col in enumerate(numeric_cols):
-            for i, row in enumerate(rows):
-                val = row.get(col)
-                if val is not None:
-                    try:
-                        num_data[i, j] = float(val)
-                    except (ValueError, TypeError):
-                        num_data[i, j] = 0.0
+        num_data = np.array(
+            [[_safe_float(row.get(col)) for col in numeric_cols] for row in combined_rows],
+            dtype=np.float64,
+        )
         scaler = StandardScaler()
         scaled = scaler.fit_transform(num_data)
         feature_blocks.append(scaled)
 
-    # Categorical features
+    # Categorical features — fit encoder on combined data
     if categorical_cols:
-        cat_data: list[list[str]] = []
-        for row in rows:
-            cat_data.append([str(row.get(col, "")) for col in categorical_cols])
+        cat_data = [[str(row.get(col, "")) for col in categorical_cols] for row in combined_rows]
         encoder = OrdinalEncoder(handle_unknown="use_encoded_value", unknown_value=-1)
         encoded = encoder.fit_transform(cat_data)
         feature_blocks.append(encoded)
 
     if not feature_blocks:  # pragma: no cover — defensive; unreachable with current logic
-        return np.empty((len(rows), 0))
+        empty = np.empty((0, 0))
+        return empty, empty
 
     combined = np.hstack(feature_blocks)
 
     # Drop constant columns (zero variance)
     variances = np.var(combined, axis=0)
     non_constant_mask = variances > 0.0
-    return combined[:, non_constant_mask]
+    filtered = combined[:, non_constant_mask]
+
+    return filtered[:n_real], filtered[n_real:]
 
 
 # ── Orchestrator ───────────────────────────────────────────────────────
@@ -282,9 +283,10 @@ def validate_detection(
         if len(ref_rows) < _MIN_ROWS_PER_CLASS or len(syn_rows) < _MIN_ROWS_PER_CLASS:
             continue
 
-        # Build feature matrices
-        ref_features = _build_feature_matrix(ref_rows, shared_cols, col_type_map)
-        syn_features = _build_feature_matrix(syn_rows, shared_cols, col_type_map)
+        # Build feature matrices — fit on combined data for fair comparison
+        ref_features, syn_features = _build_feature_matrix_combined(
+            ref_rows, syn_rows, shared_cols, col_type_map
+        )
 
         # Skip if no usable features
         if ref_features.shape[1] == 0 or syn_features.shape[1] == 0:

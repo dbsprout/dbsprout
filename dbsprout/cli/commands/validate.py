@@ -118,23 +118,20 @@ def _print_rich(report: IntegrityReport) -> None:
     console.print(f"\n{passed}/{total} checks passed.")
 
 
-def _run_fidelity(
-    tables_data: dict[str, list[dict[str, Any]]],
+def _load_reference_data(
     reference_path: Path,
     schema: DatabaseSchema,
-) -> FidelityReport:
-    """Load reference data and compute fidelity metrics."""
-    from dbsprout.quality.fidelity import (  # noqa: PLC0415
-        FidelityReport,
-        load_reference_csv,
-        validate_fidelity,
-    )
+) -> dict[str, list[dict[str, Any]]] | None:
+    """Load reference CSV data for fidelity/detection comparison.
+
+    Returns None if the reference path does not exist (caller handles error).
+    """
+    from dbsprout.quality.fidelity import load_reference_csv  # noqa: PLC0415
 
     if not reference_path.exists():
         console.print(f"[red]Error:[/red] Reference data not found: {reference_path}")
-        return FidelityReport()
+        return None
 
-    # Load reference CSV — one file per table, match by table name
     ref_data: dict[str, list[dict[str, Any]]] = {}
     if reference_path.is_dir():
         for table in schema.tables:
@@ -144,9 +141,26 @@ def _run_fidelity(
             if csv_path.exists():
                 ref_data[table.name] = load_reference_csv(csv_path, table.name)
     else:
-        # Single file — assume table name from stem
         table_name = reference_path.stem
         ref_data[table_name] = load_reference_csv(reference_path, table_name)
+
+    return ref_data
+
+
+def _run_fidelity(
+    tables_data: dict[str, list[dict[str, Any]]],
+    reference_path: Path,
+    schema: DatabaseSchema,
+) -> FidelityReport:
+    """Load reference data and compute fidelity metrics."""
+    from dbsprout.quality.fidelity import (  # noqa: PLC0415
+        FidelityReport,
+        validate_fidelity,
+    )
+
+    ref_data = _load_reference_data(reference_path, schema)
+    if ref_data is None:
+        return FidelityReport()
 
     return validate_fidelity(tables_data, ref_data, schema)
 
@@ -162,25 +176,10 @@ def _run_detection(
         DetectionReport,
         validate_detection,
     )
-    from dbsprout.quality.fidelity import load_reference_csv  # noqa: PLC0415
 
-    if not reference_path.exists():
-        console.print(f"[red]Error:[/red] Reference data not found: {reference_path}")
+    ref_data = _load_reference_data(reference_path, schema)
+    if ref_data is None:
         return DetectionReport()
-
-    # Load reference CSV — one file per table, match by table name
-    ref_data: dict[str, list[dict[str, Any]]] = {}
-    if reference_path.is_dir():
-        for table in schema.tables:
-            csv_path = (reference_path / f"{table.name}.csv").resolve()
-            if not csv_path.is_relative_to(reference_path.resolve()):
-                continue
-            if csv_path.exists():
-                ref_data[table.name] = load_reference_csv(csv_path, table.name)
-    else:
-        # Single file — assume table name from stem
-        table_name = reference_path.stem
-        ref_data[table_name] = load_reference_csv(reference_path, table_name)
 
     return validate_detection(tables_data, ref_data, schema, seed=seed)
 

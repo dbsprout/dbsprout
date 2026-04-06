@@ -12,7 +12,7 @@ sklearn = pytest.importorskip("sklearn", reason="sklearn not installed (optional
 
 from dbsprout.quality.detection import (  # noqa: E402
     DetectionReport,
-    _build_feature_matrix,
+    _build_feature_matrix_combined,
     c2st_accuracy,
     validate_detection,
 )
@@ -298,32 +298,45 @@ class TestValidateDetection:
         assert isinstance(report, DetectionReport)
 
 
-class TestBuildFeatureMatrix:
-    """Tests for _build_feature_matrix edge cases."""
+class TestBuildFeatureMatrixCombined:
+    """Tests for _build_feature_matrix_combined edge cases."""
 
     def test_empty_columns(self) -> None:
-        """No columns should return empty feature matrix."""
+        """No columns should return empty feature matrices."""
         rows = [{"a": 1}, {"a": 2}]
-        result = _build_feature_matrix(rows, [], {})
-        assert result.shape == (2, 0)
+        real, syn = _build_feature_matrix_combined(rows, rows, [], {})
+        assert real.shape[1] == 0
+        assert syn.shape[1] == 0
 
     def test_empty_rows(self) -> None:
-        """No rows should return empty feature matrix."""
-        result = _build_feature_matrix([], ["a"], {})
-        assert result.shape == (0, 0)
+        """No rows should return empty feature matrices."""
+        real, syn = _build_feature_matrix_combined([], [], ["a"], {})
+        assert real.shape == (0, 0)
+        assert syn.shape == (0, 0)
 
     def test_categorical_only(self) -> None:
         """Only categorical columns should produce encoded features."""
         rows = [{"c": "a"}, {"c": "b"}, {"c": "a"}]
-        result = _build_feature_matrix(rows, ["c"], {"c": ColumnType.VARCHAR})
-        assert result.shape[0] == 3
-        assert result.shape[1] >= 1
+        real, syn = _build_feature_matrix_combined(rows, rows, ["c"], {"c": ColumnType.VARCHAR})
+        assert real.shape[0] == 3
+        assert real.shape[1] >= 1
+        assert syn.shape[0] == 3
 
     def test_numeric_only(self) -> None:
         """Only numeric columns should produce scaled features."""
         rows = [{"n": 1.0}, {"n": 2.0}, {"n": 3.0}]
-        result = _build_feature_matrix(rows, ["n"], {"n": ColumnType.FLOAT})
-        assert result.shape == (3, 1)
+        real, syn = _build_feature_matrix_combined(rows, rows, ["n"], {"n": ColumnType.FLOAT})
+        assert real.shape == (3, 1)
+        assert syn.shape == (3, 1)
+
+    def test_shared_scaling(self) -> None:
+        """Real and synthetic should share the same scaler fit."""
+        real = [{"n": 1.0}, {"n": 2.0}, {"n": 3.0}]
+        syn = [{"n": 100.0}, {"n": 200.0}, {"n": 300.0}]
+        real_f, syn_f = _build_feature_matrix_combined(real, syn, ["n"], {"n": ColumnType.FLOAT})
+        # With shared scaling, means should NOT both be 0
+        # (separate scaling would normalize each to mean=0)
+        assert not (abs(np.mean(real_f)) < 0.01 and abs(np.mean(syn_f)) < 0.01)
 
 
 class TestImportGuard:
