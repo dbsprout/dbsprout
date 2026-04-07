@@ -10,10 +10,11 @@ import json
 import math
 import time as time_mod
 import uuid
-from dataclasses import dataclass
 from datetime import date, datetime, time
 from decimal import Decimal
 from typing import TYPE_CHECKING, Any
+
+from dbsprout.output.models import InsertResult
 
 if TYPE_CHECKING:
     from types import ModuleType
@@ -93,13 +94,12 @@ def build_copy_data(columns: list[str], rows: list[dict[str, Any]]) -> str:
     return "\n".join(lines) + "\n"
 
 
-@dataclass(frozen=True)
-class InsertResult:
-    """Result of a direct database insertion."""
-
-    tables_inserted: int
-    total_rows: int
-    duration_seconds: float
+__all__ = [
+    "InsertResult",
+    "PgCopyWriter",
+    "build_copy_data",
+    "format_copy_value",
+]
 
 
 class PgCopyWriter:

@@ -265,24 +265,35 @@ class TestGenerateDirectFormat:
         output = _strip_ansi(result.output)
         assert "--db" in output
 
-    def test_direct_unsupported_dialect_errors(self, tmp_path: Path) -> None:
-        """--output-format direct with sqlite:// must error (unsupported)."""
+    def test_direct_sqlite_uses_sa_batch(self, tmp_path: Path) -> None:
+        """--output-format direct with sqlite:// uses SaBatchWriter."""
+        from unittest.mock import MagicMock, patch  # noqa: PLC0415
+
         project_dir = _write_schema(tmp_path)
 
-        result = runner.invoke(
-            app,
-            [
-                "generate",
-                "--schema-snapshot",
-                str(project_dir / ".dbsprout" / "schema.json"),
-                "--output-format",
-                "direct",
-                "--db",
-                "sqlite:///test.db",
-                "--rows",
-                "3",
-            ],
+        mock_writer = MagicMock()
+        mock_writer.write.return_value = MagicMock(
+            total_rows=3, tables_inserted=1, duration_seconds=0.01
         )
-        output = _strip_ansi(result.output)
-        assert result.exit_code != 0
-        assert "not supported" in output.lower() or "unsupported" in output.lower()
+
+        with patch(
+            "dbsprout.output.sa_batch.SaBatchWriter",
+            return_value=mock_writer,
+        ):
+            result = runner.invoke(
+                app,
+                [
+                    "generate",
+                    "--schema-snapshot",
+                    str(project_dir / ".dbsprout" / "schema.json"),
+                    "--output-format",
+                    "direct",
+                    "--db",
+                    "sqlite:///test.db",
+                    "--rows",
+                    "3",
+                ],
+            )
+
+        mock_writer.write.assert_called_once()
+        assert result.exit_code == 0
