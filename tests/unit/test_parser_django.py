@@ -91,8 +91,10 @@ def _mock_m2m_field(
     field.m2m_reverse_name.return_value = target_col
     field.model._meta.db_table = source_table
     field.model._meta.pk.column = "id"
+    field.model._meta.pk.get_internal_type.return_value = "AutoField"
     field.related_model._meta.db_table = target_table
     field.related_model._meta.pk.column = "id"
+    field.related_model._meta.pk.get_internal_type.return_value = "AutoField"
     field.remote_field.through._meta.auto_created = True
     return field
 

@@ -100,7 +100,9 @@ def _fk_to_foreign_key(field: Any) -> ForeignKeySchema:
     """Convert a Django ForeignKey / OneToOneField to a ForeignKeySchema."""
     ref_table: str = field.related_model._meta.db_table
     ref_column: str = field.related_model._meta.pk.column
-    on_delete: str = field.remote_field.on_delete.__name__
+    on_delete: str = getattr(
+        field.remote_field.on_delete, "__name__", str(field.remote_field.on_delete)
+    )
 
     return ForeignKeySchema(
         columns=[field.column],
@@ -125,10 +127,18 @@ def _m2m_junction_table(field: Any) -> TableSchema | None:
     source_table: str = field.model._meta.db_table
     target_table: str = field.related_model._meta.db_table
 
+    # Derive FK column types from referenced PKs (e.g., BigAutoField → BIGINT)
+    source_pk_type = _DJANGO_TYPE_MAP.get(
+        field.model._meta.pk.get_internal_type(), ColumnType.INTEGER
+    )
+    target_pk_type = _DJANGO_TYPE_MAP.get(
+        field.related_model._meta.pk.get_internal_type(), ColumnType.INTEGER
+    )
+
     id_column = ColumnSchema(
         name="id",
-        data_type=ColumnType.INTEGER,
-        raw_type="AutoField",
+        data_type=ColumnType.BIGINT,
+        raw_type="BigAutoField",
         nullable=False,
         primary_key=True,
         autoincrement=True,
@@ -136,14 +146,14 @@ def _m2m_junction_table(field: Any) -> TableSchema | None:
 
     source_fk_column = ColumnSchema(
         name=source_col,
-        data_type=ColumnType.INTEGER,
+        data_type=source_pk_type,
         raw_type="ForeignKey",
         nullable=False,
     )
 
     target_fk_column = ColumnSchema(
         name=target_col,
-        data_type=ColumnType.INTEGER,
+        data_type=target_pk_type,
         raw_type="ForeignKey",
         nullable=False,
     )

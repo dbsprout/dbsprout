@@ -323,6 +323,8 @@ def _init_from_django(
 
     _display_schema_table(schema)
     _display_insertion_order(resolved)
+    _display_cycle_warnings(resolved)
+    _display_self_refs(resolved)
 
     _write_config(schema, "django", output_dir, dry_run)
     _write_snapshot(schema, output_dir, dry_run)
