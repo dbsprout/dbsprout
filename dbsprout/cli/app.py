@@ -16,9 +16,13 @@ app = typer.Typer(
 
 
 @app.command(name="init")
-def init_proxy(
+def init_proxy(  # noqa: PLR0913
     db: str | None = typer.Option(None, "--db", help="Database URL."),
     file: str | None = typer.Option(None, "--file", help="DDL file."),
+    django: bool = typer.Option(False, "--django", help="Introspect Django models."),
+    django_apps: str | None = typer.Option(
+        None, "--django-apps", help="Comma-separated Django app labels to include."
+    ),
     output_dir: str = typer.Option(".", "--output-dir", "-o"),
     dry_run: bool = typer.Option(False, "--dry-run"),
 ) -> None:
@@ -30,6 +34,8 @@ def init_proxy(
     init_command(
         db=db,
         file=file,
+        django=django,
+        django_apps=django_apps,
         output_dir=Path(output_dir),
         dry_run=dry_run,
     )
@@ -44,11 +50,20 @@ def generate_proxy(  # noqa: PLR0913
     config_path: str | None = typer.Option(None, "--config"),
     rows: int = typer.Option(100, "--rows", "-n", min=1),
     seed: int = typer.Option(42, "--seed", "-s", min=0),
-    output_format: str = typer.Option("sql", "--output-format", "-f"),
+    output_format: str = typer.Option(
+        "sql", "--output-format", "-f", help="Output format: sql, csv, json, jsonl, direct."
+    ),
     output_dir: str = typer.Option("./seeds", "--output-dir", "-o"),
     dialect: str = typer.Option("postgresql", "--dialect", "-d"),
     engine: str = typer.Option("heuristic", "--engine", "-e"),
     privacy: str = typer.Option("local", "--privacy"),
+    db: str | None = typer.Option(None, "--db", help="Target database URL for direct insertion."),
+    upsert: bool = typer.Option(False, "--upsert", help="Generate UPSERT (insert-or-update) SQL."),
+    insert_method: str = typer.Option(
+        "auto",
+        "--insert-method",
+        help="Insertion method for direct output: auto, copy, load_data, batch.",
+    ),
 ) -> None:
     """Generate seed data from a schema snapshot."""
     from pathlib import Path  # noqa: PLC0415
@@ -65,6 +80,9 @@ def generate_proxy(  # noqa: PLR0913
         dialect=dialect,
         engine=engine,
         privacy=privacy,
+        target_db=db,
+        upsert=upsert,
+        insert_method=insert_method,
     )
 
 
@@ -79,6 +97,12 @@ def validate_proxy(  # noqa: PLR0913
     seed: int = typer.Option(42, "--seed", "-s", min=0),
     output_format: str = typer.Option("rich", "--format", "-f"),
     engine: str = typer.Option("heuristic", "--engine", "-e"),
+    reference_data: str | None = typer.Option(
+        None, "--reference-data", help="Path to reference CSV for fidelity comparison."
+    ),
+    detection: bool = typer.Option(False, "--detection", help="Run C2ST detection metrics."),
+    output: str | None = typer.Option(None, "--output", help="Write JSON output to file."),
+    compact: bool = typer.Option(False, "--compact", help="Minified JSON output."),
 ) -> None:
     """Validate integrity of generated seed data."""
     from pathlib import Path  # noqa: PLC0415
@@ -92,6 +116,10 @@ def validate_proxy(  # noqa: PLR0913
         seed=seed,
         output_format=output_format,
         engine=engine,
+        reference_data=Path(reference_data) if reference_data else None,
+        detection=detection,
+        output=Path(output) if output else None,
+        compact=compact,
     )
 
 

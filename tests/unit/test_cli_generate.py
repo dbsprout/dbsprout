@@ -190,6 +190,28 @@ class TestGenerateProducesOutput:
         lines = jsonl_files[0].read_text().strip().split("\n")
         assert len(lines) == 3
 
+    def test_parquet_format(self, tmp_path: Path) -> None:
+        """--output-format parquet should produce .parquet files."""
+        project_dir = _write_schema(tmp_path)
+        seeds_dir = tmp_path / "seeds"
+
+        result = runner.invoke(
+            app,
+            [
+                "generate",
+                "--schema-snapshot",
+                str(project_dir / ".dbsprout" / "schema.json"),
+                "--output-dir",
+                str(seeds_dir),
+                "--output-format",
+                "parquet",
+            ],
+        )
+
+        assert result.exit_code == 0
+        parquet_files = list(seeds_dir.glob("*.parquet"))
+        assert len(parquet_files) == 1
+
     def test_invalid_format_errors(self, tmp_path: Path) -> None:
         """Invalid output format should exit with error."""
         project_dir = _write_schema(tmp_path)
@@ -203,8 +225,75 @@ class TestGenerateProducesOutput:
                 "--output-dir",
                 str(tmp_path / "seeds"),
                 "--output-format",
-                "parquet",
+                "xlsx",
             ],
         )
 
         assert result.exit_code != 0
+
+
+class TestGenerateDirectFormat:
+    def test_direct_format_requires_db(self, tmp_path: Path) -> None:
+        """--output-format direct without --db must error."""
+        project_dir = _write_schema(tmp_path)
+
+        result = runner.invoke(
+            app,
+            [
+                "generate",
+                "--schema-snapshot",
+                str(project_dir / ".dbsprout" / "schema.json"),
+                "--output-format",
+                "direct",
+                "--rows",
+                "3",
+            ],
+        )
+        output = _strip_ansi(result.output)
+        assert result.exit_code != 0
+        assert "--db" in output
+
+    def test_direct_format_in_help(self) -> None:
+        """--output-format help text mentions direct."""
+        result = runner.invoke(app, ["generate", "--help"])
+        output = _strip_ansi(result.output)
+        assert "direct" in output
+
+    def test_db_flag_in_help(self) -> None:
+        """--db flag must appear in generate help."""
+        result = runner.invoke(app, ["generate", "--help"])
+        output = _strip_ansi(result.output)
+        assert "--db" in output
+
+    def test_direct_sqlite_uses_sa_batch(self, tmp_path: Path) -> None:
+        """--output-format direct with sqlite:// uses SaBatchWriter."""
+        from unittest.mock import MagicMock, patch  # noqa: PLC0415
+
+        project_dir = _write_schema(tmp_path)
+
+        mock_writer = MagicMock()
+        mock_writer.write.return_value = MagicMock(
+            total_rows=3, tables_inserted=1, duration_seconds=0.01
+        )
+
+        with patch(
+            "dbsprout.output.sa_batch.SaBatchWriter",
+            return_value=mock_writer,
+        ):
+            result = runner.invoke(
+                app,
+                [
+                    "generate",
+                    "--schema-snapshot",
+                    str(project_dir / ".dbsprout" / "schema.json"),
+                    "--output-format",
+                    "direct",
+                    "--db",
+                    "sqlite:///test.db",
+                    "--rows",
+                    "3",
+                ],
+            )
+
+        mock_writer.write.assert_called_once()
+        assert result.exit_code == 0

@@ -63,6 +63,9 @@ mssql = [
     "sqlalchemy>=2.0",
     "pyodbc>=5.0",
 ]
+pg = [
+    "psycopg[binary]>=3.0",
+]
 gen = [
     "mimesis>=18.0",
     "faker>=33.0",
@@ -100,9 +103,12 @@ web = [
 tui = [
     "textual>=1.0",
 ]
+data = [
+    "polars>=1.0",
+]
 # Excludes train-cuda/train-mlx (platform-specific) and cloud (subset of llm)
 all = [
-    "dbsprout[db,gen,llm,stats,web,tui]",
+    "dbsprout[db,pg,gen,llm,stats,data,web,tui]",
 ]
 
 [build-system]
