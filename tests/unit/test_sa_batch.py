@@ -7,10 +7,11 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from pathlib import Path
 
+import pytest
 import sqlalchemy as sa
 
 from dbsprout.output.models import InsertResult
-from dbsprout.output.sa_batch import SaBatchWriter
+from dbsprout.output.sa_batch import SaBatchWriter, _quote_identifier
 from dbsprout.schema.models import ColumnSchema, ColumnType, DatabaseSchema, TableSchema
 
 
@@ -315,6 +316,53 @@ class TestSaBatchWriterPragmas:
             db_url="sqlite:///:memory:",
         )
         assert result.total_rows == 0
+
+
+class TestQuoteIdentifier:
+    def test_valid_identifier(self) -> None:
+        assert _quote_identifier("users") == '"users"'
+        assert _quote_identifier("my_table_2") == '"my_table_2"'
+
+    def test_unsafe_identifier_rejected(self) -> None:
+        with pytest.raises(ValueError, match="Unsafe SQL identifier"):
+            _quote_identifier("users; DROP TABLE users--")
+        with pytest.raises(ValueError, match="Unsafe SQL identifier"):
+            _quote_identifier("table name")
+
+
+class TestSaBatchWriterErrorHandling:
+    def test_bad_db_url_raises_runtime_error(self) -> None:
+        with pytest.raises(RuntimeError, match="Failed to connect"):
+            SaBatchWriter().write(
+                tables_data={"t": [{"id": 1}]},
+                schema=_make_schema(),
+                insertion_order=["t"],
+                db_url="invalid_not_a_url",
+            )
+
+    def test_schema_driven_column_ordering(self) -> None:
+        """When schema has the table, column order comes from schema, not row keys."""
+        engine = sa.create_engine("sqlite:///:memory:")
+        _create_table(engine)
+
+        # Row keys in different order than schema
+        rows: list[dict[str, Any]] = [{"name": "Alice", "id": 1}]
+        schema = _make_schema()
+
+        result = SaBatchWriter().write(
+            tables_data={"users": rows},
+            schema=schema,
+            insertion_order=["users"],
+            db_url="sqlite:///:memory:",
+            _engine_override=engine,
+        )
+
+        assert result.total_rows == 1
+        with engine.connect() as conn:
+            row = conn.execute(sa.text("SELECT id, name FROM users")).fetchone()
+        assert row is not None
+        assert row[0] == 1
+        assert row[1] == "Alice"
 
 
 class TestSaBatchWriterBatchSizing:

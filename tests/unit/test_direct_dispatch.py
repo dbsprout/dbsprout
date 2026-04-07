@@ -6,6 +6,8 @@ import inspect
 from io import StringIO
 from unittest.mock import MagicMock, patch
 
+import click.exceptions
+import pytest
 from rich.console import Console
 from typer.testing import CliRunner
 
@@ -234,3 +236,61 @@ class TestInsertMethodCLI:
         # Should fail due to invalid insert method (before even loading schema)
         assert result.exit_code != 0
         assert "Invalid --insert-method" in result.output
+
+
+class TestInsertMethodValidation:
+    """Test method/dialect incompatibility guards."""
+
+    def test_copy_on_non_pg_raises(self) -> None:
+        buf = StringIO()
+        test_console = Console(file=buf, force_terminal=False)
+        with (
+            patch("dbsprout.cli.commands.generate.console", test_console),
+            pytest.raises((SystemExit, click.exceptions.Exit)),
+        ):
+            _run_direct_insert(
+                _make_generate_result(),
+                _make_schema(),
+                ["users"],
+                "sqlite:///test.db",
+                insert_method="copy",
+            )
+        assert "copy" in buf.getvalue().lower()
+        assert "PostgreSQL" in buf.getvalue()
+
+    def test_load_data_on_non_mysql_raises(self) -> None:
+        buf = StringIO()
+        test_console = Console(file=buf, force_terminal=False)
+        with (
+            patch("dbsprout.cli.commands.generate.console", test_console),
+            pytest.raises((SystemExit, click.exceptions.Exit)),
+        ):
+            _run_direct_insert(
+                _make_generate_result(),
+                _make_schema(),
+                ["users"],
+                "postgresql://host/db",
+                insert_method="load_data",
+            )
+        assert "load_data" in buf.getvalue().lower()
+        assert "MySQL" in buf.getvalue()
+
+    def test_batch_forces_sa_batch(self) -> None:
+        mock_writer = MagicMock()
+        mock_writer.write.return_value = MagicMock(
+            total_rows=5,
+            tables_inserted=1,
+            duration_seconds=0.05,
+        )
+        with patch(
+            "dbsprout.output.sa_batch.SaBatchWriter",
+            return_value=mock_writer,
+        ):
+            _run_direct_insert(
+                _make_generate_result(),
+                _make_schema(),
+                ["users"],
+                "postgresql://host/db",
+                insert_method="batch",
+            )
+        mock_writer.write.assert_called_once()
