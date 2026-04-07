@@ -15,36 +15,18 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
-from dbsprout.schema.models import ColumnType
+from dbsprout.quality._types import CATEGORICAL_TYPES as _CATEGORICAL_TYPES
+from dbsprout.quality._types import NUMERIC_TYPES as _NUMERIC_TYPES
 
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from dbsprout.schema.models import DatabaseSchema
+    from dbsprout.schema.models import ColumnType, DatabaseSchema
 
 try:
     from scipy.stats import ks_2samp  # type: ignore[import-not-found,import-untyped,unused-ignore]
 except ImportError:
     ks_2samp = None  # type: ignore[assignment,unused-ignore]
-
-_NUMERIC_TYPES = frozenset(
-    {
-        ColumnType.INTEGER,
-        ColumnType.BIGINT,
-        ColumnType.SMALLINT,
-        ColumnType.FLOAT,
-        ColumnType.DECIMAL,
-    }
-)
-
-_CATEGORICAL_TYPES = frozenset(
-    {
-        ColumnType.VARCHAR,
-        ColumnType.TEXT,
-        ColumnType.ENUM,
-        ColumnType.BOOLEAN,
-    }
-)
 
 
 @dataclass(frozen=True)
