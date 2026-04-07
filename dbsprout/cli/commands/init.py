@@ -17,28 +17,36 @@ if TYPE_CHECKING:
     from dbsprout.schema.models import DatabaseSchema
 
 
-def init_command(
+def init_command(  # noqa: PLR0913
     db: str | None = typer.Option(None, "--db", help="Database connection URL"),
     file: str | None = typer.Option(None, "--file", "-f", help="SQL DDL file path (.sql)"),
+    django: bool = False,
+    django_apps: str | None = None,
     output_dir: Path = typer.Option(
         Path("."), "--output-dir", "-o", help="Output directory for config and snapshots"
     ),
     dry_run: bool = typer.Option(False, "--dry-run", help="Preview without writing files"),
 ) -> None:
     """Introspect a database schema and generate configuration."""
-    import sqlalchemy as sa  # noqa: PLC0415
-
     # ── Validate arguments ───────────────────────────────────────────────
-    if file is not None and db is not None:
-        console.print("[red]Error:[/red] Provide --db or --file, not both.")
+    sources = sum([db is not None, file is not None, django])
+    if sources > 1:
+        console.print("[red]Error:[/red] Provide only one of --db, --file, or --django.")
         raise typer.Exit(code=1)
+
+    if sources == 0:
+        console.print("[red]Error:[/red] Provide --db <url>, --file <path>, or --django.")
+        raise typer.Exit(code=1)
+
+    if django:
+        app_labels = [a.strip() for a in django_apps.split(",")] if django_apps else None
+        return _init_from_django(app_labels, output_dir, dry_run)
 
     if file is not None:
         return _init_from_file(file, output_dir, dry_run)
 
-    if db is None:
-        console.print("[red]Error:[/red] Provide --db <connection_string> or --file <path.sql>.")
-        raise typer.Exit(code=1)
+    assert db is not None  # validated above: exactly one source is set
+    import sqlalchemy as sa  # noqa: PLC0415
 
     # ── Sanitize URL for display/storage ────────────────────────────────
     try:
@@ -281,6 +289,44 @@ def _init_from_file(file_path: str, output_dir: Path, dry_run: bool) -> None:
     _display_self_refs(resolved)
 
     _write_config(schema, file_path, output_dir, dry_run)
+    _write_snapshot(schema, output_dir, dry_run)
+
+    console.print("\n[green bold]Done![/green bold] Run `dbsprout generate` to create seed data.")
+
+
+# ── Django-based init ───────────────────────────────────────────────────
+
+
+def _init_from_django(
+    app_labels: list[str] | None,
+    output_dir: Path,
+    dry_run: bool,
+) -> None:
+    """Initialize from Django model introspection."""
+    from dbsprout.schema.parsers.django import parse_django_models  # noqa: PLC0415
+
+    try:
+        schema = parse_django_models(app_labels=app_labels)
+    except (RuntimeError, ValueError) as exc:
+        console.print(f"[red]Error:[/red] {exc}")
+        raise typer.Exit(code=1) from None
+
+    if not schema.tables:
+        console.print("[yellow]Warning:[/yellow] No Django models found.")
+        raise typer.Exit(code=0)
+
+    try:
+        resolved = resolve_cycles(schema)
+    except UnresolvableCycleError as exc:
+        console.print(f"[red]Error:[/red] {exc}")
+        raise typer.Exit(code=1) from None
+
+    _display_schema_table(schema)
+    _display_insertion_order(resolved)
+    _display_cycle_warnings(resolved)
+    _display_self_refs(resolved)
+
+    _write_config(schema, "django", output_dir, dry_run)
     _write_snapshot(schema, output_dir, dry_run)
 
     console.print("\n[green bold]Done![/green bold] Run `dbsprout generate` to create seed data.")

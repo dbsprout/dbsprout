@@ -200,7 +200,7 @@ class TestInitErrors:
     def test_db_and_file_mutually_exclusive(self) -> None:
         result = runner.invoke(app, ["init", "--db", "sqlite:///x", "--file", "y.sql"])
         assert result.exit_code == 1
-        assert "not both" in _strip_ansi(result.output)
+        assert "only one" in _strip_ansi(result.output).lower()
 
     def test_file_empty_ddl(self, tmp_path: Path) -> None:
         ddl_file = tmp_path / "empty.sql"

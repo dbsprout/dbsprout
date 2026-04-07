@@ -16,9 +16,13 @@ app = typer.Typer(
 
 
 @app.command(name="init")
-def init_proxy(
+def init_proxy(  # noqa: PLR0913
     db: str | None = typer.Option(None, "--db", help="Database URL."),
     file: str | None = typer.Option(None, "--file", help="DDL file."),
+    django: bool = typer.Option(False, "--django", help="Introspect Django models."),
+    django_apps: str | None = typer.Option(
+        None, "--django-apps", help="Comma-separated Django app labels to include."
+    ),
     output_dir: str = typer.Option(".", "--output-dir", "-o"),
     dry_run: bool = typer.Option(False, "--dry-run"),
 ) -> None:
@@ -30,6 +34,8 @@ def init_proxy(
     init_command(
         db=db,
         file=file,
+        django=django,
+        django_apps=django_apps,
         output_dir=Path(output_dir),
         dry_run=dry_run,
     )
