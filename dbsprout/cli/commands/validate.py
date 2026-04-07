@@ -293,3 +293,4 @@ def _print_json(  # noqa: PLR0913
             raise typer.Exit(code=1) from exc
     else:
         sys.stdout.write(json_str + "\n")
+        sys.stdout.flush()

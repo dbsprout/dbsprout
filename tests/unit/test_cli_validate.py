@@ -126,8 +126,8 @@ class TestValidateJSONFormat:
         # QualityReport envelope keys
         assert "version" in parsed
         assert "metadata" in parsed
-        assert "fidelity" in parsed or parsed.get("fidelity") is None
-        assert "detection" in parsed or parsed.get("detection") is None
+        assert "fidelity" in parsed
+        assert "detection" in parsed
 
 
 class TestValidateSummary:

@@ -7,6 +7,7 @@ QualityReport envelope with a ``from_reports()`` factory method.
 
 from __future__ import annotations
 
+import dataclasses
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
@@ -116,20 +117,16 @@ class QualityReport(BaseModel):
         seed: int,
         fidelity: FidelityReport | None = None,
         detection: DetectionReport | None = None,
+        timestamp: datetime | None = None,
     ) -> QualityReport:
-        """Build a ``QualityReport`` from frozen dataclass sub-reports."""
+        """Build a ``QualityReport`` from frozen dataclass sub-reports.
+
+        Args:
+            timestamp: Override for testing. Defaults to ``datetime.now(UTC)``.
+        """
         integrity_model = IntegrityReportModel(
             passed=integrity.passed,
-            checks=[
-                IntegrityCheckModel(
-                    check=c.check,
-                    table=c.table,
-                    column=c.column,
-                    passed=c.passed,
-                    details=c.details,
-                )
-                for c in integrity.checks
-            ],
+            checks=[IntegrityCheckModel(**dataclasses.asdict(c)) for c in integrity.checks],
         )
 
         fidelity_model: FidelityReportModel | None = None
@@ -137,16 +134,7 @@ class QualityReport(BaseModel):
             fidelity_model = FidelityReportModel(
                 passed=fidelity.passed,
                 overall_score=fidelity.overall_score,
-                metrics=[
-                    FidelityMetricModel(
-                        metric=m.metric,
-                        table=m.table,
-                        column=m.column,
-                        score=m.score,
-                        details=m.details,
-                    )
-                    for m in fidelity.metrics
-                ],
+                metrics=[FidelityMetricModel(**dataclasses.asdict(m)) for m in fidelity.metrics],
             )
 
         detection_model: DetectionReportModel | None = None
@@ -154,25 +142,13 @@ class QualityReport(BaseModel):
             detection_model = DetectionReportModel(
                 passed=detection.passed,
                 overall_score=detection.overall_score,
-                metrics=[
-                    DetectionMetricModel(
-                        metric=m.metric,
-                        table=m.table,
-                        accuracy=m.accuracy,
-                        details=m.details,
-                    )
-                    for m in detection.metrics
-                ],
+                metrics=[DetectionMetricModel(**dataclasses.asdict(m)) for m in detection.metrics],
             )
 
-        passed = integrity.passed
-        if fidelity is not None:
-            passed = passed and fidelity.passed
-        if detection is not None:
-            passed = passed and detection.passed
+        passed = all(r.passed for r in (integrity, fidelity, detection) if r is not None)
 
         metadata = ReportMetadata(
-            timestamp=datetime.now(timezone.utc),
+            timestamp=timestamp or datetime.now(timezone.utc),
             schema_hash=schema_hash,
             row_counts=row_counts,
             engine=engine,
