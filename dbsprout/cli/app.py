@@ -89,6 +89,8 @@ def validate_proxy(  # noqa: PLR0913
         None, "--reference-data", help="Path to reference CSV for fidelity comparison."
     ),
     detection: bool = typer.Option(False, "--detection", help="Run C2ST detection metrics."),
+    output: str | None = typer.Option(None, "--output", help="Write JSON output to file."),
+    compact: bool = typer.Option(False, "--compact", help="Minified JSON output."),
 ) -> None:
     """Validate integrity of generated seed data."""
     from pathlib import Path  # noqa: PLC0415
@@ -104,6 +106,8 @@ def validate_proxy(  # noqa: PLR0913
         engine=engine,
         reference_data=Path(reference_data) if reference_data else None,
         detection=detection,
+        output=Path(output) if output else None,
+        compact=compact,
     )
 
 

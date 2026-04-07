@@ -101,7 +101,7 @@ class TestValidateWithSchema:
 
 class TestValidateJSONFormat:
     def test_json_output(self, tmp_path: Path) -> None:
-        """--format json outputs valid JSON."""
+        """--format json outputs valid JSON with QualityReport envelope."""
         project_dir = _write_schema(tmp_path)
 
         result = runner.invoke(
@@ -123,6 +123,11 @@ class TestValidateJSONFormat:
         assert "integrity" in parsed
         assert "checks" in parsed["integrity"]
         assert isinstance(parsed["integrity"]["checks"], list)
+        # QualityReport envelope keys
+        assert "version" in parsed
+        assert "metadata" in parsed
+        assert "fidelity" in parsed
+        assert "detection" in parsed
 
 
 class TestValidateSummary:
@@ -375,3 +380,213 @@ class TestValidateDetection:
         assert "overall_score" in parsed["detection"]
         assert "metrics" in parsed["detection"]
         assert isinstance(parsed["detection"]["metrics"], list)
+
+
+class TestValidateOutputCompact:
+    """Tests for --output and --compact CLI flags."""
+
+    def test_help_shows_output_and_compact(self) -> None:
+        """--help must list --output and --compact options."""
+        result = runner.invoke(app, ["validate", "--help"])
+        output = _strip_ansi(result.output)
+        assert result.exit_code == 0
+        assert "--output" in output
+        assert "--compact" in output
+
+    def test_output_without_json_format_errors(self, tmp_path: Path) -> None:
+        """--output requires --format json; without it, exit 1."""
+        project_dir = _write_schema(tmp_path)
+        schema_path = str(project_dir / ".dbsprout" / "schema.json")
+
+        result = runner.invoke(
+            app,
+            [
+                "validate",
+                "--schema-snapshot",
+                schema_path,
+                "--rows",
+                "3",
+                "--output",
+                str(tmp_path / "report.json"),
+            ],
+        )
+
+        assert result.exit_code == 1
+        output = _strip_ansi(result.output)
+        assert "requires --format json" in output.lower() or "requires --format json" in output
+
+    def test_compact_without_json_silently_ignored(self, tmp_path: Path) -> None:
+        """--compact without --format json is silently ignored (exit 0)."""
+        project_dir = _write_schema(tmp_path)
+        schema_path = str(project_dir / ".dbsprout" / "schema.json")
+
+        result = runner.invoke(
+            app,
+            [
+                "validate",
+                "--schema-snapshot",
+                schema_path,
+                "--rows",
+                "3",
+                "--compact",
+            ],
+        )
+
+        assert result.exit_code == 0
+
+
+class TestValidateJsonReport:
+    """Tests for QualityReport JSON envelope, ANSI leak fix, output/compact."""
+
+    def test_json_output_has_version_and_metadata(self, tmp_path: Path) -> None:
+        """JSON output must include version and metadata with expected sub-keys."""
+        project_dir = _write_schema(tmp_path)
+        schema_path = str(project_dir / ".dbsprout" / "schema.json")
+
+        result = runner.invoke(
+            app,
+            [
+                "validate",
+                "--format",
+                "json",
+                "--schema-snapshot",
+                schema_path,
+            ],
+        )
+
+        assert result.exit_code == 0
+        parsed = json.loads(result.output)
+        assert "version" in parsed
+        assert parsed["version"] == "1.0.0"
+        assert "metadata" in parsed
+        meta = parsed["metadata"]
+        for key in ("timestamp", "schema_hash", "row_counts", "engine", "seed"):
+            assert key in meta, f"Missing metadata key: {key}"
+        assert meta["engine"] == "heuristic"
+        assert meta["seed"] == 42
+
+    def test_json_output_fidelity_null_when_absent(self, tmp_path: Path) -> None:
+        """Fidelity must be null when --reference-data is not provided."""
+        project_dir = _write_schema(tmp_path)
+        schema_path = str(project_dir / ".dbsprout" / "schema.json")
+
+        result = runner.invoke(
+            app,
+            [
+                "validate",
+                "--format",
+                "json",
+                "--schema-snapshot",
+                schema_path,
+            ],
+        )
+
+        assert result.exit_code == 0
+        parsed = json.loads(result.output)
+        assert parsed["fidelity"] is None
+
+    def test_json_output_detection_null_when_absent(self, tmp_path: Path) -> None:
+        """Detection must be null when --detection is not provided."""
+        project_dir = _write_schema(tmp_path)
+        schema_path = str(project_dir / ".dbsprout" / "schema.json")
+
+        result = runner.invoke(
+            app,
+            [
+                "validate",
+                "--format",
+                "json",
+                "--schema-snapshot",
+                schema_path,
+            ],
+        )
+
+        assert result.exit_code == 0
+        parsed = json.loads(result.output)
+        assert parsed["detection"] is None
+
+    def test_json_compact_no_indent(self, tmp_path: Path) -> None:
+        """--compact must produce single-line JSON (no indented lines)."""
+        project_dir = _write_schema(tmp_path)
+        schema_path = str(project_dir / ".dbsprout" / "schema.json")
+
+        result = runner.invoke(
+            app,
+            [
+                "validate",
+                "--format",
+                "json",
+                "--compact",
+                "--schema-snapshot",
+                schema_path,
+            ],
+        )
+
+        assert result.exit_code == 0
+        assert "\n  " not in result.output
+
+    def test_json_output_to_file(self, tmp_path: Path) -> None:
+        """--output writes JSON to file; stdout must not contain JSON."""
+        project_dir = _write_schema(tmp_path)
+        schema_path = str(project_dir / ".dbsprout" / "schema.json")
+        report_path = tmp_path / "report.json"
+
+        result = runner.invoke(
+            app,
+            [
+                "validate",
+                "--format",
+                "json",
+                "--output",
+                str(report_path),
+                "--schema-snapshot",
+                schema_path,
+            ],
+        )
+
+        assert result.exit_code == 0
+        assert report_path.exists()
+        file_content = report_path.read_text(encoding="utf-8")
+        parsed = json.loads(file_content)
+        assert "version" in parsed
+        # JSON went to file, NOT stdout
+        assert "version" not in result.output
+
+    def test_json_output_to_unwritable_path(self, tmp_path: Path) -> None:
+        """--output to a non-existent directory must exit 1."""
+        project_dir = _write_schema(tmp_path)
+        schema_path = str(project_dir / ".dbsprout" / "schema.json")
+
+        result = runner.invoke(
+            app,
+            [
+                "validate",
+                "--format",
+                "json",
+                "--output",
+                "/nonexistent-dir-xyz/report.json",
+                "--schema-snapshot",
+                schema_path,
+            ],
+        )
+
+        assert result.exit_code == 1
+
+    def test_json_no_ansi_escape_codes(self, tmp_path: Path) -> None:
+        """JSON output must not contain ANSI escape sequences."""
+        project_dir = _write_schema(tmp_path)
+        schema_path = str(project_dir / ".dbsprout" / "schema.json")
+
+        result = runner.invoke(
+            app,
+            [
+                "validate",
+                "--format",
+                "json",
+                "--schema-snapshot",
+                schema_path,
+            ],
+        )
+
+        assert result.exit_code == 0
+        assert "\x1b[" not in result.output

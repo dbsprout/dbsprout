@@ -11,10 +11,10 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
-from dbsprout.schema.models import ColumnType
+from dbsprout.quality._types import NUMERIC_TYPES as _NUMERIC_TYPES
 
 if TYPE_CHECKING:
-    from dbsprout.schema.models import DatabaseSchema
+    from dbsprout.schema.models import ColumnType, DatabaseSchema
 
 try:
     from sklearn.linear_model import (  # type: ignore[import-not-found,import-untyped,unused-ignore]
@@ -36,16 +36,6 @@ except ImportError:
     StandardScaler = None  # type: ignore[assignment,misc,unused-ignore]
 
 _MAX_SUBSAMPLE = 10_000
-
-_NUMERIC_TYPES = frozenset(
-    {
-        ColumnType.INTEGER,
-        ColumnType.BIGINT,
-        ColumnType.SMALLINT,
-        ColumnType.FLOAT,
-        ColumnType.DECIMAL,
-    }
-)
 
 _MIN_ROWS_PER_CLASS = 10
 

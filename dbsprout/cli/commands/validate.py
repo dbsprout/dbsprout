@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import json
+import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -31,8 +31,15 @@ def validate_command(  # noqa: PLR0913
     engine: str = "heuristic",
     reference_data: Path | None = None,
     detection: bool = False,
+    output: Path | None = None,
+    compact: bool = False,
 ) -> None:
     """Validate integrity of generated seed data."""
+    # Validate --output requires --format json
+    if output is not None and output_format != "json":
+        console.print("[red]Error:[/red] --output requires --format json.")
+        raise typer.Exit(code=1)
+
     # Resolve schema
     snapshot_path = _resolve_schema_path(schema_snapshot)
     if snapshot_path is None or not snapshot_path.exists():
@@ -68,7 +75,17 @@ def validate_command(  # noqa: PLR0913
 
     # Output
     if output_format == "json":
-        _print_json(integrity_report, fidelity_report, detection_report)
+        _print_json(
+            integrity_report,
+            fidelity_report,
+            detection_report,
+            schema=schema,
+            tables_data=result.tables_data,
+            engine=engine,
+            seed=seed,
+            output=output,
+            compact=compact,
+        )
     else:
         _print_rich(integrity_report)
         if fidelity_report is not None:
@@ -237,59 +254,43 @@ def _print_fidelity_rich(report: FidelityReport) -> None:
     console.print(f"\nFidelity overall: {report.overall_score:.3f} {status}")
 
 
-def _print_json(
+def _print_json(  # noqa: PLR0913
     integrity_report: IntegrityReport,
     fidelity_report: FidelityReport | None = None,
     detection_report: DetectionReport | None = None,
+    *,
+    schema: DatabaseSchema | None = None,
+    tables_data: dict[str, list[dict[str, Any]]] | None = None,
+    engine: str = "heuristic",
+    seed: int = 42,
+    output: Path | None = None,
+    compact: bool = False,
 ) -> None:
-    """Print JSON output for CI integration."""
-    data: dict[str, Any] = {
-        "integrity": {
-            "passed": integrity_report.passed,
-            "checks": [
-                {
-                    "check": c.check,
-                    "table": c.table,
-                    "column": c.column,
-                    "passed": c.passed,
-                    "details": c.details,
-                }
-                for c in integrity_report.checks
-            ],
-        },
-    }
-    if fidelity_report is not None:
-        data["fidelity"] = {
-            "passed": fidelity_report.passed,
-            "overall_score": fidelity_report.overall_score,
-            "metrics": [
-                {
-                    "metric": m.metric,
-                    "table": m.table,
-                    "column": m.column,
-                    "score": m.score,
-                    "details": m.details,
-                }
-                for m in fidelity_report.metrics
-            ],
-        }
-    if detection_report is not None:
-        data["detection"] = {
-            "passed": detection_report.passed,
-            "overall_score": detection_report.overall_score,
-            "metrics": [
-                {
-                    "metric": m.metric,
-                    "table": m.table,
-                    "accuracy": m.accuracy,
-                    "details": m.details,
-                }
-                for m in detection_report.metrics
-            ],
-        }
-    data["passed"] = (
-        integrity_report.passed
-        and (fidelity_report.passed if fidelity_report else True)
-        and (detection_report.passed if detection_report else True)
+    """Serialize QualityReport as JSON and write to stdout or file."""
+    from dbsprout.quality.report import QualityReport  # noqa: PLC0415
+
+    row_counts = {t: len(rows) for t, rows in (tables_data or {}).items()}
+    schema_hash = schema.schema_hash() if schema else ""
+
+    report = QualityReport.from_reports(
+        integrity=integrity_report,
+        schema_hash=schema_hash,
+        row_counts=row_counts,
+        engine=engine,
+        seed=seed,
+        fidelity=fidelity_report,
+        detection=detection_report,
     )
-    console.print(json.dumps(data, indent=2))
+
+    json_str = report.model_dump_json() if compact else report.model_dump_json(indent=2)
+
+    if output is not None:
+        try:
+            output.write_text(json_str + "\n", encoding="utf-8")
+            typer.echo(f"Report written to {output}", err=True)
+        except OSError as exc:
+            console.print(f"[red]Error:[/red] Cannot write to {output}: {exc}")
+            raise typer.Exit(code=1) from exc
+    else:
+        sys.stdout.write(json_str + "\n")
+        sys.stdout.flush()
