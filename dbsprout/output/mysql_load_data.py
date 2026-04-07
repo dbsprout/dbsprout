@@ -138,7 +138,7 @@ class MysqlLoadDataWriter:
 
         Returns an InsertResult with counts and duration.
         """
-        from dbsprout.output.pg_copy import InsertResult  # noqa: PLC0415
+        from dbsprout.output.models import InsertResult  # noqa: PLC0415
 
         if pymysql is None:
             msg = (

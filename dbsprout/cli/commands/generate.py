@@ -14,6 +14,7 @@ from dbsprout.generate.orchestrator import GenerateResult, orchestrate
 from dbsprout.schema.models import DatabaseSchema
 
 if TYPE_CHECKING:
+    from dbsprout.output.models import InsertResult
     from dbsprout.quality.integrity import IntegrityReport
 
 console = Console()
@@ -31,8 +32,18 @@ def generate_command(  # noqa: PLR0913
     privacy: str = "local",  # noqa: ARG001
     target_db: str | None = None,
     upsert: bool = False,
+    insert_method: str = "auto",
 ) -> None:
     """Generate seed data from a schema snapshot."""
+    # Validate insert_method
+    valid_methods = {"auto", "copy", "load_data", "batch"}
+    if insert_method not in valid_methods:
+        console.print(
+            f"[red]Error:[/red] Invalid --insert-method: {insert_method}. "
+            f"Use: {', '.join(sorted(valid_methods))}"
+        )
+        raise typer.Exit(code=1)
+
     # Load schema
     snapshot_path = _resolve_schema_path(schema_snapshot)
     if snapshot_path is None or not snapshot_path.exists():
@@ -64,6 +75,7 @@ def generate_command(  # noqa: PLR0913
         dialect,
         target_db,
         upsert,
+        insert_method,
     )
 
     # Validate integrity
@@ -99,6 +111,7 @@ def _write_output(  # noqa: PLR0913
     dialect: str,
     target_db: str | None = None,
     upsert: bool = False,
+    insert_method: str = "auto",
 ) -> None:
     """Write generated data using the selected output writer."""
     if output_format == "sql":
@@ -134,7 +147,7 @@ def _write_output(  # noqa: PLR0913
         if not target_db:
             console.print("[red]Error:[/red] --db is required when using --output-format direct")
             raise typer.Exit(code=1)
-        _run_direct_insert(result, schema, insertion_order, target_db)
+        _run_direct_insert(result, schema, insertion_order, target_db, insert_method)
     else:
         console.print(f"[red]Error:[/red] Unknown output format: {output_format}")
         raise typer.Exit(code=1)
@@ -166,6 +179,10 @@ def _detect_direct_dialect(url: str) -> str:
         return "postgresql"
     if lower.startswith("mysql"):
         return "mysql"
+    if lower.startswith("sqlite"):
+        return "sqlite"
+    if lower.startswith("mssql"):
+        return "mssql"
     return lower.split("://")[0].split("+")[0] if "://" in lower else "unknown"
 
 
@@ -174,27 +191,107 @@ def _run_direct_insert(
     schema: DatabaseSchema,
     insertion_order: list[str],
     target_db: str,
+    insert_method: str = "auto",
 ) -> None:
-    """Dispatch direct insertion to the appropriate dialect writer."""
-    from dbsprout.output.pg_copy import InsertResult  # noqa: PLC0415
+    """Dispatch direct insertion to the appropriate dialect writer.
 
+    Parameters
+    ----------
+    result:
+        Generated data from the orchestrator.
+    schema:
+        Unified database schema.
+    insertion_order:
+        Table names in FK-safe insertion order.
+    target_db:
+        SQLAlchemy connection URL.
+    insert_method:
+        One of ``"auto"``, ``"copy"``, ``"load_data"``, ``"batch"``.
+        ``"auto"`` selects the fastest available writer for the dialect.
+    """
     dialect = _detect_direct_dialect(target_db)
 
-    insert_result: InsertResult
-    if dialect == "postgresql":
-        from dbsprout.output.pg_copy import PgCopyWriter  # noqa: PLC0415
-
-        insert_result = PgCopyWriter().write(result.tables_data, schema, insertion_order, target_db)
-    elif dialect == "mysql":
-        from dbsprout.output.mysql_load_data import MysqlLoadDataWriter  # noqa: PLC0415
-
-        insert_result = MysqlLoadDataWriter().write(
-            result.tables_data, schema, insertion_order, target_db
-        )
-    else:
-        console.print(f"[red]Error:[/red] Direct insertion not supported for dialect: {dialect}")
+    # Validate method/dialect compatibility
+    if insert_method == "copy" and dialect != "postgresql":
+        console.print("[red]Error:[/red] --insert-method copy is only available for PostgreSQL.")
+        raise typer.Exit(code=1)
+    if insert_method == "load_data" and dialect != "mysql":
+        console.print("[red]Error:[/red] --insert-method load_data is only available for MySQL.")
         raise typer.Exit(code=1)
 
+    method_name: str
+    insert_result: InsertResult
+
+    if insert_method == "batch":
+        from dbsprout.output.sa_batch import SaBatchWriter  # noqa: PLC0415
+
+        method_name = f"SQLAlchemy batch INSERT ({dialect})"
+        insert_result = SaBatchWriter().write(
+            result.tables_data, schema, insertion_order, target_db
+        )
+
+    elif insert_method == "copy" or (insert_method == "auto" and dialect == "postgresql"):
+        try:
+            import psycopg  # noqa: F401, PLC0415
+
+            from dbsprout.output.pg_copy import PgCopyWriter  # noqa: PLC0415
+
+            method_name = (
+                "PostgreSQL COPY (auto-detected)"
+                if insert_method == "auto"
+                else "PostgreSQL COPY (user-selected)"
+            )
+            insert_result = PgCopyWriter().write(
+                result.tables_data, schema, insertion_order, target_db
+            )
+        except ImportError:
+            console.print(
+                "[yellow]Warning:[/yellow] psycopg not installed, falling back to batch INSERT."
+            )
+            from dbsprout.output.sa_batch import SaBatchWriter  # noqa: PLC0415
+
+            method_name = "SQLAlchemy batch INSERT (fallback)"
+            insert_result = SaBatchWriter().write(
+                result.tables_data, schema, insertion_order, target_db
+            )
+
+    elif insert_method == "load_data" or (insert_method == "auto" and dialect == "mysql"):
+        try:
+            import pymysql  # type: ignore[import-untyped]  # noqa: F401, PLC0415
+
+            from dbsprout.output.mysql_load_data import (  # noqa: PLC0415
+                MysqlLoadDataWriter,
+            )
+
+            method_name = (
+                "MySQL LOAD DATA (auto-detected)"
+                if insert_method == "auto"
+                else "MySQL LOAD DATA (user-selected)"
+            )
+            insert_result = MysqlLoadDataWriter().write(
+                result.tables_data, schema, insertion_order, target_db
+            )
+        except ImportError:
+            console.print(
+                "[yellow]Warning:[/yellow] pymysql not installed, falling back to batch INSERT."
+            )
+            from dbsprout.output.sa_batch import SaBatchWriter  # noqa: PLC0415
+
+            method_name = "SQLAlchemy batch INSERT (fallback)"
+            insert_result = SaBatchWriter().write(
+                result.tables_data, schema, insertion_order, target_db
+            )
+
+    else:
+        # sqlite, mssql, unknown -- all use SaBatchWriter
+        from dbsprout.output.sa_batch import SaBatchWriter  # noqa: PLC0415
+
+        method_name = f"SQLAlchemy batch INSERT ({dialect})"
+        insert_result = SaBatchWriter().write(
+            result.tables_data, schema, insertion_order, target_db
+        )
+
+    console.print(f"[blue]Insert method:[/blue] {method_name}")
     console.print(
         f"[green]Inserted {insert_result.total_rows} rows "
         f"into {insert_result.tables_inserted} tables "

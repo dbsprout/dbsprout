@@ -10,12 +10,12 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from dbsprout.output.models import InsertResult
 from dbsprout.output.mysql_load_data import (
     MysqlLoadDataWriter,
     build_load_data_content,
     format_load_data_value,
 )
-from dbsprout.output.pg_copy import InsertResult
 from dbsprout.schema.models import ColumnSchema, ColumnType, DatabaseSchema, TableSchema
 
 # ── format_load_data_value ───────────────────────────────────────────

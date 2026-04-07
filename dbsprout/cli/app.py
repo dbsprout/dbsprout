@@ -59,6 +59,11 @@ def generate_proxy(  # noqa: PLR0913
     privacy: str = typer.Option("local", "--privacy"),
     db: str | None = typer.Option(None, "--db", help="Target database URL for direct insertion."),
     upsert: bool = typer.Option(False, "--upsert", help="Generate UPSERT (insert-or-update) SQL."),
+    insert_method: str = typer.Option(
+        "auto",
+        "--insert-method",
+        help="Insertion method for direct output: auto, copy, load_data, batch.",
+    ),
 ) -> None:
     """Generate seed data from a schema snapshot."""
     from pathlib import Path  # noqa: PLC0415
@@ -77,6 +82,7 @@ def generate_proxy(  # noqa: PLR0913
         privacy=privacy,
         target_db=db,
         upsert=upsert,
+        insert_method=insert_method,
     )
 
 
