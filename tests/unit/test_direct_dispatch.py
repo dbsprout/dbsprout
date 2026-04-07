@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import inspect
+import re
 from io import StringIO
 from unittest.mock import MagicMock, patch
 
@@ -213,7 +214,9 @@ class TestInsertMethodCLI:
     def test_generate_help_shows_insert_method(self) -> None:
         runner = CliRunner()
         result = runner.invoke(app, ["generate", "--help"])
-        assert "--insert-method" in result.output
+        # Strip ANSI codes before assertion (CI terminal wrapping may split the option)
+        clean = re.sub(r"\x1b\[[0-9;]*m", "", result.output)
+        assert "--insert-method" in clean
 
     def test_generate_command_has_insert_method_param(self) -> None:
         sig = inspect.signature(generate_command)
