@@ -17,7 +17,7 @@ app = typer.Typer(
 
 @app.command(name="init")
 def init_proxy(  # noqa: PLR0913
-    db: str | None = typer.Option(None, "--db", help="Database URL."),
+    db: str | None = typer.Option(None, "--db", help="Database URL.", envvar="DBSPROUT_TARGET_DB"),
     file: str | None = typer.Option(None, "--file", help="DDL file."),
     django: bool = typer.Option(False, "--django", help="Introspect Django models."),
     django_apps: str | None = typer.Option(
@@ -57,7 +57,9 @@ def generate_proxy(  # noqa: PLR0913
     dialect: str = typer.Option("postgresql", "--dialect", "-d"),
     engine: str = typer.Option("heuristic", "--engine", "-e"),
     privacy: str = typer.Option("local", "--privacy"),
-    db: str | None = typer.Option(None, "--db", help="Target database URL for direct insertion."),
+    db: str | None = typer.Option(
+        None, "--db", help="Target database URL for direct insertion.", envvar="DBSPROUT_TARGET_DB"
+    ),
     upsert: bool = typer.Option(False, "--upsert", help="Generate UPSERT (insert-or-update) SQL."),
     insert_method: str = typer.Option(
         "auto",
