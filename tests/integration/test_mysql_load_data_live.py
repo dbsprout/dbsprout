@@ -1,6 +1,6 @@
 """Integration tests for MySQL LOAD DATA direct insertion.
 
-Requires Docker with MySQL. Auto-skips when Docker unavailable.
+Requires Docker with MySQL and pymysql. Auto-skips when either unavailable.
 """
 
 from __future__ import annotations
@@ -12,6 +12,8 @@ import time
 from typing import Any
 
 import pytest
+
+pytest.importorskip("pymysql", reason="pymysql not installed (pip install dbsprout[db])")
 
 from dbsprout.output.mysql_load_data import MysqlLoadDataWriter, _parse_mysql_url
 from dbsprout.schema.models import (

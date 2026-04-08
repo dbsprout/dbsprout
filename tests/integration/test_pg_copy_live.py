@@ -1,6 +1,6 @@
 """Integration tests for PostgreSQL COPY direct insertion.
 
-Requires Docker with PostgreSQL. Auto-skips when Docker unavailable.
+Requires Docker with PostgreSQL and psycopg3. Auto-skips when either unavailable.
 """
 
 from __future__ import annotations
@@ -11,15 +11,17 @@ from typing import Any
 
 import pytest
 
-from dbsprout.output.pg_copy import PgCopyWriter
-from dbsprout.schema.models import (
+psycopg = pytest.importorskip("psycopg", reason="psycopg3 not installed (pip install dbsprout[pg])")
+
+from dbsprout.output.pg_copy import PgCopyWriter  # noqa: E402
+from dbsprout.schema.models import (  # noqa: E402
     ColumnSchema,
     ColumnType,
     DatabaseSchema,
     TableSchema,
 )
 
-from .conftest import create_pg_tables, drop_pg_tables
+from .conftest import create_pg_tables, drop_pg_tables  # noqa: E402
 
 
 @pytest.mark.integration
