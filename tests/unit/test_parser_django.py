@@ -237,7 +237,7 @@ class TestFKMapping:
     def test_fk_on_delete_set_null(self) -> None:
         field = _mock_fk_field(on_delete_name="SET_NULL")
         fk = _fk_to_foreign_key(field)
-        assert fk.on_delete == "SET_NULL"
+        assert fk.on_delete == "SET NULL"
 
     def test_one_to_one_produces_unique_column(self) -> None:
         field = _mock_fk_field(

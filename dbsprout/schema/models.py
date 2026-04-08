@@ -9,10 +9,50 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from enum import Enum
-from typing import Any
+from typing import Annotated, Any
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import AfterValidator, BaseModel, BeforeValidator, ConfigDict, Field
+
+
+def _validate_identifier(v: str) -> str:
+    """Validate a SQL identifier name."""
+    if re.search(r"[\x00-\x1f\x7f]", v):
+        raise ValueError("Identifier must not contain control characters")
+    v = v.strip()
+    if not v:
+        raise ValueError("Identifier must not be empty")
+    if len(v) > 128:
+        raise ValueError(f"Identifier must be ≤128 chars, got {len(v)}")
+    return v
+
+
+Identifier = Annotated[str, AfterValidator(_validate_identifier)]
+
+_VALID_REFERENTIAL_ACTIONS = frozenset(
+    {"CASCADE", "SET NULL", "SET DEFAULT", "RESTRICT", "NO ACTION"}
+)
+
+
+def _normalize_referential_action(v: str | None) -> str | None:
+    """Normalize and validate a SQL referential action."""
+    if v is None:
+        return None
+    v = v.upper()
+    if v not in _VALID_REFERENTIAL_ACTIONS:
+        raise ValueError(
+            f"Invalid referential action {v!r}; must be one of {sorted(_VALID_REFERENTIAL_ACTIONS)}"
+        )
+    return v
+
+
+ReferentialAction = Annotated[str | None, BeforeValidator(_normalize_referential_action)]
+
+
+def _quote_ident(name: str) -> str:
+    """Double-quote a SQL identifier, escaping internal double quotes."""
+    return '"' + name.replace('"', '""') + '"'
 
 
 class ColumnType(str, Enum):
@@ -43,7 +83,7 @@ class ColumnSchema(BaseModel):
 
     model_config = ConfigDict(frozen=True)
 
-    name: str
+    name: Identifier
     data_type: ColumnType
     raw_type: str = ""
     nullable: bool = True
@@ -68,8 +108,8 @@ class ForeignKeySchema(BaseModel):
     columns: list[str]
     ref_table: str
     ref_columns: list[str]
-    on_delete: str | None = None
-    on_update: str | None = None
+    on_delete: ReferentialAction = None
+    on_update: ReferentialAction = None
     deferrable: bool = False
     initially: str | None = None
 
@@ -89,7 +129,7 @@ class TableSchema(BaseModel):
 
     model_config = ConfigDict(frozen=True)
 
-    name: str
+    name: Identifier
     columns: list[ColumnSchema]
     primary_key: list[str] = Field(default_factory=list)
     foreign_keys: list[ForeignKeySchema] = Field(default_factory=list)
@@ -237,7 +277,7 @@ class DatabaseSchema(BaseModel):
         single_pk = len(table.primary_key) == 1
 
         for col in table.columns:
-            parts: list[str] = [f"    {col.name}"]
+            parts: list[str] = [f"    {_quote_ident(col.name)}"]
             parts.append(DatabaseSchema._col_type_ddl(col))
             if not col.nullable:
                 parts.append("NOT NULL")
@@ -254,13 +294,14 @@ class DatabaseSchema(BaseModel):
             lines.append(" ".join(parts))
 
         if len(table.primary_key) > 1:
-            pk_cols = ", ".join(table.primary_key)
+            pk_cols = ", ".join(_quote_ident(c) for c in table.primary_key)
             lines.append(f"    PRIMARY KEY ({pk_cols})")
 
         for fk in table.foreign_keys:
-            fk_cols = ", ".join(fk.columns)
-            ref_cols = ", ".join(fk.ref_columns)
-            fk_line = f"    FOREIGN KEY ({fk_cols}) REFERENCES {fk.ref_table} ({ref_cols})"
+            fk_cols = ", ".join(_quote_ident(c) for c in fk.columns)
+            ref_cols = ", ".join(_quote_ident(c) for c in fk.ref_columns)
+            ref_table = _quote_ident(fk.ref_table)
+            fk_line = f"    FOREIGN KEY ({fk_cols}) REFERENCES {ref_table} ({ref_cols})"
             if fk.on_delete is not None:
                 fk_line += f" ON DELETE {fk.on_delete}"
             if fk.on_update is not None:
@@ -268,7 +309,7 @@ class DatabaseSchema(BaseModel):
             lines.append(fk_line)
 
         body = ",\n".join(lines)
-        return f"CREATE TABLE {table.name} (\n{body}\n);"
+        return f"CREATE TABLE {_quote_ident(table.name)} (\n{body}\n);"
 
     @staticmethod
     def _col_type_ddl(col: ColumnSchema) -> str:
