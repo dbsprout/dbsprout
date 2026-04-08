@@ -96,13 +96,24 @@ def _fk_column_type(field: Any) -> ColumnType:
     return _DJANGO_TYPE_MAP.get(ref_internal, ColumnType.INTEGER)
 
 
+_DJANGO_ON_DELETE_MAP: dict[str, str] = {
+    "CASCADE": "CASCADE",
+    "SET_NULL": "SET NULL",
+    "SET_DEFAULT": "SET DEFAULT",
+    "PROTECT": "RESTRICT",
+    "RESTRICT": "RESTRICT",
+    "DO_NOTHING": "NO ACTION",
+}
+
+
 def _fk_to_foreign_key(field: Any) -> ForeignKeySchema:
     """Convert a Django ForeignKey / OneToOneField to a ForeignKeySchema."""
     ref_table: str = field.related_model._meta.db_table
     ref_column: str = field.related_model._meta.pk.column
-    on_delete: str = getattr(
+    raw_action: str = getattr(
         field.remote_field.on_delete, "__name__", str(field.remote_field.on_delete)
     )
+    on_delete: str | None = _DJANGO_ON_DELETE_MAP.get(raw_action)
 
     return ForeignKeySchema(
         columns=[field.column],

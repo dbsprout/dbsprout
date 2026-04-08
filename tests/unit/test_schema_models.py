@@ -570,7 +570,7 @@ def test_to_ddl_composite_pk() -> None:
         ]
     )
     ddl = db.to_ddl()
-    assert "PRIMARY KEY (user_id, role_id)" in ddl
+    assert 'PRIMARY KEY ("user_id", "role_id")' in ddl
 
 
 def test_to_ddl_fk_on_update() -> None:
@@ -682,3 +682,253 @@ def test_to_ddl_with_dialect_param() -> None:
     db = DatabaseSchema(tables=[TableSchema(name="t", columns=[_make_col("id")])])
     ddl = db.to_ddl(dialect="postgresql")
     assert "CREATE TABLE" in ddl
+
+
+# ── Identifier validation ───────────────────────────────────────────────
+
+
+class TestIdentifierValidation:
+    """AC: ColumnSchema.name and TableSchema.name validated."""
+
+    def test_column_name_empty_rejected(self) -> None:
+        with pytest.raises(ValidationError):
+            ColumnSchema(name="", data_type=ColumnType.INTEGER)
+
+    def test_column_name_whitespace_only_rejected(self) -> None:
+        with pytest.raises(ValidationError):
+            ColumnSchema(name="   ", data_type=ColumnType.INTEGER)
+
+    def test_column_name_control_char_null_rejected(self) -> None:
+        with pytest.raises(ValidationError):
+            ColumnSchema(name="id\x00", data_type=ColumnType.INTEGER)
+
+    def test_column_name_control_char_newline_rejected(self) -> None:
+        with pytest.raises(ValidationError):
+            ColumnSchema(name="id\n", data_type=ColumnType.INTEGER)
+
+    def test_column_name_control_char_tab_rejected(self) -> None:
+        with pytest.raises(ValidationError):
+            ColumnSchema(name="id\t", data_type=ColumnType.INTEGER)
+
+    def test_column_name_too_long_rejected(self) -> None:
+        with pytest.raises(ValidationError):
+            ColumnSchema(name="x" * 129, data_type=ColumnType.INTEGER)
+
+    def test_column_name_128_chars_accepted(self) -> None:
+        col = ColumnSchema(name="x" * 128, data_type=ColumnType.INTEGER)
+        assert len(col.name) == 128
+
+    @pytest.mark.parametrize(
+        "name",
+        ["id", "user_name", "名前", "my column", "my.column", "order", "col-1"],
+    )
+    def test_column_name_valid_cases(self, name: str) -> None:
+        col = ColumnSchema(name=name, data_type=ColumnType.INTEGER)
+        assert col.name == name
+
+    def test_column_name_whitespace_stripped(self) -> None:
+        col = ColumnSchema(name="  id  ", data_type=ColumnType.INTEGER)
+        assert col.name == "id"
+
+    def test_table_name_empty_rejected(self) -> None:
+        with pytest.raises(ValidationError):
+            TableSchema(name="", columns=[_make_col("id")])
+
+    def test_table_name_control_chars_rejected(self) -> None:
+        with pytest.raises(ValidationError):
+            TableSchema(name="t\x00", columns=[_make_col("id")])
+
+
+# ── Referential action validation ───────────────────────────────────────
+
+
+class TestReferentialAction:
+    """AC: on_delete/on_update constrained to valid SQL referential actions."""
+
+    @pytest.mark.parametrize(
+        "action",
+        ["CASCADE", "SET NULL", "SET DEFAULT", "RESTRICT", "NO ACTION"],
+    )
+    def test_on_delete_valid_values(self, action: str) -> None:
+        fk = ForeignKeySchema(columns=["a"], ref_table="t", ref_columns=["b"], on_delete=action)
+        assert fk.on_delete == action
+
+    def test_on_delete_none_accepted(self) -> None:
+        fk = ForeignKeySchema(columns=["a"], ref_table="t", ref_columns=["b"])
+        assert fk.on_delete is None
+
+    def test_on_delete_invalid_rejected(self) -> None:
+        with pytest.raises(ValidationError):
+            ForeignKeySchema(columns=["a"], ref_table="t", ref_columns=["b"], on_delete="MAGIC")
+
+    def test_on_delete_case_insensitive(self) -> None:
+        fk = ForeignKeySchema(columns=["a"], ref_table="t", ref_columns=["b"], on_delete="cascade")
+        assert fk.on_delete == "CASCADE"
+
+    @pytest.mark.parametrize(
+        "action",
+        ["CASCADE", "SET NULL", "SET DEFAULT", "RESTRICT", "NO ACTION"],
+    )
+    def test_on_update_valid_values(self, action: str) -> None:
+        fk = ForeignKeySchema(columns=["a"], ref_table="t", ref_columns=["b"], on_update=action)
+        assert fk.on_update == action
+
+    def test_on_update_invalid_rejected(self) -> None:
+        with pytest.raises(ValidationError):
+            ForeignKeySchema(columns=["a"], ref_table="t", ref_columns=["b"], on_update="INVALID")
+
+
+# ── DDL identifier quoting ──────────────────────────────────────────────
+
+
+class TestDDLQuoting:
+    """AC: to_ddl() double-quotes all identifiers."""
+
+    def test_table_name_quoted(self) -> None:
+        db = DatabaseSchema(tables=[TableSchema(name="users", columns=[_make_col("id")])])
+        assert 'CREATE TABLE "users"' in db.to_ddl()
+
+    def test_column_name_quoted(self) -> None:
+        db = DatabaseSchema(
+            tables=[
+                TableSchema(
+                    name="t",
+                    columns=[
+                        _make_col("id"),
+                        _make_col("email", ColumnType.VARCHAR),
+                    ],
+                )
+            ]
+        )
+        ddl = db.to_ddl()
+        assert '"id"' in ddl
+        assert '"email"' in ddl
+
+    def test_composite_pk_columns_quoted(self) -> None:
+        db = DatabaseSchema(
+            tables=[
+                TableSchema(
+                    name="t",
+                    columns=[_make_col("a"), _make_col("b")],
+                    primary_key=["a", "b"],
+                )
+            ]
+        )
+        assert 'PRIMARY KEY ("a", "b")' in db.to_ddl()
+
+    def test_fk_columns_quoted(self) -> None:
+        db = DatabaseSchema(
+            tables=[
+                TableSchema(
+                    name="t",
+                    columns=[_make_col("user_id")],
+                    foreign_keys=[_make_fk(["user_id"], "users", ["id"])],
+                )
+            ]
+        )
+        ddl = db.to_ddl()
+        assert 'FOREIGN KEY ("user_id")' in ddl
+        assert 'REFERENCES "users" ("id")' in ddl
+
+    def test_internal_double_quote_escaped(self) -> None:
+        db = DatabaseSchema(
+            tables=[
+                TableSchema(
+                    name='table"name',
+                    columns=[_make_col('col"umn')],
+                )
+            ]
+        )
+        ddl = db.to_ddl()
+        assert '"table""name"' in ddl
+        assert '"col""umn"' in ddl
+
+    def test_reserved_word_name_quoted(self) -> None:
+        db = DatabaseSchema(tables=[TableSchema(name="order", columns=[_make_col("select")])])
+        ddl = db.to_ddl()
+        assert 'CREATE TABLE "order"' in ddl
+        assert '"select"' in ddl
+
+
+# ── Adversarial input tests ─────────────────────────────────────────────
+
+
+class TestAdversarialInput:
+    """AC: adversarial input test cases for name fields, check_constraint, default."""
+
+    def test_control_char_null_byte_rejected(self) -> None:
+        with pytest.raises(ValidationError):
+            ColumnSchema(name="id\x00", data_type=ColumnType.INTEGER)
+
+    def test_control_char_newline_rejected(self) -> None:
+        with pytest.raises(ValidationError):
+            ColumnSchema(name="id\n", data_type=ColumnType.INTEGER)
+
+    def test_control_char_tab_rejected(self) -> None:
+        with pytest.raises(ValidationError):
+            ColumnSchema(name="id\t", data_type=ColumnType.INTEGER)
+
+    def test_control_char_del_rejected(self) -> None:
+        with pytest.raises(ValidationError):
+            ColumnSchema(name="id\x7f", data_type=ColumnType.INTEGER)
+
+    def test_adversarial_name_accepted_and_quoted_in_ddl(self) -> None:
+        """SQL injection payload is allowed as a name but safely quoted in DDL."""
+        name = "'; DROP TABLE x; --"
+        col = ColumnSchema(name=name, data_type=ColumnType.INTEGER)
+        assert col.name == name
+        db = DatabaseSchema(tables=[TableSchema(name="safe", columns=[col])])
+        ddl = db.to_ddl()
+        assert '"\'; DROP TABLE x; --"' in ddl
+
+    def test_name_with_embedded_quotes_escaped_in_ddl(self) -> None:
+        db = DatabaseSchema(
+            tables=[
+                TableSchema(
+                    name='tab"le',
+                    columns=[_make_col('col"umn')],
+                )
+            ]
+        )
+        ddl = db.to_ddl()
+        assert '"tab""le"' in ddl
+        assert '"col""umn"' in ddl
+
+    def test_check_constraint_passthrough(self) -> None:
+        """check_constraint is trusted input — passes through without validation."""
+        col = ColumnSchema(
+            name="x",
+            data_type=ColumnType.INTEGER,
+            check_constraint="1=1) OR (1=1",
+        )
+        assert col.check_constraint == "1=1) OR (1=1"
+
+    def test_default_passthrough(self) -> None:
+        """default is trusted input — passes through without validation."""
+        col = ColumnSchema(
+            name="x",
+            data_type=ColumnType.INTEGER,
+            default="'; DROP TABLE x; --",
+        )
+        assert col.default == "'; DROP TABLE x; --"
+
+    def test_empty_name_after_strip_rejected(self) -> None:
+        with pytest.raises(ValidationError):
+            ColumnSchema(name="   ", data_type=ColumnType.INTEGER)
+
+    def test_max_length_boundary_129_rejected(self) -> None:
+        with pytest.raises(ValidationError):
+            ColumnSchema(name="x" * 129, data_type=ColumnType.INTEGER)
+
+    def test_max_length_boundary_128_accepted(self) -> None:
+        col = ColumnSchema(name="y" * 128, data_type=ColumnType.INTEGER)
+        assert len(col.name) == 128
+
+    def test_invalid_referential_action_rejected(self) -> None:
+        with pytest.raises(ValidationError):
+            ForeignKeySchema(
+                columns=["a"],
+                ref_table="t",
+                ref_columns=["b"],
+                on_delete="DROP TABLE users",
+            )
