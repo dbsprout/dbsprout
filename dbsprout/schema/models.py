@@ -15,10 +15,12 @@ from typing import Annotated, Any
 
 from pydantic import AfterValidator, BaseModel, BeforeValidator, ConfigDict, Field
 
+_CONTROL_CHAR_RE = re.compile(r"[\x00-\x1f\x7f]")
+
 
 def _validate_identifier(v: str) -> str:
     """Validate a SQL identifier name."""
-    if re.search(r"[\x00-\x1f\x7f]", v):
+    if _CONTROL_CHAR_RE.search(v):
         raise ValueError("Identifier must not contain control characters")
     v = v.strip()
     if not v:

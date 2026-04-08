@@ -726,6 +726,10 @@ class TestIdentifierValidation:
         col = ColumnSchema(name=name, data_type=ColumnType.INTEGER)
         assert col.name == name
 
+    def test_column_name_whitespace_stripped(self) -> None:
+        col = ColumnSchema(name="  id  ", data_type=ColumnType.INTEGER)
+        assert col.name == "id"
+
     def test_table_name_empty_rejected(self) -> None:
         with pytest.raises(ValidationError):
             TableSchema(name="", columns=[_make_col("id")])
