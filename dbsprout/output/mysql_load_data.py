@@ -128,6 +128,12 @@ _LOCAL_INFILE_ERROR_CODES = frozenset({1148, 3948})
 
 def _is_local_infile_error(exc: Exception) -> bool:
     """Check if an exception is a MySQL local_infile disabled error."""
+    if pymysql is not None:
+        try:
+            if not isinstance(exc, pymysql.err.OperationalError):
+                return False
+        except TypeError:
+            pass  # pymysql may be mocked in tests
     if not (hasattr(exc, "args") and exc.args and isinstance(exc.args[0], int)):
         return False
     return exc.args[0] in _LOCAL_INFILE_ERROR_CODES
