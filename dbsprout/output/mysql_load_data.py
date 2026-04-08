@@ -123,6 +123,16 @@ def _cleanup_temp_files(paths: list[str]) -> None:
             os.unlink(f)
 
 
+_LOCAL_INFILE_ERROR_CODES = frozenset({1148, 3948})
+
+
+def _is_local_infile_error(exc: Exception) -> bool:
+    """Check if an exception is a MySQL local_infile disabled error."""
+    if not (hasattr(exc, "args") and exc.args and isinstance(exc.args[0], int)):
+        return False
+    return exc.args[0] in _LOCAL_INFILE_ERROR_CODES
+
+
 class MysqlLoadDataWriter:
     """Write generated data directly to MySQL via LOAD DATA LOCAL INFILE."""
 
@@ -175,6 +185,14 @@ class MysqlLoadDataWriter:
                     raise
                 except Exception as exc:
                     conn.rollback()
+                    if _is_local_infile_error(exc):
+                        msg = (
+                            "MySQL LOAD DATA LOCAL INFILE is disabled. "
+                            "Enable local_infile on the server with: "
+                            "SET GLOBAL local_infile = 1; "
+                            "and ensure the client connection uses local_infile=True."
+                        )
+                        raise RuntimeError(msg) from exc
                     msg = (
                         f"MySQL insertion failed: {type(exc).__name__}. "
                         "Verify the --db URL and ensure the server is reachable."

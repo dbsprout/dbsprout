@@ -53,6 +53,7 @@ dev = [
     "pre-commit>=4.0",
     "sqlalchemy>=2.0",
     "types-networkx>=3.0",
+    "testcontainers[postgres,mysql]>=4.0",
 ]
 db = [
     "sqlalchemy>=2.0",

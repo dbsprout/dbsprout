@@ -359,3 +359,74 @@ def _make_mock_pymysql(conn: MagicMock) -> MagicMock:
     mod = MagicMock()
     mod.connect.return_value = conn
     return mod
+
+
+# ── local_infile error detection ────────────────────────────────────────
+
+
+class TestLocalInfileErrorDetection:
+    """AC: Detect MySQL local_infile disabled error with specific message."""
+
+    def test_local_infile_error_1148_detected(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Error 1148 (LOAD DATA not allowed) produces helpful message."""
+        mock_conn = _make_mock_conn()
+        mock_pymysql = _make_mock_pymysql(mock_conn)
+
+        op_error = type("OperationalError", (Exception,), {})
+        mock_pymysql.err.OperationalError = op_error
+
+        call_count = 0
+
+        def execute_side_effect(sql: str) -> None:
+            nonlocal call_count
+            call_count += 1
+            if "LOAD DATA" in sql:
+                raise op_error(1148, "The used command is not allowed")
+
+        mock_conn.cursor.return_value.execute = execute_side_effect
+        monkeypatch.setattr("dbsprout.output.mysql_load_data.pymysql", mock_pymysql)
+
+        with pytest.raises(RuntimeError, match="local_infile"):
+            MysqlLoadDataWriter().write(
+                _simple_data(), _simple_schema(), ["users"], "mysql://localhost/test"
+            )
+
+    def test_local_infile_error_3948_detected(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Error 3948 (loading local data disabled) produces helpful message."""
+        mock_conn = _make_mock_conn()
+        mock_pymysql = _make_mock_pymysql(mock_conn)
+
+        op_error = type("OperationalError", (Exception,), {})
+        mock_pymysql.err.OperationalError = op_error
+
+        def execute_side_effect(sql: str) -> None:
+            if "LOAD DATA" in sql:
+                raise op_error(3948, "Loading local data is disabled")
+
+        mock_conn.cursor.return_value.execute = execute_side_effect
+        monkeypatch.setattr("dbsprout.output.mysql_load_data.pymysql", mock_pymysql)
+
+        with pytest.raises(RuntimeError, match="local_infile"):
+            MysqlLoadDataWriter().write(
+                _simple_data(), _simple_schema(), ["users"], "mysql://localhost/test"
+            )
+
+    def test_other_operational_error_not_masked(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Non-local_infile OperationalErrors propagate as generic RuntimeError."""
+        mock_conn = _make_mock_conn()
+        mock_pymysql = _make_mock_pymysql(mock_conn)
+
+        op_error = type("OperationalError", (Exception,), {})
+        mock_pymysql.err.OperationalError = op_error
+
+        def execute_side_effect(sql: str) -> None:
+            if "LOAD DATA" in sql:
+                raise op_error(2003, "Can't connect to MySQL server")
+
+        mock_conn.cursor.return_value.execute = execute_side_effect
+        monkeypatch.setattr("dbsprout.output.mysql_load_data.pymysql", mock_pymysql)
+
+        with pytest.raises(RuntimeError, match="insertion failed"):
+            MysqlLoadDataWriter().write(
+                _simple_data(), _simple_schema(), ["users"], "mysql://localhost/test"
+            )
