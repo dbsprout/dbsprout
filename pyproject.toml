@@ -198,6 +198,12 @@ markers = [
 [tool.coverage.run]
 source = ["dbsprout"]
 branch = true
+omit = [
+    # Optional-dependency modules — only active when extras are installed
+    "dbsprout/output/parquet_writer.py",   # requires polars ([data] extra)
+    "dbsprout/quality/fidelity.py",         # requires scipy  ([stats] extra)
+    "dbsprout/quality/detection.py",        # requires sklearn ([stats] extra)
+]
 
 [tool.coverage.report]
 fail_under = 95
