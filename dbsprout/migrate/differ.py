@@ -26,6 +26,9 @@ _FkIdentity = tuple[frozenset[str], str, frozenset[str]]
 # Type alias for Index structural identity (ignoring name)
 _IdxIdentity = tuple[frozenset[str], bool]
 
+# Sentinel table name for enum-level changes (enums are schema-wide, not per-table)
+ENUM_TABLE_SENTINEL = "__enums__"
+
 
 class SchemaDiffer:
     """Compute structural differences between two ``DatabaseSchema`` objects."""
@@ -36,6 +39,12 @@ class SchemaDiffer:
 
         Uses ``schema_hash()`` as a fast-path: if hashes match the schemas
         are structurally identical and an empty list is returned immediately.
+
+        Note: ``schema_hash()`` is more sensitive than the structural identity
+        used for FK/index comparison.  For example, changing ``on_delete`` on a
+        FK changes the hash but ``_fk_identity()`` treats it as the same FK, so
+        the diff will report zero FK changes.  This is intentional — the differ
+        reports structural additions/removals, not metadata mutations.
         """
         if old.schema_hash() == new.schema_hash():
             return []
@@ -261,38 +270,34 @@ def _diff_enums(
     new_enums: dict[str, list[str]],
     changes: list[SchemaChange],
 ) -> None:
-    all_names = sorted(old_enums.keys() | new_enums.keys())
-    for name in all_names:
-        old_vals = old_enums.get(name)
-        new_vals = new_enums.get(name)
-
-        if old_vals is None:
-            changes.append(
-                SchemaChange(
-                    change_type=SchemaChangeType.ENUM_CHANGED,
-                    table_name="__enums__",
-                    column_name=name,
-                    detail={"old_values": None, "new_values": list(new_vals or [])},
-                )
+    for name in sorted(new_enums.keys() - old_enums.keys()):
+        changes.append(
+            SchemaChange(
+                change_type=SchemaChangeType.ENUM_CHANGED,
+                table_name=ENUM_TABLE_SENTINEL,
+                column_name=name,
+                detail={"old_values": None, "new_values": list(new_enums[name])},
             )
-        elif new_vals is None:
-            changes.append(
-                SchemaChange(
-                    change_type=SchemaChangeType.ENUM_CHANGED,
-                    table_name="__enums__",
-                    column_name=name,
-                    detail={"old_values": list(old_vals), "new_values": None},
-                )
+        )
+    for name in sorted(old_enums.keys() - new_enums.keys()):
+        changes.append(
+            SchemaChange(
+                change_type=SchemaChangeType.ENUM_CHANGED,
+                table_name=ENUM_TABLE_SENTINEL,
+                column_name=name,
+                detail={"old_values": list(old_enums[name]), "new_values": None},
             )
-        elif set(old_vals) != set(new_vals):
+        )
+    for name in sorted(old_enums.keys() & new_enums.keys()):
+        if set(old_enums[name]) != set(new_enums[name]):
             changes.append(
                 SchemaChange(
                     change_type=SchemaChangeType.ENUM_CHANGED,
-                    table_name="__enums__",
+                    table_name=ENUM_TABLE_SENTINEL,
                     column_name=name,
                     detail={
-                        "old_values": list(old_vals),
-                        "new_values": list(new_vals),
+                        "old_values": list(old_enums[name]),
+                        "new_values": list(new_enums[name]),
                     },
                 )
             )
@@ -300,7 +305,7 @@ def _diff_enums(
 
 # ── Sorting ───────────────────────────────────────────────────────────────
 
-_CHANGE_TYPE_ORDER = {
+_CHANGE_TYPE_ORDER: dict[SchemaChangeType, int] = {
     SchemaChangeType.TABLE_ADDED: 0,
     SchemaChangeType.TABLE_REMOVED: 1,
     SchemaChangeType.COLUMN_ADDED: 2,
@@ -314,6 +319,10 @@ _CHANGE_TYPE_ORDER = {
     SchemaChangeType.INDEX_REMOVED: 10,
     SchemaChangeType.ENUM_CHANGED: 11,
 }
+
+if set(_CHANGE_TYPE_ORDER) != set(SchemaChangeType):
+    msg = "_CHANGE_TYPE_ORDER must cover every SchemaChangeType variant"
+    raise RuntimeError(msg)
 
 
 def _change_sort_key(change: SchemaChange) -> tuple[int, str, str]:

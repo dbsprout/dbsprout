@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from dbsprout.migrate.differ import SchemaDiffer
+from dbsprout.migrate.differ import ENUM_TABLE_SENTINEL, SchemaDiffer
 from dbsprout.migrate.models import SchemaChange, SchemaChangeType
 from dbsprout.schema.models import (
     ColumnSchema,
@@ -338,6 +338,48 @@ class TestForeignKeyChanges:
         added = _find_change(changes, SchemaChangeType.FOREIGN_KEY_ADDED, "categories")
         assert added is not None
 
+    def test_fk_on_delete_change_not_detected(self) -> None:
+        """FK metadata (on_delete, deferrable) change is not tracked; structural identity only."""
+        id_col = ColumnSchema(name="id", data_type=ColumnType.INTEGER, nullable=False)
+        uid_col = ColumnSchema(name="user_id", data_type=ColumnType.INTEGER, nullable=False)
+        users = TableSchema(name="users", columns=[id_col], primary_key=["id"])
+        old_orders = TableSchema(
+            name="orders",
+            columns=[id_col, uid_col],
+            primary_key=["id"],
+            foreign_keys=[
+                ForeignKeySchema(
+                    columns=["user_id"],
+                    ref_table="users",
+                    ref_columns=["id"],
+                    on_delete="CASCADE",
+                )
+            ],
+        )
+        new_orders = TableSchema(
+            name="orders",
+            columns=[id_col, uid_col],
+            primary_key=["id"],
+            foreign_keys=[
+                ForeignKeySchema(
+                    columns=["user_id"],
+                    ref_table="users",
+                    ref_columns=["id"],
+                    on_delete="SET NULL",
+                )
+            ],
+        )
+        old = DatabaseSchema(tables=[users, old_orders])
+        new = DatabaseSchema(tables=[users, new_orders])
+        changes = SchemaDiffer.diff(old, new)
+        fk_changes = [
+            c
+            for c in changes
+            if c.change_type
+            in (SchemaChangeType.FOREIGN_KEY_ADDED, SchemaChangeType.FOREIGN_KEY_REMOVED)
+        ]
+        assert len(fk_changes) == 0
+
     def test_composite_fk(self) -> None:
         """AC-19: multi-column FK identity based on column set."""
         id_col = ColumnSchema(name="id", data_type=ColumnType.INTEGER, nullable=False)
@@ -399,6 +441,36 @@ class TestIndexChanges:
         assert added.detail is not None
         assert "index" in added.detail
 
+    def test_index_uniqueness_change_is_remove_plus_add(self) -> None:
+        """Changing unique flag → INDEX_REMOVED + INDEX_ADDED."""
+        id_col = ColumnSchema(name="id", data_type=ColumnType.INTEGER, nullable=False)
+        email_col = ColumnSchema(name="email", data_type=ColumnType.VARCHAR)
+        old = DatabaseSchema(
+            tables=[
+                TableSchema(
+                    name="users",
+                    columns=[id_col, email_col],
+                    primary_key=["id"],
+                    indexes=[IndexSchema(columns=["email"], unique=False)],
+                )
+            ]
+        )
+        new = DatabaseSchema(
+            tables=[
+                TableSchema(
+                    name="users",
+                    columns=[id_col, email_col],
+                    primary_key=["id"],
+                    indexes=[IndexSchema(columns=["email"], unique=True)],
+                )
+            ]
+        )
+        changes = SchemaDiffer.diff(old, new)
+        added = _find_change(changes, SchemaChangeType.INDEX_ADDED, "users")
+        removed = _find_change(changes, SchemaChangeType.INDEX_REMOVED, "users")
+        assert added is not None
+        assert removed is not None
+
     def test_index_removed(self) -> None:
         id_col = ColumnSchema(name="id", data_type=ColumnType.INTEGER, nullable=False)
         email_col = ColumnSchema(name="email", data_type=ColumnType.VARCHAR)
@@ -430,7 +502,7 @@ class TestEnumChanges:
         old = DatabaseSchema(tables=[])
         new = DatabaseSchema(tables=[], enums={"status": ["active", "inactive"]})
         changes = SchemaDiffer.diff(old, new)
-        changed = _find_change(changes, SchemaChangeType.ENUM_CHANGED, "__enums__")
+        changed = _find_change(changes, SchemaChangeType.ENUM_CHANGED, ENUM_TABLE_SENTINEL)
         assert changed is not None
         assert changed.detail is not None
         assert changed.detail["old_values"] is None
@@ -440,7 +512,7 @@ class TestEnumChanges:
         old = DatabaseSchema(tables=[], enums={"status": ["active", "inactive"]})
         new = DatabaseSchema(tables=[])
         changes = SchemaDiffer.diff(old, new)
-        changed = _find_change(changes, SchemaChangeType.ENUM_CHANGED, "__enums__")
+        changed = _find_change(changes, SchemaChangeType.ENUM_CHANGED, ENUM_TABLE_SENTINEL)
         assert changed is not None
         assert changed.detail is not None
         assert set(changed.detail["old_values"]) == {"active", "inactive"}
@@ -450,7 +522,7 @@ class TestEnumChanges:
         old = DatabaseSchema(tables=[], enums={"status": ["active", "inactive"]})
         new = DatabaseSchema(tables=[], enums={"status": ["active", "inactive", "pending"]})
         changes = SchemaDiffer.diff(old, new)
-        changed = _find_change(changes, SchemaChangeType.ENUM_CHANGED, "__enums__")
+        changed = _find_change(changes, SchemaChangeType.ENUM_CHANGED, ENUM_TABLE_SENTINEL)
         assert changed is not None
         assert changed.detail is not None
         assert set(changed.detail["old_values"]) == {"active", "inactive"}
@@ -535,6 +607,40 @@ class TestEdgeCases:
         changes = SchemaDiffer.diff(old, new)
         table_names = [c.table_name for c in changes]
         assert table_names == sorted(table_names)
+
+    def test_cross_type_sort_ordering(self) -> None:
+        """Change types are ordered: table > column > FK > index > enum."""
+        id_col = ColumnSchema(name="id", data_type=ColumnType.INTEGER, nullable=False)
+        email_col = ColumnSchema(name="email", data_type=ColumnType.VARCHAR)
+        old = DatabaseSchema(
+            tables=[
+                TableSchema(
+                    name="users",
+                    columns=[id_col, email_col],
+                    primary_key=["id"],
+                    indexes=[IndexSchema(columns=["email"], unique=True)],
+                ),
+            ],
+            enums={"role": ["admin", "user"]},
+        )
+        new = DatabaseSchema(
+            tables=[
+                TableSchema(name="users", columns=[id_col], primary_key=["id"]),
+                TableSchema(name="products", columns=[id_col], primary_key=["id"]),
+            ],
+            enums={"role": ["admin", "user", "guest"]},
+        )
+        changes = SchemaDiffer.diff(old, new)
+        change_types = [c.change_type for c in changes]
+        assert change_types.index(SchemaChangeType.TABLE_ADDED) < change_types.index(
+            SchemaChangeType.COLUMN_REMOVED
+        )
+        assert change_types.index(SchemaChangeType.COLUMN_REMOVED) < change_types.index(
+            SchemaChangeType.INDEX_REMOVED
+        )
+        assert change_types.index(SchemaChangeType.INDEX_REMOVED) < change_types.index(
+            SchemaChangeType.ENUM_CHANGED
+        )
 
     def test_composite_primary_key_with_column_added(self) -> None:
         id_col = ColumnSchema(name="id", data_type=ColumnType.INTEGER, nullable=False)
