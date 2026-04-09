@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import importlib.util
 import json
 import re
 from typing import TYPE_CHECKING
 
+import pytest
 from typer.testing import CliRunner
 
 from dbsprout.cli.app import app
@@ -190,6 +192,10 @@ class TestGenerateProducesOutput:
         lines = jsonl_files[0].read_text().strip().split("\n")
         assert len(lines) == 3
 
+    @pytest.mark.skipif(
+        importlib.util.find_spec("polars") is None,
+        reason="polars not installed (optional [data] extra)",
+    )
     def test_parquet_format(self, tmp_path: Path) -> None:
         """--output-format parquet should produce .parquet files."""
         project_dir = _write_schema(tmp_path)

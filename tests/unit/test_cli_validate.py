@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import importlib.util
 import json
 import re
 from typing import TYPE_CHECKING
 
+import pytest
 from typer.testing import CliRunner
 
 from dbsprout.cli.app import app
@@ -153,6 +155,10 @@ class TestValidateSummary:
 
 
 class TestValidateFidelity:
+    @pytest.mark.skipif(
+        importlib.util.find_spec("scipy") is None,
+        reason="scipy not installed (optional [stats] extra)",
+    )
     def test_reference_data_rich(self, tmp_path: Path) -> None:
         """--reference-data with Rich output should show fidelity metrics."""
         project_dir = _write_schema(tmp_path)
@@ -180,6 +186,10 @@ class TestValidateFidelity:
         output = _strip_ansi(result.output)
         assert "Fidelity" in output or "fidelity" in output.lower()
 
+    @pytest.mark.skipif(
+        importlib.util.find_spec("scipy") is None,
+        reason="scipy not installed (optional [stats] extra)",
+    )
     def test_reference_data_json(self, tmp_path: Path) -> None:
         """--reference-data with JSON output should include fidelity section."""
         project_dir = _write_schema(tmp_path)
@@ -210,6 +220,10 @@ class TestValidateFidelity:
         assert "overall_score" in parsed["fidelity"]
         assert "metrics" in parsed["fidelity"]
 
+    @pytest.mark.skipif(
+        importlib.util.find_spec("scipy") is None,
+        reason="scipy not installed (optional [stats] extra)",
+    )
     def test_reference_data_single_file(self, tmp_path: Path) -> None:
         """--reference-data with a single CSV file."""
         project_dir = _write_schema(tmp_path)
@@ -350,6 +364,10 @@ class TestValidateDetection:
         output = _strip_ansi(result.output)
         assert "reference-data" in output.lower()
 
+    @pytest.mark.skipif(
+        importlib.util.find_spec("sklearn") is None,
+        reason="sklearn not installed (optional [stats] extra)",
+    )
     def test_detection_json_output(self, tmp_path: Path) -> None:
         """--detection --format json should include 'detection' key."""
         project_dir = _write_detection_schema(tmp_path)
