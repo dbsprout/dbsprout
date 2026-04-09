@@ -1040,6 +1040,107 @@ class TestMultipleChanges:
         assert "parent" not in result.tables_data
 
 
+class TestTableAddedTopologicalOrder:
+    """AC-28: Multiple TABLE_ADDED with FK dependency uses topological order."""
+
+    def test_two_new_tables_with_fk_dependency(self) -> None:
+        """Parent table must be generated before child even if child sorts first."""
+        id_col = ColumnSchema(
+            name="id",
+            data_type=ColumnType.INTEGER,
+            nullable=False,
+            autoincrement=True,
+        )
+        parent_id_col = ColumnSchema(
+            name="alpha_id",
+            data_type=ColumnType.INTEGER,
+            nullable=False,
+        )
+        # "alpha" depends on "beta" via FK — alpha sorts first alphabetically
+        beta_table = TableSchema(name="beta", columns=[id_col], primary_key=["id"])
+        alpha_table = TableSchema(
+            name="alpha",
+            columns=[id_col, parent_id_col],
+            primary_key=["id"],
+            foreign_keys=[
+                ForeignKeySchema(
+                    columns=["alpha_id"],
+                    ref_table="beta",
+                    ref_columns=["id"],
+                ),
+            ],
+        )
+        schema = DatabaseSchema(tables=[beta_table, alpha_table], dialect="sqlite")
+        config = DBSproutConfig(tables={"alpha": {"rows": 5}, "beta": {"rows": 5}})
+        updater = IncrementalUpdater(schema=schema, config=config, seed=42)
+
+        changes = [
+            SchemaChange(
+                change_type=SchemaChangeType.TABLE_ADDED,
+                table_name="alpha",
+                detail={"table": alpha_table.model_dump()},
+            ),
+            SchemaChange(
+                change_type=SchemaChangeType.TABLE_ADDED,
+                table_name="beta",
+                detail={"table": beta_table.model_dump()},
+            ),
+        ]
+        result = updater.update(changes, {})
+        assert "alpha" in result.tables_data
+        assert "beta" in result.tables_data
+        # FK integrity: every alpha.alpha_id must be in beta.id
+        beta_ids = {row["id"] for row in result.tables_data["beta"]}
+        for row in result.tables_data["alpha"]:
+            assert row["alpha_id"] in beta_ids
+
+
+class TestTableRemovedThenAddedSameName:
+    """AC-29: TABLE_REMOVED + TABLE_ADDED same name → drop then recreate."""
+
+    def test_same_name_drop_and_recreate(self) -> None:
+        id_col = ColumnSchema(
+            name="id",
+            data_type=ColumnType.INTEGER,
+            nullable=False,
+            autoincrement=True,
+        )
+        name_col = ColumnSchema(
+            name="name",
+            data_type=ColumnType.VARCHAR,
+            nullable=False,
+            max_length=50,
+        )
+        new_table = TableSchema(
+            name="products",
+            columns=[id_col, name_col],
+            primary_key=["id"],
+        )
+        schema = DatabaseSchema(tables=[new_table], dialect="sqlite")
+        updater = IncrementalUpdater(schema=schema, config=DBSproutConfig(), seed=42)
+
+        data: dict[str, list[dict[str, Any]]] = {
+            "products": [{"id": 1, "old_field": "x"}],
+        }
+        changes = [
+            SchemaChange(
+                change_type=SchemaChangeType.TABLE_REMOVED,
+                table_name="products",
+            ),
+            SchemaChange(
+                change_type=SchemaChangeType.TABLE_ADDED,
+                table_name="products",
+                detail={"table": new_table.model_dump()},
+            ),
+        ]
+        result = updater.update(changes, data)
+        # Table should exist with new structure (no old_field)
+        assert "products" in result.tables_data
+        assert len(result.tables_data["products"]) == 100
+        assert "old_field" not in result.tables_data["products"][0]
+        assert "name" in result.tables_data["products"][0]
+
+
 class TestApplyEmpty:
     """Edge cases for apply with no changes."""
 

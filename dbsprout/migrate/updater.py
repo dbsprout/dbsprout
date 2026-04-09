@@ -203,16 +203,57 @@ _ACTION_ORDER: dict[UpdateAction, int] = {
 def _order_actions(actions: list[PlannedAction]) -> list[PlannedAction]:
     """Sort actions for safe execution order.
 
-    1. GENERATE_TABLE (topologically ordered)
+    0. DROP_TABLE for tables that are also being re-added (same name)
+    1. GENERATE_TABLE (topologically ordered by FK deps)
     2. Column-level: GENERATE_COLUMN, REGENERATE_COLUMN, DROP_COLUMN
     3. Constraint: VALIDATE_FK, DEDUPLICATE, REPLACE_ENUM
-    4. DROP_TABLE last (preserve parent data for FK validation)
+    4. DROP_TABLE for tables that are only removed
     5. NO_ACTION (skip)
     """
-    return sorted(
-        actions,
-        key=lambda a: (_ACTION_ORDER[a.action], a.change.table_name),
-    )
+    # Identify tables being both removed and re-added (AC-29)
+    added_tables = {a.change.table_name for a in actions if a.action == UpdateAction.GENERATE_TABLE}
+    removed_tables = {a.change.table_name for a in actions if a.action == UpdateAction.DROP_TABLE}
+    recreated = added_tables & removed_tables
+
+    # Build topological order for GENERATE_TABLE actions (AC-28)
+    gen_table_order = _topological_order_for_new_tables(actions)
+
+    def sort_key(a: PlannedAction) -> tuple[int, int]:
+        if a.action == UpdateAction.DROP_TABLE and a.change.table_name in recreated:
+            return (-1, 0)  # Drop-before-recreate runs first
+        if a.action == UpdateAction.GENERATE_TABLE:
+            return (0, gen_table_order.get(a.change.table_name, 0))
+        return (_ACTION_ORDER[a.action], 0)
+
+    return sorted(actions, key=sort_key)
+
+
+def _topological_order_for_new_tables(actions: list[PlannedAction]) -> dict[str, int]:
+    """Build topological ordering for GENERATE_TABLE actions by FK deps."""
+    from graphlib import TopologicalSorter  # noqa: PLC0415
+
+    gen_actions = [a for a in actions if a.action == UpdateAction.GENERATE_TABLE]
+    if len(gen_actions) <= 1:
+        return {a.change.table_name: 0 for a in gen_actions}
+
+    new_table_names = {a.change.table_name for a in gen_actions}
+    deps: dict[str, set[str]] = {name: set() for name in new_table_names}
+
+    for a in gen_actions:
+        detail = a.change.detail or {}
+        table_dict = detail.get("table", {})
+        fks = table_dict.get("foreign_keys", [])
+        for fk in fks:
+            ref_table = fk.get("ref_table", "") if isinstance(fk, dict) else fk.ref_table
+            if ref_table in new_table_names:
+                deps[a.change.table_name].add(ref_table)
+
+    sorter = TopologicalSorter(deps)
+    order: dict[str, int] = {}
+    for idx, table_name in enumerate(sorter.static_order()):
+        order[table_name] = idx
+
+    return order
 
 
 class IncrementalUpdater:
