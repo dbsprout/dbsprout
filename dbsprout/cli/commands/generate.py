@@ -45,14 +45,19 @@ def generate_command(  # noqa: PLR0913
         raise typer.Exit(code=1)
 
     # Load schema
-    snapshot_path = _resolve_schema_path(schema_snapshot)
-    if snapshot_path is None or not snapshot_path.exists():
+    schema = _resolve_schema(schema_snapshot)
+    if schema is None:
         console.print("[red]Error:[/red] No schema snapshot found.")
         console.print("Run [bold]dbsprout init[/bold] first, or use --schema-snapshot.")
         raise typer.Exit(code=1)
 
-    raw = snapshot_path.read_text(encoding="utf-8")
-    schema = DatabaseSchema.model_validate_json(raw)
+    # Auto-snapshot: save if no snapshot exists or schema changed
+    from dbsprout.migrate.snapshot import SnapshotStore  # noqa: PLC0415
+
+    _snap_store = SnapshotStore()
+    _latest = _snap_store.load_latest()
+    if _latest is None or _latest.schema_hash() != schema.schema_hash():
+        _snap_store.save(schema)
 
     # Load config
     cfg_path = config_path or Path("dbsprout.toml")
@@ -90,6 +95,23 @@ def generate_command(  # noqa: PLR0913
     if not report.passed:
         console.print("[red]Integrity validation FAILED.[/red]")
         raise typer.Exit(code=1)
+
+
+def _resolve_schema(explicit: Path | None) -> DatabaseSchema | None:
+    """Load schema from explicit path, default file, or latest snapshot."""
+    import json  # noqa: PLC0415
+
+    path = _resolve_schema_path(explicit)
+    if path is not None and path.exists():
+        raw = json.loads(path.read_text(encoding="utf-8"))
+        # Support both wrapper and flat formats
+        schema_data = raw.get("schema", raw)
+        return DatabaseSchema.model_validate(schema_data)
+    # Fallback: latest snapshot in store
+    from dbsprout.migrate.snapshot import SnapshotStore  # noqa: PLC0415
+
+    store = SnapshotStore()
+    return store.load_latest()
 
 
 def _resolve_schema_path(explicit: Path | None) -> Path | None:
