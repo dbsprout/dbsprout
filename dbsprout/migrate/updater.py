@@ -8,6 +8,7 @@ only the affected columns, tables, and constraints.
 from __future__ import annotations
 
 import copy
+import logging
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
@@ -22,8 +23,14 @@ from dbsprout.migrate.update_models import (
 from dbsprout.schema.models import ColumnSchema, ColumnType, DatabaseSchema, TableSchema
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from dbsprout.config.models import DBSproutConfig
     from dbsprout.migrate.models import SchemaChange
+
+logger = logging.getLogger(__name__)
+
+_DEDUP_MAX_CANDIDATES = 10
 
 
 class _ApplyContext:
@@ -160,7 +167,7 @@ def _classify_index_removed(change: SchemaChange) -> tuple[UpdateAction, str]:
 
 def _classify_enum_changed(change: SchemaChange) -> tuple[UpdateAction, str]:
     desc = (
-        f"Replace enum values for '{change.column_name}' "  # noqa: S608
+        f"Replace enum values for '{change.column_name}' "  # noqa: S608 -- not SQL
         f"in '{change.table_name}' with updated set"
     )
     return (UpdateAction.REPLACE_ENUM, desc)
@@ -168,7 +175,7 @@ def _classify_enum_changed(change: SchemaChange) -> tuple[UpdateAction, str]:
 
 _CLASSIFY_DISPATCH: dict[
     SchemaChangeType,
-    Any,  # Callable[[SchemaChange], tuple[UpdateAction, str]]
+    Callable[[SchemaChange], tuple[UpdateAction, str]],
 ] = {
     SchemaChangeType.TABLE_ADDED: _classify_table_added,
     SchemaChangeType.TABLE_REMOVED: _classify_table_removed,
@@ -336,51 +343,23 @@ class IncrementalUpdater:
         ctx: _ApplyContext,
     ) -> None:
         """Route an action to its handler."""
-        handlers: dict[UpdateAction, Any] = {
-            UpdateAction.DROP_COLUMN: lambda: self._apply_drop_column(
-                action,
-                data,
-                ctx.modified,
-            ),
-            UpdateAction.DROP_TABLE: lambda: self._apply_drop_table(
-                action,
-                data,
-                ctx.tables_removed,
-            ),
-            UpdateAction.GENERATE_COLUMN: lambda: self._apply_generate_column(
-                action,
-                data,
-                ctx.modified,
-            ),
-            UpdateAction.REGENERATE_COLUMN: lambda: self._apply_regenerate_column(
-                action,
-                data,
-                ctx.modified,
-            ),
-            UpdateAction.GENERATE_TABLE: lambda: self._apply_generate_table(
-                action,
-                data,
-                ctx,
-            ),
-            UpdateAction.VALIDATE_FK: lambda: self._apply_validate_fk(
-                action,
-                data,
-                ctx.modified,
-            ),
-            UpdateAction.DEDUPLICATE: lambda: self._apply_deduplicate(
-                action,
-                data,
-                ctx.modified,
-            ),
-            UpdateAction.REPLACE_ENUM: lambda: self._apply_replace_enum(
-                action,
-                data,
-                ctx.modified,
-            ),
-        }
-        handler = handlers.get(action.action)
-        if handler is not None:
-            handler()
+        act = action.action
+        if act == UpdateAction.DROP_COLUMN:
+            self._apply_drop_column(action, data, ctx.modified)
+        elif act == UpdateAction.DROP_TABLE:
+            self._apply_drop_table(action, data, ctx.tables_removed)
+        elif act == UpdateAction.GENERATE_COLUMN:
+            self._apply_generate_column(action, data, ctx.modified)
+        elif act == UpdateAction.REGENERATE_COLUMN:
+            self._apply_regenerate_column(action, data, ctx.modified)
+        elif act == UpdateAction.GENERATE_TABLE:
+            self._apply_generate_table(action, data, ctx)
+        elif act == UpdateAction.VALIDATE_FK:
+            self._apply_validate_fk(action, data, ctx.modified)
+        elif act == UpdateAction.DEDUPLICATE:
+            self._apply_deduplicate(action, data, ctx.modified)
+        elif act == UpdateAction.REPLACE_ENUM:
+            self._apply_replace_enum(action, data, ctx.modified)
 
     # ── Handlers ───────────────────────────────────────────────────
 
@@ -477,7 +456,12 @@ class IncrementalUpdater:
         detail = action.change.detail or {}
         new_type = detail.get("new_type", "varchar")
 
-        col_dict = {"name": col_name, "data_type": new_type, "nullable": True}
+        # Preserve nullability from the schema (don't hardcode)
+        table = self._schema.get_table(table_name)
+        col = table.get_column(col_name) if table else None
+        is_nullable = col.nullable if col else True
+
+        col_dict = {"name": col_name, "data_type": new_type, "nullable": is_nullable}
         values = self._generate_column_values(table_name, col_dict, len(rows))
         for i, row in enumerate(rows):
             row[col_name] = values[i]
@@ -551,13 +535,18 @@ class IncrementalUpdater:
             valid_pks = set(pk_list)
 
             for i, row in enumerate(rows):
-                if row.get(fk_col) not in valid_pks:
+                val = row.get(fk_col)
+                if val is None:
+                    continue  # preserve None for nullable FK columns
+                if val not in valid_pks:
                     row[fk_col] = pk_list[int(rng.integers(0, len(pk_list)))]
                     modified.add((table_name, i))
         else:
             valid_tuples = {tuple(row[rc] for rc in ref_columns) for row in parent_rows}
             for i, row in enumerate(rows):
                 current = tuple(row.get(fc) for fc in fk_columns)
+                if any(v is None for v in current):
+                    continue  # preserve None for nullable FK columns
                 if current not in valid_tuples:
                     parent_idx = int(rng.integers(0, len(parent_rows)))
                     parent_row = parent_rows[parent_idx]
@@ -595,20 +584,24 @@ class IncrementalUpdater:
             seen: set[Any] = set()
             for i, row in enumerate(rows):
                 val = row.get(col_name)
-                if val in seen:
-                    if col is not None:
-                        new_values = self._generate_column_values(
-                            table_name,
-                            col.model_dump(),
-                            10,
-                        )
-                        for nv in new_values:
-                            if nv not in seen:
-                                row[col_name] = nv
-                                val = nv
-                                break
-                    modified.add((table_name, i))
+                if val in seen and col is not None:
+                    new_values = self._generate_column_values(
+                        table_name,
+                        col.model_dump(),
+                        _DEDUP_MAX_CANDIDATES,
+                    )
+                    for nv in new_values:
+                        if nv not in seen:
+                            row[col_name] = nv
+                            val = nv
+                            modified.add((table_name, i))
+                            break
                 seen.add(val)
+        else:
+            logger.warning(
+                "Composite unique index deduplication not yet supported for table '%s'",
+                table_name,
+            )
 
     def _apply_replace_enum(
         self,
