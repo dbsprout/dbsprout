@@ -57,7 +57,12 @@ class SnapshotStore:
     """Content-addressed, append-only snapshot store."""
 
     def __init__(self, base_dir: Path | None = None) -> None:
-        self.base_dir: Path = base_dir if base_dir is not None else Path(".dbsprout") / "snapshots"
+        self._base_dir: Path = base_dir if base_dir is not None else Path(".dbsprout") / "snapshots"
+
+    @property
+    def base_dir(self) -> Path:
+        """Read-only access to the snapshot directory path."""
+        return self._base_dir
 
     # ── Public API ──────────────────────────────────────────────────
 
@@ -70,7 +75,7 @@ class SnapshotStore:
             msg = "Cannot snapshot an empty schema (no tables)."
             raise ValueError(msg)
 
-        self.base_dir.mkdir(parents=True, exist_ok=True)
+        self._base_dir.mkdir(parents=True, exist_ok=True)
 
         schema_hash = schema.schema_hash()
         hash_prefix = schema_hash[:8]
@@ -78,13 +83,15 @@ class SnapshotStore:
         # Idempotency: return existing snapshot with matching hash
         existing = self._find_by_hash_prefix(hash_prefix)
         if existing is not None:
-            return self._info_from_path(existing)
+            info = self._load_snapshot_info(existing)
+            if info is not None:
+                return info
 
         now = datetime.now(timezone.utc)
         ts_str = now.strftime("%Y%m%dT%H%M%SZ")
         filename = f"{ts_str}_{hash_prefix}.json"
-        final_path = self.base_dir / filename
-        tmp_path = self.base_dir / f"{filename}.tmp"
+        final_path = self._base_dir / filename
+        tmp_path = self._base_dir / f"{filename}.tmp"
 
         metadata = SnapshotMetadata(
             schema_hash=schema_hash,
@@ -94,11 +101,11 @@ class SnapshotStore:
             dialect=schema.dialect,
         )
         payload = {
-            "metadata": json.loads(metadata.model_dump_json()),
-            "schema": json.loads(schema.model_dump_json()),
+            "metadata": metadata.model_dump(mode="json"),
+            "schema": schema.model_dump(mode="json"),
         }
         tmp_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
-        os.rename(tmp_path, final_path)
+        os.replace(tmp_path, final_path)
 
         return SnapshotInfo(
             path=final_path,
@@ -109,11 +116,12 @@ class SnapshotStore:
 
     def list_snapshots(self) -> list[SnapshotInfo]:
         """Return all valid snapshots, newest-first by filename."""
-        if not self.base_dir.exists():
+        if not self._base_dir.exists():
             return []
         results: list[SnapshotInfo] = []
-        for p in sorted(self.base_dir.glob("*.json"), reverse=True):
-            if p.name.endswith(".tmp"):
+        for p in sorted(self._base_dir.glob("*.json"), reverse=True):
+            if p.is_symlink():
+                logger.warning("Skipping symlink in snapshot directory: %s", p.name)
                 continue
             info = self._load_snapshot_info(p)
             if info is not None:
@@ -129,16 +137,26 @@ class SnapshotStore:
         return None
 
     def load_by_hash(self, hash_prefix: str) -> DatabaseSchema | None:
-        """Load the schema whose hash starts with *hash_prefix*."""
-        path = self._find_by_hash_prefix(hash_prefix)
+        """Load the schema whose hash starts with *hash_prefix*.
+
+        Matches against the 8-char hash suffix in filenames. Prefixes
+        longer than 8 chars are truncated to 8 for lookup.
+        """
+        truncated = hash_prefix[:8]
+        path = self._find_by_hash_prefix(truncated)
         if path is None:
             return None
         return self._load_schema_from_path(path)
 
     def resolve(self, path_or_hash: str) -> DatabaseSchema | None:
-        """Accept a file path or hash prefix and return the schema."""
+        """Accept a file path or hash prefix and return the schema.
+
+        File paths must be absolute or explicitly relative (starting
+        with ``./`` or ``../``). All other strings are treated as hash
+        prefixes.
+        """
         candidate = Path(path_or_hash)
-        if candidate.exists():
+        if path_or_hash.startswith(("/", "./", "../")) and candidate.exists():
             return self._load_schema_from_path(candidate)
         return self.load_by_hash(path_or_hash)
 
@@ -146,11 +164,9 @@ class SnapshotStore:
 
     def _find_by_hash_prefix(self, prefix: str) -> Path | None:
         """Find a snapshot file whose hash suffix starts with *prefix*."""
-        if not self.base_dir.exists():
+        if not self._base_dir.exists():
             return None
-        for p in self.base_dir.glob("*.json"):
-            if p.name.endswith(".tmp"):
-                continue
+        for p in self._base_dir.glob("*.json"):
             stem = p.stem  # e.g. "20260408T120000Z_a1b2c3d4"
             parts = stem.rsplit("_", 1)
             if len(parts) == 2 and parts[1].startswith(prefix):
@@ -158,7 +174,11 @@ class SnapshotStore:
         return None
 
     def _info_from_path(self, path: Path) -> SnapshotInfo:
-        """Build ``SnapshotInfo`` from an on-disk snapshot file."""
+        """Build ``SnapshotInfo`` from an on-disk snapshot file.
+
+        Raises on corrupt or unreadable files — callers that need a safe
+        version should use ``_load_snapshot_info`` instead.
+        """
         raw = json.loads(path.read_text(encoding="utf-8"))
         if "metadata" in raw:
             meta = raw["metadata"]

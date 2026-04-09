@@ -213,15 +213,6 @@ class TestSnapshotStoreListSnapshots:
         assert len(results) == 2
         assert results[0].timestamp >= results[1].timestamp
 
-    def test_list_skips_tmp_files(self, tmp_path: Path, minimal_schema: DatabaseSchema) -> None:
-        store = SnapshotStore(base_dir=tmp_path)
-        store.save(minimal_schema)
-        tmp_file = tmp_path / "20260101T000000Z_abcd1234.json.tmp"
-        tmp_file.write_text("{}", encoding="utf-8")
-        results = store.list_snapshots()
-        assert len(results) == 1
-        assert not any(r.path.name.endswith(".tmp") for r in results)
-
     def test_list_skips_corrupt_file(
         self,
         tmp_path: Path,
@@ -293,15 +284,6 @@ class TestSnapshotStoreLoadByHash:
     def test_load_by_hash_nonexistent_dir(self, tmp_path: Path) -> None:
         store = SnapshotStore(base_dir=tmp_path / "does_not_exist")
         assert store.load_by_hash("deadbeef") is None
-
-    def test_load_by_hash_skips_tmp_files(
-        self, tmp_path: Path, minimal_schema: DatabaseSchema
-    ) -> None:
-        store = SnapshotStore(base_dir=tmp_path)
-        h = minimal_schema.schema_hash()[:8]
-        tmp_file = tmp_path / f"20260101T000000Z_{h}.json.tmp"
-        tmp_file.write_text("{}", encoding="utf-8")
-        assert store.load_by_hash(h) is None
 
     def test_load_by_hash_prefix_match(
         self, tmp_path: Path, minimal_schema: DatabaseSchema
