@@ -441,3 +441,146 @@ class TestDiffSummaryHelper:
         assert result["total"] == len(list(SchemaChangeType))
         for ct in SchemaChangeType:
             assert result[ct.value] == 1
+
+
+class TestDiffRichRender:
+    @patch("dbsprout.migrate.snapshot.SnapshotStore")
+    @patch("dbsprout.schema.introspect.introspect")
+    def test_rich_panel_header_and_table_added(
+        self,
+        mock_introspect: MagicMock,
+        mock_store_cls: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        """TABLE_ADDED change → Panel header + Tables section."""
+        old = _simple_schema_for_diff()
+        new = DatabaseSchema(
+            tables=[
+                *old.tables,
+                TableSchema(
+                    name="orders",
+                    columns=[ColumnSchema(name="id", data_type=ColumnType.INTEGER, nullable=False)],
+                    primary_key=["id"],
+                ),
+            ],
+            dialect="sqlite",
+        )
+        mock_introspect.return_value = new
+        mock_store = MagicMock()
+        mock_store.load_latest.return_value = old
+        mock_store_cls.return_value = mock_store
+
+        result = runner.invoke(
+            app,
+            ["diff", "--db", "sqlite:///x.db", "--output-dir", str(tmp_path)],
+        )
+        output = _strip_ansi(result.output)
+        # Panel header elements
+        assert "Schema Drift" in output
+        assert "old:" in output
+        assert "new:" in output
+        assert "summary:" in output
+        assert "generated:" in output
+        assert "+tables: 1" in output
+        # Grouped section
+        assert "Tables" in output
+        assert "+ orders" in output
+        assert result.exit_code == 0  # Task 13 will change to 1
+
+    @patch("dbsprout.migrate.snapshot.SnapshotStore")
+    @patch("dbsprout.schema.introspect.introspect")
+    def test_rich_column_type_change_format(
+        self,
+        mock_introspect: MagicMock,
+        mock_store_cls: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        """COLUMN_TYPE_CHANGED → shows `table.col: old_type → new_type`."""
+        old = DatabaseSchema(
+            tables=[
+                TableSchema(
+                    name="users",
+                    columns=[
+                        ColumnSchema(name="id", data_type=ColumnType.INTEGER, nullable=False),
+                        ColumnSchema(name="email", data_type=ColumnType.VARCHAR, max_length=255),
+                    ],
+                    primary_key=["id"],
+                )
+            ],
+            dialect="sqlite",
+        )
+        new = DatabaseSchema(
+            tables=[
+                TableSchema(
+                    name="users",
+                    columns=[
+                        ColumnSchema(name="id", data_type=ColumnType.INTEGER, nullable=False),
+                        ColumnSchema(name="email", data_type=ColumnType.TEXT),
+                    ],
+                    primary_key=["id"],
+                )
+            ],
+            dialect="sqlite",
+        )
+        mock_introspect.return_value = new
+        mock_store = MagicMock()
+        mock_store.load_latest.return_value = old
+        mock_store_cls.return_value = mock_store
+
+        result = runner.invoke(
+            app,
+            ["diff", "--db", "sqlite:///x.db", "--output-dir", str(tmp_path)],
+        )
+        output = _strip_ansi(result.output)
+        assert "Columns" in output
+        assert "users.email" in output
+        assert "→" in output
+        # Should NOT show sentinel
+        assert "__enums__" not in output
+        assert result.exit_code == 0
+
+    @patch("dbsprout.migrate.snapshot.SnapshotStore")
+    @patch("dbsprout.schema.introspect.introspect")
+    def test_rich_enum_changed_uses_name_not_sentinel(
+        self,
+        mock_introspect: MagicMock,
+        mock_store_cls: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        """ENUM_CHANGED → renders under 'Enums' with the enum name, never '__enums__'."""
+        old = DatabaseSchema(
+            tables=[
+                TableSchema(
+                    name="orders",
+                    columns=[ColumnSchema(name="id", data_type=ColumnType.INTEGER, nullable=False)],
+                    primary_key=["id"],
+                )
+            ],
+            enums={"order_status": ["pending", "shipped"]},
+            dialect="postgresql",
+        )
+        new = DatabaseSchema(
+            tables=[
+                TableSchema(
+                    name="orders",
+                    columns=[ColumnSchema(name="id", data_type=ColumnType.INTEGER, nullable=False)],
+                    primary_key=["id"],
+                )
+            ],
+            enums={"order_status": ["pending", "shipped", "cancelled"]},
+            dialect="postgresql",
+        )
+        mock_introspect.return_value = new
+        mock_store = MagicMock()
+        mock_store.load_latest.return_value = old
+        mock_store_cls.return_value = mock_store
+
+        result = runner.invoke(
+            app,
+            ["diff", "--db", "postgresql://host/db", "--output-dir", str(tmp_path)],
+        )
+        output = _strip_ansi(result.output)
+        assert "Enums" in output
+        assert "order_status" in output
+        assert "__enums__" not in output
+        assert result.exit_code == 0

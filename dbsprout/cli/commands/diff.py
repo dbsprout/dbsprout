@@ -9,7 +9,7 @@ import typer
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from dbsprout.migrate.models import SchemaChange
+    from dbsprout.migrate.models import SchemaChange, SchemaChangeType
     from dbsprout.schema.models import DatabaseSchema
 
 
@@ -65,6 +65,174 @@ def _summarize(changes: list[SchemaChange]) -> dict[str, int]:
     for ct in SchemaChangeType:
         summary[ct.value] = sum(1 for c in changes if c.change_type == ct)
     return summary
+
+
+_SUMMARY_LABELS: list[tuple[str, str]] = [
+    ("table_added", "+tables"),
+    ("table_removed", "-tables"),
+    ("column_added", "+cols"),
+    ("column_removed", "-cols"),
+    ("column_type_changed", "~type"),
+    ("column_nullability_changed", "~null"),
+    ("column_default_changed", "~default"),
+    ("foreign_key_added", "+fks"),
+    ("foreign_key_removed", "-fks"),
+    ("index_added", "+idx"),
+    ("index_removed", "-idx"),
+    ("enum_changed", "~enums"),
+]
+
+
+def _render_no_changes(
+    old_schema: DatabaseSchema,
+    safe_new_source: str,
+    output_format: str,
+) -> None:
+    """Render the empty-diff result in either rich or json format."""
+    from dbsprout.cli.console import console  # noqa: PLC0415
+
+    if output_format == "json":
+        import json  # noqa: PLC0415
+        from datetime import datetime, timezone  # noqa: PLC0415
+
+        payload = {
+            "summary": {"total": 0},
+            "old_snapshot": old_schema.schema_hash()[:8],
+            "new_source": safe_new_source,
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "changes": [],
+        }
+        print(json.dumps(payload, indent=2))  # noqa: T201
+    else:
+        console.print("[green]✓ No changes detected.[/green]")
+
+
+def _render_rich(
+    changes: list[SchemaChange],
+    old_schema: DatabaseSchema,
+    safe_new_source: str,
+) -> None:
+    """Render a non-empty diff result to the Rich console."""
+    _render_rich_header(changes, old_schema, safe_new_source)
+    _render_rich_changes(changes)
+
+
+def _render_rich_header(
+    changes: list[SchemaChange],
+    old_schema: DatabaseSchema,
+    safe_new_source: str,
+) -> None:
+    """Build the summary Panel at the top of the report."""
+    from datetime import datetime, timezone  # noqa: PLC0415
+
+    from rich.panel import Panel  # noqa: PLC0415
+
+    from dbsprout.cli.console import console  # noqa: PLC0415
+
+    summary = _summarize(changes)
+    old_hash = old_schema.schema_hash()[:8]
+    old_tables = len(old_schema.tables)
+    timestamp = datetime.now(timezone.utc).isoformat()
+
+    parts: list[str] = []
+    for key, label in _SUMMARY_LABELS:
+        count = summary.get(key, 0)
+        if count > 0:
+            parts.append(f"{label}: {count}")
+    summary_line = ", ".join(parts) if parts else "no changes"
+
+    body = (
+        f"old: {old_hash} ({old_tables} tables)\n"
+        f"new: {safe_new_source}\n"
+        f"summary: {summary_line}\n"
+        f"generated: {timestamp}"
+    )
+    console.print(Panel(body, title="Schema Drift", border_style="cyan"))
+
+
+def _render_rich_changes(changes: list[SchemaChange]) -> None:
+    """Print grouped change sections under the header panel."""
+    from dbsprout.cli.console import console  # noqa: PLC0415
+    from dbsprout.migrate.models import SchemaChangeType  # noqa: PLC0415
+
+    groups: dict[str, list[SchemaChange]] = {
+        "Tables": [],
+        "Columns": [],
+        "Foreign Keys": [],
+        "Indexes": [],
+        "Enums": [],
+    }
+    for c in changes:
+        if c.change_type in {
+            SchemaChangeType.TABLE_ADDED,
+            SchemaChangeType.TABLE_REMOVED,
+        }:
+            groups["Tables"].append(c)
+        elif c.change_type in {
+            SchemaChangeType.COLUMN_ADDED,
+            SchemaChangeType.COLUMN_REMOVED,
+            SchemaChangeType.COLUMN_TYPE_CHANGED,
+            SchemaChangeType.COLUMN_NULLABILITY_CHANGED,
+            SchemaChangeType.COLUMN_DEFAULT_CHANGED,
+        }:
+            groups["Columns"].append(c)
+        elif c.change_type in {
+            SchemaChangeType.FOREIGN_KEY_ADDED,
+            SchemaChangeType.FOREIGN_KEY_REMOVED,
+        }:
+            groups["Foreign Keys"].append(c)
+        elif c.change_type in {
+            SchemaChangeType.INDEX_ADDED,
+            SchemaChangeType.INDEX_REMOVED,
+        }:
+            groups["Indexes"].append(c)
+        elif c.change_type == SchemaChangeType.ENUM_CHANGED:
+            groups["Enums"].append(c)
+
+    for group_name, group_changes in groups.items():
+        if not group_changes:
+            continue
+        console.print(f"\n[bold]{group_name}[/bold]")
+        for c in group_changes:
+            prefix = _change_prefix(c.change_type)
+            line = _format_change_line(c)
+            console.print(f"  {prefix} {line}")
+
+
+def _change_prefix(ct: SchemaChangeType) -> str:
+    """Return the colour-coded marker for a change type."""
+    if ct.value.endswith("_added"):
+        return "[green]+[/green]"
+    if ct.value.endswith("_removed"):
+        return "[red]-[/red]"
+    return "[yellow]~[/yellow]"
+
+
+def _format_change_line(c: SchemaChange) -> str:
+    """Format a single change into a human-readable line."""
+    from dbsprout.migrate.models import SchemaChangeType  # noqa: PLC0415
+
+    ct = c.change_type
+    col_ref = f"{c.table_name}.{c.column_name}"
+    formatters: dict[SchemaChangeType, str] = {
+        SchemaChangeType.ENUM_CHANGED: f"enum {c.column_name or '<unknown>'}",
+        SchemaChangeType.COLUMN_ADDED: col_ref,
+        SchemaChangeType.COLUMN_REMOVED: col_ref,
+        SchemaChangeType.COLUMN_TYPE_CHANGED: f"{col_ref}: {c.old_value} → {c.new_value}",
+        SchemaChangeType.COLUMN_NULLABILITY_CHANGED: (
+            f"{col_ref}: nullable {c.old_value} → {c.new_value}"
+        ),
+        SchemaChangeType.COLUMN_DEFAULT_CHANGED: (
+            f"{col_ref}: default {c.old_value!r} → {c.new_value!r}"
+        ),
+        SchemaChangeType.FOREIGN_KEY_ADDED: f"{c.table_name} foreign key",
+        SchemaChangeType.FOREIGN_KEY_REMOVED: f"{c.table_name} foreign key",
+        SchemaChangeType.INDEX_ADDED: f"{c.table_name} index",
+        SchemaChangeType.INDEX_REMOVED: f"{c.table_name} index",
+        SchemaChangeType.TABLE_ADDED: c.table_name,
+        SchemaChangeType.TABLE_REMOVED: c.table_name,
+    }
+    return formatters.get(ct, str(ct.value))
 
 
 def diff_command(
@@ -128,23 +296,14 @@ def diff_command(
     changes = SchemaDiffer.diff(old_schema, new_schema)
 
     if not changes:
-        if output_format == "json":
-            import json  # noqa: PLC0415
-            from datetime import datetime, timezone  # noqa: PLC0415
-
-            payload = {
-                "summary": {"total": 0},
-                "old_snapshot": old_schema.schema_hash()[:8],
-                "new_source": safe_new_source,
-                "generated_at": datetime.now(timezone.utc).isoformat(),
-                "changes": [],
-            }
-            print(json.dumps(payload, indent=2))  # noqa: T201
-        else:
-            console.print("[green]✓ No changes detected.[/green]")
+        _render_no_changes(old_schema, safe_new_source, output_format)
         raise typer.Exit(code=0)
 
-    raise NotImplementedError
+    if output_format == "json":
+        raise NotImplementedError  # Task 12
+
+    _render_rich(changes, old_schema, safe_new_source)
+    raise typer.Exit(code=0)  # Task 13 will change to code=1
 
 
 def _parse_schema_file(file_path: str) -> DatabaseSchema:
