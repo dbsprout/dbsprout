@@ -18,6 +18,8 @@ from dbsprout.schema.models import (
     ColumnSchema,
     ColumnType,
     DatabaseSchema,
+    ForeignKeySchema,
+    IndexSchema,
     TableSchema,
 )
 
@@ -904,3 +906,227 @@ class TestDiffCorruptSnapshots:
         assert result.exit_code == 2
         output = _strip_ansi(result.output)
         assert "no snapshots found" in output.lower()
+
+
+class TestDiffCoverageGaps:
+    """Tests targeting specific uncovered branches in diff.py."""
+
+    def test_malformed_toml_exits_2(self, tmp_path: Path) -> None:
+        """Malformed dbsprout.toml → load_config raises ValueError → exit 2."""
+        (tmp_path / "dbsprout.toml").write_text("[schema\nthis is not valid toml ====")
+        result = runner.invoke(app, ["diff", "--output-dir", str(tmp_path)])
+        assert result.exit_code == 2
+        output = _strip_ansi(result.output)
+        assert "no schema source" in output.lower()
+
+    @patch("dbsprout.migrate.snapshot.SnapshotStore")
+    @patch("dbsprout.schema.introspect.introspect")
+    def test_rich_renders_foreign_key_changes(
+        self,
+        mock_introspect: MagicMock,
+        mock_store_cls: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        """FK_REMOVED should appear in the 'Foreign Keys' group."""
+        old = DatabaseSchema(
+            tables=[
+                TableSchema(
+                    name="users",
+                    columns=[ColumnSchema(name="id", data_type=ColumnType.INTEGER, nullable=False)],
+                    primary_key=["id"],
+                ),
+                TableSchema(
+                    name="orders",
+                    columns=[
+                        ColumnSchema(name="id", data_type=ColumnType.INTEGER, nullable=False),
+                        ColumnSchema(
+                            name="user_id",
+                            data_type=ColumnType.INTEGER,
+                            nullable=False,
+                        ),
+                    ],
+                    primary_key=["id"],
+                    foreign_keys=[
+                        ForeignKeySchema(
+                            columns=["user_id"],
+                            ref_table="users",
+                            ref_columns=["id"],
+                        ),
+                    ],
+                ),
+            ],
+            dialect="sqlite",
+        )
+        new = DatabaseSchema(
+            tables=[
+                TableSchema(
+                    name="users",
+                    columns=[ColumnSchema(name="id", data_type=ColumnType.INTEGER, nullable=False)],
+                    primary_key=["id"],
+                ),
+                TableSchema(
+                    name="orders",
+                    columns=[
+                        ColumnSchema(name="id", data_type=ColumnType.INTEGER, nullable=False),
+                        ColumnSchema(
+                            name="user_id",
+                            data_type=ColumnType.INTEGER,
+                            nullable=False,
+                        ),
+                    ],
+                    primary_key=["id"],
+                    foreign_keys=[],
+                ),
+            ],
+            dialect="sqlite",
+        )
+        mock_introspect.return_value = new
+        mock_store = MagicMock()
+        mock_store.load_latest.return_value = old
+        mock_store_cls.return_value = mock_store
+
+        result = runner.invoke(
+            app, ["diff", "--db", "sqlite:///x.db", "--output-dir", str(tmp_path)]
+        )
+        assert result.exit_code == 1
+        output = _strip_ansi(result.output)
+        assert "Foreign Keys" in output
+
+    @patch("dbsprout.migrate.snapshot.SnapshotStore")
+    @patch("dbsprout.schema.introspect.introspect")
+    def test_rich_renders_index_changes(
+        self,
+        mock_introspect: MagicMock,
+        mock_store_cls: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        """INDEX_ADDED should appear in the 'Indexes' group."""
+        old = DatabaseSchema(
+            tables=[
+                TableSchema(
+                    name="users",
+                    columns=[
+                        ColumnSchema(name="id", data_type=ColumnType.INTEGER, nullable=False),
+                        ColumnSchema(
+                            name="email",
+                            data_type=ColumnType.VARCHAR,
+                            max_length=255,
+                        ),
+                    ],
+                    primary_key=["id"],
+                    indexes=[],
+                )
+            ],
+            dialect="sqlite",
+        )
+        new = DatabaseSchema(
+            tables=[
+                TableSchema(
+                    name="users",
+                    columns=[
+                        ColumnSchema(name="id", data_type=ColumnType.INTEGER, nullable=False),
+                        ColumnSchema(
+                            name="email",
+                            data_type=ColumnType.VARCHAR,
+                            max_length=255,
+                        ),
+                    ],
+                    primary_key=["id"],
+                    indexes=[IndexSchema(name="idx_email", columns=["email"], unique=True)],
+                )
+            ],
+            dialect="sqlite",
+        )
+        mock_introspect.return_value = new
+        mock_store = MagicMock()
+        mock_store.load_latest.return_value = old
+        mock_store_cls.return_value = mock_store
+
+        result = runner.invoke(
+            app, ["diff", "--db", "sqlite:///x.db", "--output-dir", str(tmp_path)]
+        )
+        assert result.exit_code == 1
+        output = _strip_ansi(result.output)
+        assert "Indexes" in output
+
+    @patch("dbsprout.migrate.snapshot.SnapshotStore")
+    def test_file_dbml_parsed(self, mock_store_cls: MagicMock, tmp_path: Path) -> None:
+        """--file with .dbml suffix → dispatches to parse_dbml."""
+        dbml_file = tmp_path / "schema.dbml"
+        dbml_file.write_text(
+            "Table users {\n"
+            "  id integer [pk]\n"
+            "  email varchar [not null, unique]\n"
+            "  name varchar\n"
+            "}\n"
+        )
+        mock_store = MagicMock()
+        mock_store.load_latest.return_value = _simple_schema_for_diff()
+        mock_store_cls.return_value = mock_store
+
+        result = runner.invoke(
+            app, ["diff", "--file", str(dbml_file), "--output-dir", str(tmp_path)]
+        )
+        assert result.exit_code != 2
+
+    @patch("dbsprout.migrate.snapshot.SnapshotStore")
+    def test_file_mermaid_parsed(self, mock_store_cls: MagicMock, tmp_path: Path) -> None:
+        """--file with .mermaid suffix → dispatches to parse_mermaid."""
+        mm_file = tmp_path / "schema.mermaid"
+        mm_file.write_text(
+            "erDiagram\n"
+            "    USERS {\n"
+            "        int id PK\n"
+            "        string email\n"
+            "        string name\n"
+            "    }\n"
+        )
+        mock_store = MagicMock()
+        mock_store.load_latest.return_value = _simple_schema_for_diff()
+        mock_store_cls.return_value = mock_store
+
+        result = runner.invoke(app, ["diff", "--file", str(mm_file), "--output-dir", str(tmp_path)])
+        assert result.exit_code != 2
+
+    @patch("dbsprout.migrate.snapshot.SnapshotStore")
+    def test_file_plantuml_parsed(self, mock_store_cls: MagicMock, tmp_path: Path) -> None:
+        """--file with .puml suffix → dispatches to parse_plantuml."""
+        puml_file = tmp_path / "schema.puml"
+        puml_file.write_text(
+            "@startuml\n"
+            'entity "users" as users {\n'
+            "  *id : integer <<PK>>\n"
+            "  --\n"
+            "  *email : varchar\n"
+            "  name : varchar\n"
+            "}\n"
+            "@enduml\n"
+        )
+        mock_store = MagicMock()
+        mock_store.load_latest.return_value = _simple_schema_for_diff()
+        mock_store_cls.return_value = mock_store
+
+        result = runner.invoke(
+            app, ["diff", "--file", str(puml_file), "--output-dir", str(tmp_path)]
+        )
+        assert result.exit_code != 2
+
+    @patch("dbsprout.migrate.snapshot.SnapshotStore")
+    def test_file_prisma_parsed(self, mock_store_cls: MagicMock, tmp_path: Path) -> None:
+        """--file with .prisma suffix → dispatches to parse_prisma."""
+        prisma_file = tmp_path / "schema.prisma"
+        prisma_file.write_text(
+            "model User {\n"
+            "  id    Int    @id @default(autoincrement())\n"
+            "  email String @unique\n"
+            "  name  String?\n"
+            "}\n"
+        )
+        mock_store = MagicMock()
+        mock_store.load_latest.return_value = _simple_schema_for_diff()
+        mock_store_cls.return_value = mock_store
+
+        result = runner.invoke(
+            app, ["diff", "--file", str(prisma_file), "--output-dir", str(tmp_path)]
+        )
+        assert result.exit_code != 2

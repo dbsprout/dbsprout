@@ -50,7 +50,7 @@ def _resolve_source(
         return ("file", src)
     if url.drivername:
         return ("db", src)
-    return ("file", src)
+    return ("file", src)  # pragma: no cover — unreachable: make_url() always yields drivername
 
 
 def _summarize(changes: list[SchemaChange]) -> dict[str, int]:
