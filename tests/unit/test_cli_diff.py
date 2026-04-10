@@ -303,3 +303,58 @@ class TestDiffFilePath:
         assert result.exit_code == 2
         output = _strip_ansi(result.output)
         assert "error" in output.lower()
+
+
+class TestDiffConfigFallback:
+    @patch("dbsprout.migrate.snapshot.SnapshotStore")
+    @patch("dbsprout.schema.introspect.introspect")
+    def test_falls_back_to_config_db_url(
+        self,
+        mock_introspect: MagicMock,
+        mock_store_cls: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        """No flags → reads dbsprout.toml → uses schema.source as DB URL."""
+        toml_content = (
+            "[schema]\n"
+            'dialect = "sqlite"\n'
+            'source = "sqlite:///./data.db"\n'
+            'snapshot = ".dbsprout/snapshots/"\n'
+        )
+        (tmp_path / "dbsprout.toml").write_text(toml_content)
+
+        mock_introspect.return_value = _simple_schema_for_diff()
+        mock_store = MagicMock()
+        mock_store.load_latest.return_value = _simple_schema_for_diff()
+        mock_store_cls.return_value = mock_store
+
+        result = runner.invoke(app, ["diff", "--output-dir", str(tmp_path)])
+        assert result.exit_code != 2
+        mock_introspect.assert_called_once_with("sqlite:///./data.db")
+
+    @patch("dbsprout.migrate.snapshot.SnapshotStore")
+    def test_falls_back_to_config_file_path(
+        self, mock_store_cls: MagicMock, tmp_path: Path
+    ) -> None:
+        """No flags → reads dbsprout.toml → treats schema.source as file path."""
+        sql_file = tmp_path / "schema.sql"
+        sql_file.write_text("CREATE TABLE users (id INTEGER PRIMARY KEY, name VARCHAR(255));")
+        toml_content = f'[schema]\ndialect = "sqlite"\nsource = "{sql_file}"\n'
+        (tmp_path / "dbsprout.toml").write_text(toml_content)
+
+        mock_store = MagicMock()
+        mock_store.load_latest.return_value = _simple_schema_for_diff()
+        mock_store_cls.return_value = mock_store
+
+        result = runner.invoke(app, ["diff", "--output-dir", str(tmp_path)])
+        assert result.exit_code != 2
+
+    def test_config_exists_but_source_is_empty_exits_2(self, tmp_path: Path) -> None:
+        """dbsprout.toml exists but schema.source is missing or empty → exit 2."""
+        toml_content = '[schema]\ndialect = "sqlite"\n# source not set\n'
+        (tmp_path / "dbsprout.toml").write_text(toml_content)
+
+        result = runner.invoke(app, ["diff", "--output-dir", str(tmp_path)])
+        assert result.exit_code == 2
+        output = _strip_ansi(result.output)
+        assert "no schema source" in output.lower()
