@@ -298,6 +298,21 @@ def _scrub_secrets(message: str, source_url: str) -> str:
     return message.replace(password, "***").replace(source_url, safe_url)
 
 
+def _introspect_db(url: str) -> DatabaseSchema:
+    """Introspect a live database — testable seam for mocking.
+
+    Tests patch this function directly via
+    ``@patch("dbsprout.cli.commands.diff._introspect_db")``.  This avoids a
+    Python 3.10 ``unittest.mock`` quirk where patching
+    ``dbsprout.schema.introspect.introspect`` resolves the target via attribute
+    access on the ``dbsprout.schema`` package — which returns the re-exported
+    function at ``dbsprout/schema/__init__.py`` instead of the submodule.
+    """
+    from dbsprout.schema.introspect import introspect  # noqa: PLC0415
+
+    return introspect(url)
+
+
 def _load_new_schema(
     source_kind: Literal["db", "file"], source_value: str
 ) -> tuple[DatabaseSchema, str]:
@@ -306,16 +321,9 @@ def _load_new_schema(
     Returns the new :class:`DatabaseSchema` and a display-safe source string
     (DB URLs are rendered with passwords hidden).
     """
-    import importlib  # noqa: PLC0415
-
     import sqlalchemy as sa  # noqa: PLC0415
 
     from dbsprout.cli.console import console  # noqa: PLC0415
-
-    # NOTE: ``dbsprout.schema.__init__`` re-exports the ``introspect`` function,
-    # which shadows the submodule attribute lookup. Use ``importlib`` so
-    # ``@patch("dbsprout.schema.introspect.introspect")`` still works in tests.
-    introspect_module = importlib.import_module("dbsprout.schema.introspect")
 
     if source_kind == "db":
         # Pre-compute the sanitized URL so it's available for both success and
@@ -327,7 +335,7 @@ def _load_new_schema(
             safe_new_source = "<invalid URL>"
 
         try:
-            new_schema: DatabaseSchema = introspect_module.introspect(source_value)
+            new_schema: DatabaseSchema = _introspect_db(source_value)
         except (ValueError, sa.exc.SQLAlchemyError) as exc:
             msg = _scrub_secrets(str(exc), source_value)
             console.print(f"[red]Error:[/red] {msg}")

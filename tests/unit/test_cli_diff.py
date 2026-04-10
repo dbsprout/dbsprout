@@ -171,7 +171,7 @@ class TestDiffSnapshotFlag:
 
 class TestDiffDbIntrospection:
     @patch("dbsprout.migrate.snapshot.SnapshotStore")
-    @patch("dbsprout.schema.introspect.introspect")
+    @patch("dbsprout.cli.commands.diff._introspect_db")
     def test_db_url_introspects_live_schema(
         self,
         mock_introspect: MagicMock,
@@ -203,7 +203,7 @@ class TestDiffDbIntrospection:
         mock_introspect.assert_called_once_with("sqlite:///x.db")
 
     @patch("dbsprout.migrate.snapshot.SnapshotStore")
-    @patch("dbsprout.schema.introspect.introspect")
+    @patch("dbsprout.cli.commands.diff._introspect_db")
     def test_db_introspection_failure_exits_2(
         self,
         mock_introspect: MagicMock,
@@ -227,7 +227,7 @@ class TestDiffDbIntrospection:
         assert "error" in output.lower()
 
     @patch("dbsprout.migrate.snapshot.SnapshotStore")
-    @patch("dbsprout.schema.introspect.introspect")
+    @patch("dbsprout.cli.commands.diff._introspect_db")
     def test_db_password_not_leaked_on_introspection_error(
         self,
         mock_introspect: MagicMock,
@@ -260,7 +260,7 @@ class TestDiffDbIntrospection:
         )
 
     @patch("dbsprout.migrate.snapshot.SnapshotStore")
-    @patch("dbsprout.schema.introspect.introspect")
+    @patch("dbsprout.cli.commands.diff._introspect_db")
     def test_db_password_not_leaked_rich_format(
         self,
         mock_introspect: MagicMock,
@@ -345,7 +345,7 @@ class TestDiffFilePath:
 
 class TestDiffConfigFallback:
     @patch("dbsprout.migrate.snapshot.SnapshotStore")
-    @patch("dbsprout.schema.introspect.introspect")
+    @patch("dbsprout.cli.commands.diff._introspect_db")
     def test_falls_back_to_config_db_url(
         self,
         mock_introspect: MagicMock,
@@ -400,7 +400,7 @@ class TestDiffConfigFallback:
 
 class TestDiffNoChanges:
     @patch("dbsprout.migrate.snapshot.SnapshotStore")
-    @patch("dbsprout.schema.introspect.introspect")
+    @patch("dbsprout.cli.commands.diff._introspect_db")
     def test_no_changes_exits_0_rich_format(
         self,
         mock_introspect: MagicMock,
@@ -423,7 +423,7 @@ class TestDiffNoChanges:
         assert "no changes detected" in output.lower()
 
     @patch("dbsprout.migrate.snapshot.SnapshotStore")
-    @patch("dbsprout.schema.introspect.introspect")
+    @patch("dbsprout.cli.commands.diff._introspect_db")
     def test_no_changes_exits_0_json_format(
         self,
         mock_introspect: MagicMock,
@@ -480,7 +480,7 @@ class TestDiffSummaryHelper:
 
 class TestDiffRichRender:
     @patch("dbsprout.migrate.snapshot.SnapshotStore")
-    @patch("dbsprout.schema.introspect.introspect")
+    @patch("dbsprout.cli.commands.diff._introspect_db")
     def test_rich_panel_header_and_table_added(
         self,
         mock_introspect: MagicMock,
@@ -523,7 +523,7 @@ class TestDiffRichRender:
         assert result.exit_code == 1  # drift detected → CI signal
 
     @patch("dbsprout.migrate.snapshot.SnapshotStore")
-    @patch("dbsprout.schema.introspect.introspect")
+    @patch("dbsprout.cli.commands.diff._introspect_db")
     def test_rich_column_type_change_format(
         self,
         mock_introspect: MagicMock,
@@ -575,7 +575,7 @@ class TestDiffRichRender:
         assert result.exit_code == 1
 
     @patch("dbsprout.migrate.snapshot.SnapshotStore")
-    @patch("dbsprout.schema.introspect.introspect")
+    @patch("dbsprout.cli.commands.diff._introspect_db")
     def test_rich_enum_changed_uses_name_not_sentinel(
         self,
         mock_introspect: MagicMock,
@@ -624,7 +624,7 @@ class TestDiffRichRender:
 
 class TestDiffJsonRender:
     @patch("dbsprout.migrate.snapshot.SnapshotStore")
-    @patch("dbsprout.schema.introspect.introspect")
+    @patch("dbsprout.cli.commands.diff._introspect_db")
     def test_json_shape_and_content(
         self,
         mock_introspect: MagicMock,
@@ -671,7 +671,7 @@ class TestDiffJsonRender:
         assert "generated_at" in payload
 
     @patch("dbsprout.migrate.snapshot.SnapshotStore")
-    @patch("dbsprout.schema.introspect.introspect")
+    @patch("dbsprout.cli.commands.diff._introspect_db")
     def test_json_output_has_no_ansi_codes(
         self,
         mock_introspect: MagicMock,
@@ -715,7 +715,7 @@ class TestDiffJsonRender:
 
 class TestDiffExitCodes:
     @patch("dbsprout.migrate.snapshot.SnapshotStore")
-    @patch("dbsprout.schema.introspect.introspect")
+    @patch("dbsprout.cli.commands.diff._introspect_db")
     def test_exit_1_on_drift_rich(
         self,
         mock_introspect: MagicMock,
@@ -747,7 +747,7 @@ class TestDiffExitCodes:
         assert result.exit_code == 1
 
     @patch("dbsprout.migrate.snapshot.SnapshotStore")
-    @patch("dbsprout.schema.introspect.introspect")
+    @patch("dbsprout.cli.commands.diff._introspect_db")
     def test_exit_1_on_drift_json(
         self,
         mock_introspect: MagicMock,
@@ -791,7 +791,7 @@ class TestDiffSecurity:
     """Regression coverage that the render path sanitizes DB passwords."""
 
     @patch("dbsprout.migrate.snapshot.SnapshotStore")
-    @patch("dbsprout.schema.introspect.introspect")
+    @patch("dbsprout.cli.commands.diff._introspect_db")
     def test_password_sanitized_in_json_output(
         self,
         mock_introspect: MagicMock,
@@ -832,7 +832,7 @@ class TestDiffSecurity:
         assert "db.example.com" in payload["new_source"]
 
     @patch("dbsprout.migrate.snapshot.SnapshotStore")
-    @patch("dbsprout.schema.introspect.introspect")
+    @patch("dbsprout.cli.commands.diff._introspect_db")
     def test_password_sanitized_in_rich_output(
         self,
         mock_introspect: MagicMock,
@@ -874,7 +874,7 @@ class TestDiffSecurity:
 class TestDiffCorruptSnapshots:
     """Verify diff survives corrupt snapshot files (SnapshotStore drops them)."""
 
-    @patch("dbsprout.schema.introspect.introspect")
+    @patch("dbsprout.cli.commands.diff._introspect_db")
     def test_corrupt_latest_snapshot_falls_back_to_older(
         self,
         mock_introspect: MagicMock,
@@ -953,7 +953,7 @@ class TestDiffCoverageGaps:
         assert "no schema source" in output.lower()
 
     @patch("dbsprout.migrate.snapshot.SnapshotStore")
-    @patch("dbsprout.schema.introspect.introspect")
+    @patch("dbsprout.cli.commands.diff._introspect_db")
     def test_rich_renders_foreign_key_changes(
         self,
         mock_introspect: MagicMock,
@@ -1026,7 +1026,7 @@ class TestDiffCoverageGaps:
         assert "Foreign Keys" in output
 
     @patch("dbsprout.migrate.snapshot.SnapshotStore")
-    @patch("dbsprout.schema.introspect.introspect")
+    @patch("dbsprout.cli.commands.diff._introspect_db")
     def test_rich_renders_index_changes(
         self,
         mock_introspect: MagicMock,
@@ -1229,7 +1229,7 @@ class TestDiffColumnMetaChanges:
     """AC-11: column nullability and default render tests."""
 
     @patch("dbsprout.migrate.snapshot.SnapshotStore")
-    @patch("dbsprout.schema.introspect.introspect")
+    @patch("dbsprout.cli.commands.diff._introspect_db")
     def test_rich_column_nullability_change_format(
         self,
         mock_introspect: MagicMock,
@@ -1288,7 +1288,7 @@ class TestDiffColumnMetaChanges:
         assert "→" in output
 
     @patch("dbsprout.migrate.snapshot.SnapshotStore")
-    @patch("dbsprout.schema.introspect.introspect")
+    @patch("dbsprout.cli.commands.diff._introspect_db")
     def test_rich_column_default_change_format(
         self,
         mock_introspect: MagicMock,
@@ -1351,7 +1351,7 @@ class TestDiffGroupOrdering:
     """AC-12: grouped change sections render in the canonical order."""
 
     @patch("dbsprout.migrate.snapshot.SnapshotStore")
-    @patch("dbsprout.schema.introspect.introspect")
+    @patch("dbsprout.cli.commands.diff._introspect_db")
     def test_rich_groups_render_in_canonical_order(
         self,
         mock_introspect: MagicMock,
@@ -1593,7 +1593,7 @@ class TestDiffJsonFieldFormats:
     """JSON field format assertions (Reviewer 4)."""
 
     @patch("dbsprout.migrate.snapshot.SnapshotStore")
-    @patch("dbsprout.schema.introspect.introspect")
+    @patch("dbsprout.cli.commands.diff._introspect_db")
     def test_json_generated_at_is_iso8601_utc(
         self,
         mock_introspect: MagicMock,
@@ -1638,7 +1638,7 @@ class TestDiffJsonFieldFormats:
         assert parsed.utcoffset() == timezone.utc.utcoffset(parsed), "generated_at must be UTC"
 
     @patch("dbsprout.migrate.snapshot.SnapshotStore")
-    @patch("dbsprout.schema.introspect.introspect")
+    @patch("dbsprout.cli.commands.diff._introspect_db")
     def test_json_old_snapshot_is_8_char_hex_prefix(
         self,
         mock_introspect: MagicMock,
