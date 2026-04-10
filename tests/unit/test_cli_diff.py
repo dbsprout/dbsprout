@@ -13,6 +13,7 @@ from typer.testing import CliRunner
 from dbsprout.cli.app import app
 from dbsprout.cli.commands.diff import _summarize
 from dbsprout.migrate.models import SchemaChange, SchemaChangeType
+from dbsprout.migrate.snapshot import SnapshotStore
 from dbsprout.schema.models import (
     ColumnSchema,
     ColumnType,
@@ -749,3 +750,157 @@ class TestDiffExitCodes:
             ],
         )
         assert result.exit_code == 1
+
+
+class TestDiffSecurity:
+    """Regression coverage that the render path sanitizes DB passwords."""
+
+    @patch("dbsprout.migrate.snapshot.SnapshotStore")
+    @patch("dbsprout.schema.introspect.introspect")
+    def test_password_sanitized_in_json_output(
+        self,
+        mock_introspect: MagicMock,
+        mock_store_cls: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        """JSON output's new_source must NOT contain the password from --db."""
+        old = _simple_schema_for_diff()
+        new = DatabaseSchema(
+            tables=[
+                *old.tables,
+                TableSchema(
+                    name="orders",
+                    columns=[ColumnSchema(name="id", data_type=ColumnType.INTEGER, nullable=False)],
+                    primary_key=["id"],
+                ),
+            ],
+            dialect="postgresql",
+        )
+        mock_introspect.return_value = new
+        mock_store = MagicMock()
+        mock_store.load_latest.return_value = old
+        mock_store_cls.return_value = mock_store
+
+        secret = "supersecret123"  # noqa: S105 — test fixture only
+        url = f"postgresql://myuser:{secret}@db.example.com:5432/mydb"
+
+        result = runner.invoke(
+            app,
+            ["diff", "--db", url, "--format", "json", "--output-dir", str(tmp_path)],
+        )
+        assert result.exit_code == 1  # drift detected
+        assert secret not in result.output
+        payload = json.loads(result.output)
+        assert secret not in payload["new_source"]
+        # The sanitized URL should still contain the username and host
+        assert "myuser" in payload["new_source"]
+        assert "db.example.com" in payload["new_source"]
+
+    @patch("dbsprout.migrate.snapshot.SnapshotStore")
+    @patch("dbsprout.schema.introspect.introspect")
+    def test_password_sanitized_in_rich_output(
+        self,
+        mock_introspect: MagicMock,
+        mock_store_cls: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        """Rich Panel's 'new:' line must NOT contain the password from --db."""
+        old = _simple_schema_for_diff()
+        new = DatabaseSchema(
+            tables=[
+                *old.tables,
+                TableSchema(
+                    name="orders",
+                    columns=[ColumnSchema(name="id", data_type=ColumnType.INTEGER, nullable=False)],
+                    primary_key=["id"],
+                ),
+            ],
+            dialect="postgresql",
+        )
+        mock_introspect.return_value = new
+        mock_store = MagicMock()
+        mock_store.load_latest.return_value = old
+        mock_store_cls.return_value = mock_store
+
+        secret = "topsecret_password!"  # noqa: S105 — test fixture only
+        url = f"postgresql://alice:{secret}@prod.example.com/app"
+
+        result = runner.invoke(
+            app,
+            ["diff", "--db", url, "--output-dir", str(tmp_path)],
+        )
+        assert result.exit_code == 1
+        output = _strip_ansi(result.output)
+        assert secret not in output
+        assert "alice" in output  # username is fine
+        assert "prod.example.com" in output  # host is fine
+
+
+class TestDiffCorruptSnapshots:
+    """Verify diff survives corrupt snapshot files (SnapshotStore drops them)."""
+
+    @patch("dbsprout.schema.introspect.introspect")
+    def test_corrupt_latest_snapshot_falls_back_to_older(
+        self,
+        mock_introspect: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        """A corrupt newest snapshot + a valid older one → diff uses the older, succeeds.
+
+        This is an integration test that does NOT mock SnapshotStore — it uses
+        a real store over a real filesystem.
+        """
+        snap_dir = tmp_path / ".dbsprout" / "snapshots"
+        snap_dir.mkdir(parents=True)
+
+        # Valid older snapshot via the real store (timestamp earlier)
+        valid_schema = _simple_schema_for_diff()
+        store = SnapshotStore(base_dir=snap_dir)
+        store.save(valid_schema)
+
+        # Find the written file and verify it exists
+        written = list(snap_dir.glob("*.json"))
+        assert len(written) == 1
+
+        # Corrupt NEWER snapshot (lexicographically later filename)
+        corrupt_path = snap_dir / "99999999T999999Z_deadbeef.json"
+        corrupt_path.write_text("this is not valid json {{{")
+
+        # Introspect returns a schema with one extra table → drift expected
+        new_schema = DatabaseSchema(
+            tables=[
+                *valid_schema.tables,
+                TableSchema(
+                    name="orders",
+                    columns=[ColumnSchema(name="id", data_type=ColumnType.INTEGER, nullable=False)],
+                    primary_key=["id"],
+                ),
+            ],
+            dialect="sqlite",
+        )
+        mock_introspect.return_value = new_schema
+
+        result = runner.invoke(
+            app,
+            ["diff", "--db", "sqlite:///x.db", "--output-dir", str(tmp_path)],
+        )
+        # The corrupt file should be skipped, older valid one used → diff works
+        assert result.exit_code == 1  # drift detected against valid snapshot
+        output = _strip_ansi(result.output)
+        assert "orders" in output
+
+    def test_all_snapshots_corrupt_exits_2(self, tmp_path: Path) -> None:
+        """Every snapshot file is corrupt → SnapshotStore returns None → exit 2."""
+        snap_dir = tmp_path / ".dbsprout" / "snapshots"
+        snap_dir.mkdir(parents=True)
+
+        (snap_dir / "20260101T000000Z_aaaaaaaa.json").write_text("garbage 1")
+        (snap_dir / "20260102T000000Z_bbbbbbbb.json").write_text("garbage 2")
+
+        result = runner.invoke(
+            app,
+            ["diff", "--db", "sqlite:///x.db", "--output-dir", str(tmp_path)],
+        )
+        assert result.exit_code == 2
+        output = _strip_ansi(result.output)
+        assert "no snapshots found" in output.lower()
