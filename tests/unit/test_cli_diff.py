@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 import re
+import string
+from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
 
@@ -11,7 +13,7 @@ import sqlalchemy as sa
 from typer.testing import CliRunner
 
 from dbsprout.cli.app import app
-from dbsprout.cli.commands.diff import _summarize
+from dbsprout.cli.commands.diff import _change_prefix, _summarize
 from dbsprout.migrate.models import SchemaChange, SchemaChangeType
 from dbsprout.migrate.snapshot import SnapshotStore
 from dbsprout.schema.models import (
@@ -22,6 +24,7 @@ from dbsprout.schema.models import (
     IndexSchema,
     TableSchema,
 )
+from dbsprout.schema.parsers.ddl import parse_ddl
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -585,6 +588,7 @@ class TestDiffRichRender:
         output = _strip_ansi(result.output)
         assert "Enums" in output
         assert "order_status" in output
+        assert "enum: order_status" in output
         assert "__enums__" not in output
         assert result.exit_code == 1
 
@@ -1130,3 +1134,552 @@ class TestDiffCoverageGaps:
             app, ["diff", "--file", str(prisma_file), "--output-dir", str(tmp_path)]
         )
         assert result.exit_code != 2
+
+
+class TestDiffStartup:
+    """AC-29: diff must be in --help and the CLI app must not eager-import sqlalchemy."""
+
+    def test_diff_in_root_help(self) -> None:
+        """``dbsprout --help`` must list the diff command."""
+        result = runner.invoke(app, ["--help"])
+        assert result.exit_code == 0
+        assert "diff" in _strip_ansi(result.output)
+
+    def test_cli_app_does_not_eagerly_import_sqlalchemy(self) -> None:
+        """Importing ``dbsprout.cli.app`` must not pull in sqlalchemy (cold-start target).
+
+        We save and restore ``sys.modules`` to avoid polluting other tests that
+        rely on class identity for cached dbsprout modules.
+        """
+        import importlib  # noqa: PLC0415 — test-local, after snapshotting sys.modules
+        import sys  # noqa: PLC0415
+
+        prefixes = ("dbsprout", "sqlalchemy")
+        saved = {name: mod for name, mod in sys.modules.items() if name.startswith(prefixes)}
+        try:
+            for name in list(sys.modules):
+                if name.startswith(prefixes):
+                    sys.modules.pop(name, None)
+
+            importlib.import_module("dbsprout.cli.app")
+
+            assert "sqlalchemy" not in sys.modules, (
+                "dbsprout.cli.app pulls in sqlalchemy at import time — "
+                "diff_proxy must lazy-import diff_command"
+            )
+        finally:
+            for name in list(sys.modules):
+                if name.startswith(prefixes):
+                    sys.modules.pop(name, None)
+            sys.modules.update(saved)
+
+
+class TestDiffChangePrefix:
+    """AC-10: direct unit tests on the colour-coded ``_change_prefix`` helper."""
+
+    def test_added_prefix_is_green(self) -> None:
+        assert _change_prefix(SchemaChangeType.TABLE_ADDED) == "[green]+[/green]"
+        assert _change_prefix(SchemaChangeType.COLUMN_ADDED) == "[green]+[/green]"
+        assert _change_prefix(SchemaChangeType.FOREIGN_KEY_ADDED) == "[green]+[/green]"
+        assert _change_prefix(SchemaChangeType.INDEX_ADDED) == "[green]+[/green]"
+
+    def test_removed_prefix_is_red(self) -> None:
+        assert _change_prefix(SchemaChangeType.TABLE_REMOVED) == "[red]-[/red]"
+        assert _change_prefix(SchemaChangeType.COLUMN_REMOVED) == "[red]-[/red]"
+        assert _change_prefix(SchemaChangeType.FOREIGN_KEY_REMOVED) == "[red]-[/red]"
+        assert _change_prefix(SchemaChangeType.INDEX_REMOVED) == "[red]-[/red]"
+
+    def test_changed_prefix_is_yellow(self) -> None:
+        assert _change_prefix(SchemaChangeType.COLUMN_TYPE_CHANGED) == "[yellow]~[/yellow]"
+        assert _change_prefix(SchemaChangeType.COLUMN_NULLABILITY_CHANGED) == "[yellow]~[/yellow]"
+        assert _change_prefix(SchemaChangeType.COLUMN_DEFAULT_CHANGED) == "[yellow]~[/yellow]"
+        assert _change_prefix(SchemaChangeType.ENUM_CHANGED) == "[yellow]~[/yellow]"
+
+
+class TestDiffColumnMetaChanges:
+    """AC-11: column nullability and default render tests."""
+
+    @patch("dbsprout.migrate.snapshot.SnapshotStore")
+    @patch("dbsprout.schema.introspect.introspect")
+    def test_rich_column_nullability_change_format(
+        self,
+        mock_introspect: MagicMock,
+        mock_store_cls: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        """COLUMN_NULLABILITY_CHANGED → shows ``table.col: nullable OLD → NEW``."""
+        old = DatabaseSchema(
+            tables=[
+                TableSchema(
+                    name="users",
+                    columns=[
+                        ColumnSchema(name="id", data_type=ColumnType.INTEGER, nullable=False),
+                        ColumnSchema(
+                            name="email",
+                            data_type=ColumnType.VARCHAR,
+                            max_length=255,
+                            nullable=True,
+                        ),
+                    ],
+                    primary_key=["id"],
+                )
+            ],
+            dialect="sqlite",
+        )
+        new = DatabaseSchema(
+            tables=[
+                TableSchema(
+                    name="users",
+                    columns=[
+                        ColumnSchema(name="id", data_type=ColumnType.INTEGER, nullable=False),
+                        ColumnSchema(
+                            name="email",
+                            data_type=ColumnType.VARCHAR,
+                            max_length=255,
+                            nullable=False,
+                        ),
+                    ],
+                    primary_key=["id"],
+                )
+            ],
+            dialect="sqlite",
+        )
+        mock_introspect.return_value = new
+        mock_store = MagicMock()
+        mock_store.load_latest.return_value = old
+        mock_store_cls.return_value = mock_store
+
+        result = runner.invoke(
+            app,
+            ["diff", "--db", "sqlite:///x.db", "--output-dir", str(tmp_path)],
+        )
+        output = _strip_ansi(result.output)
+        assert result.exit_code == 1
+        assert "users.email: nullable" in output
+        assert "→" in output
+
+    @patch("dbsprout.migrate.snapshot.SnapshotStore")
+    @patch("dbsprout.schema.introspect.introspect")
+    def test_rich_column_default_change_format(
+        self,
+        mock_introspect: MagicMock,
+        mock_store_cls: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        """COLUMN_DEFAULT_CHANGED → shows ``table.col: default OLD → NEW``."""
+        old = DatabaseSchema(
+            tables=[
+                TableSchema(
+                    name="users",
+                    columns=[
+                        ColumnSchema(name="id", data_type=ColumnType.INTEGER, nullable=False),
+                        ColumnSchema(
+                            name="email",
+                            data_type=ColumnType.VARCHAR,
+                            max_length=255,
+                            default="'old@example.com'",
+                        ),
+                    ],
+                    primary_key=["id"],
+                )
+            ],
+            dialect="sqlite",
+        )
+        new = DatabaseSchema(
+            tables=[
+                TableSchema(
+                    name="users",
+                    columns=[
+                        ColumnSchema(name="id", data_type=ColumnType.INTEGER, nullable=False),
+                        ColumnSchema(
+                            name="email",
+                            data_type=ColumnType.VARCHAR,
+                            max_length=255,
+                            default="'new@example.com'",
+                        ),
+                    ],
+                    primary_key=["id"],
+                )
+            ],
+            dialect="sqlite",
+        )
+        mock_introspect.return_value = new
+        mock_store = MagicMock()
+        mock_store.load_latest.return_value = old
+        mock_store_cls.return_value = mock_store
+
+        result = runner.invoke(
+            app,
+            ["diff", "--db", "sqlite:///x.db", "--output-dir", str(tmp_path)],
+        )
+        output = _strip_ansi(result.output)
+        assert result.exit_code == 1
+        assert "users.email: default" in output
+        assert "→" in output
+
+
+class TestDiffGroupOrdering:
+    """AC-12: grouped change sections render in the canonical order."""
+
+    @patch("dbsprout.migrate.snapshot.SnapshotStore")
+    @patch("dbsprout.schema.introspect.introspect")
+    def test_rich_groups_render_in_canonical_order(
+        self,
+        mock_introspect: MagicMock,
+        mock_store_cls: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        """Tables appear before Columns before Foreign Keys before Indexes before Enums."""
+        old = DatabaseSchema(
+            tables=[
+                TableSchema(
+                    name="users",
+                    columns=[
+                        ColumnSchema(name="id", data_type=ColumnType.INTEGER, nullable=False),
+                    ],
+                    primary_key=["id"],
+                ),
+                TableSchema(
+                    name="orders",
+                    columns=[
+                        ColumnSchema(name="id", data_type=ColumnType.INTEGER, nullable=False),
+                        ColumnSchema(
+                            name="user_id",
+                            data_type=ColumnType.INTEGER,
+                            nullable=False,
+                        ),
+                    ],
+                    primary_key=["id"],
+                    foreign_keys=[
+                        ForeignKeySchema(
+                            columns=["user_id"],
+                            ref_table="users",
+                            ref_columns=["id"],
+                        ),
+                    ],
+                ),
+                TableSchema(
+                    name="products",
+                    columns=[
+                        ColumnSchema(name="sku", data_type=ColumnType.VARCHAR, max_length=64),
+                    ],
+                    primary_key=["sku"],
+                    indexes=[IndexSchema(name="idx_sku", columns=["sku"], unique=True)],
+                ),
+            ],
+            enums={"status": ["active", "inactive"]},
+            dialect="sqlite",
+        )
+        new = DatabaseSchema(
+            tables=[
+                TableSchema(
+                    name="users",
+                    columns=[
+                        ColumnSchema(name="id", data_type=ColumnType.INTEGER, nullable=False),
+                        ColumnSchema(
+                            name="email",
+                            data_type=ColumnType.VARCHAR,
+                            max_length=255,
+                        ),
+                    ],
+                    primary_key=["id"],
+                ),
+                TableSchema(
+                    name="orders",
+                    columns=[
+                        ColumnSchema(name="id", data_type=ColumnType.INTEGER, nullable=False),
+                        ColumnSchema(
+                            name="user_id",
+                            data_type=ColumnType.INTEGER,
+                            nullable=False,
+                        ),
+                    ],
+                    primary_key=["id"],
+                    foreign_keys=[],
+                ),
+                TableSchema(
+                    name="products",
+                    columns=[
+                        ColumnSchema(name="sku", data_type=ColumnType.VARCHAR, max_length=64),
+                    ],
+                    primary_key=["sku"],
+                    indexes=[],
+                ),
+                TableSchema(
+                    name="categories",
+                    columns=[
+                        ColumnSchema(name="id", data_type=ColumnType.INTEGER, nullable=False),
+                    ],
+                    primary_key=["id"],
+                ),
+            ],
+            enums={"status": ["active", "inactive", "pending"]},
+            dialect="sqlite",
+        )
+        mock_introspect.return_value = new
+        mock_store = MagicMock()
+        mock_store.load_latest.return_value = old
+        mock_store_cls.return_value = mock_store
+
+        result = runner.invoke(
+            app,
+            ["diff", "--db", "sqlite:///x.db", "--output-dir", str(tmp_path)],
+        )
+        assert result.exit_code == 1
+        output = _strip_ansi(result.output)
+
+        tables_pos = output.index("\nTables")
+        columns_pos = output.index("\nColumns")
+        fks_pos = output.index("\nForeign Keys")
+        indexes_pos = output.index("\nIndexes")
+        enums_pos = output.index("\nEnums")
+
+        assert tables_pos < columns_pos < fks_pos < indexes_pos < enums_pos
+
+
+class TestDiffFileSourceMatrix:
+    """File-source x format matrix coverage (Reviewer 4)."""
+
+    @patch("dbsprout.migrate.snapshot.SnapshotStore")
+    def test_rich_file_source_no_changes(
+        self,
+        mock_store_cls: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        """File source + identical schemas → exit 0, Rich 'No changes detected'."""
+        sql_file = tmp_path / "schema.sql"
+        sql_file.write_text("CREATE TABLE users (id INTEGER PRIMARY KEY);")
+
+        parsed = parse_ddl(sql_file.read_text(), source_file=str(sql_file))
+
+        mock_store = MagicMock()
+        mock_store.load_latest.return_value = parsed
+        mock_store_cls.return_value = mock_store
+
+        result = runner.invoke(
+            app,
+            ["diff", "--file", str(sql_file), "--output-dir", str(tmp_path)],
+        )
+        assert result.exit_code == 0
+        output = _strip_ansi(result.output)
+        assert "no changes detected" in output.lower()
+
+    @patch("dbsprout.migrate.snapshot.SnapshotStore")
+    def test_rich_file_source_drift(
+        self,
+        mock_store_cls: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        """File source + drift → exit 1, Rich panel shows drift."""
+        sql_file = tmp_path / "schema.sql"
+        sql_file.write_text(
+            "CREATE TABLE users (id INTEGER PRIMARY KEY);\n"
+            "CREATE TABLE orders (id INTEGER PRIMARY KEY);"
+        )
+
+        mock_store = MagicMock()
+        mock_store.load_latest.return_value = _simple_schema_for_diff()
+        mock_store_cls.return_value = mock_store
+
+        result = runner.invoke(
+            app,
+            ["diff", "--file", str(sql_file), "--output-dir", str(tmp_path)],
+        )
+        assert result.exit_code == 1
+        output = _strip_ansi(result.output)
+        assert "Schema Drift" in output
+        assert "+tables: 1" in output
+
+    @patch("dbsprout.migrate.snapshot.SnapshotStore")
+    def test_json_file_source_no_changes(
+        self,
+        mock_store_cls: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        """File source + identical → exit 0, valid JSON with total == 0."""
+        sql_file = tmp_path / "schema.sql"
+        sql_file.write_text("CREATE TABLE users (id INTEGER PRIMARY KEY);")
+
+        parsed = parse_ddl(sql_file.read_text(), source_file=str(sql_file))
+
+        mock_store = MagicMock()
+        mock_store.load_latest.return_value = parsed
+        mock_store_cls.return_value = mock_store
+
+        result = runner.invoke(
+            app,
+            [
+                "diff",
+                "--file",
+                str(sql_file),
+                "--format",
+                "json",
+                "--output-dir",
+                str(tmp_path),
+            ],
+        )
+        assert result.exit_code == 0
+        payload = json.loads(result.output)
+        assert payload["summary"]["total"] == 0
+        assert payload["changes"] == []
+        assert payload["new_source"] == str(sql_file)
+
+    @patch("dbsprout.migrate.snapshot.SnapshotStore")
+    def test_json_file_source_drift(
+        self,
+        mock_store_cls: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        """File source + drift → exit 1, valid JSON with drift."""
+        sql_file = tmp_path / "schema.sql"
+        sql_file.write_text(
+            "CREATE TABLE users (id INTEGER PRIMARY KEY);\n"
+            "CREATE TABLE orders (id INTEGER PRIMARY KEY);"
+        )
+
+        mock_store = MagicMock()
+        mock_store.load_latest.return_value = _simple_schema_for_diff()
+        mock_store_cls.return_value = mock_store
+
+        result = runner.invoke(
+            app,
+            [
+                "diff",
+                "--file",
+                str(sql_file),
+                "--format",
+                "json",
+                "--output-dir",
+                str(tmp_path),
+            ],
+        )
+        assert result.exit_code == 1
+        payload = json.loads(result.output)
+        assert payload["summary"]["total"] >= 1
+        assert payload["summary"]["table_added"] == 1
+        assert payload["new_source"] == str(sql_file)
+
+
+class TestDiffJsonFieldFormats:
+    """JSON field format assertions (Reviewer 4)."""
+
+    @patch("dbsprout.migrate.snapshot.SnapshotStore")
+    @patch("dbsprout.schema.introspect.introspect")
+    def test_json_generated_at_is_iso8601_utc(
+        self,
+        mock_introspect: MagicMock,
+        mock_store_cls: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        """``generated_at`` must be ISO 8601 format and UTC timezone."""
+        old = _simple_schema_for_diff()
+        new = DatabaseSchema(
+            tables=[
+                *old.tables,
+                TableSchema(
+                    name="orders",
+                    columns=[
+                        ColumnSchema(name="id", data_type=ColumnType.INTEGER, nullable=False),
+                    ],
+                    primary_key=["id"],
+                ),
+            ],
+            dialect="sqlite",
+        )
+        mock_introspect.return_value = new
+        mock_store = MagicMock()
+        mock_store.load_latest.return_value = old
+        mock_store_cls.return_value = mock_store
+
+        result = runner.invoke(
+            app,
+            [
+                "diff",
+                "--db",
+                "sqlite:///x.db",
+                "--format",
+                "json",
+                "--output-dir",
+                str(tmp_path),
+            ],
+        )
+        payload = json.loads(result.output)
+        parsed = datetime.fromisoformat(payload["generated_at"])
+        assert parsed.tzinfo is not None, "generated_at must include timezone"
+        assert parsed.utcoffset() == timezone.utc.utcoffset(parsed), "generated_at must be UTC"
+
+    @patch("dbsprout.migrate.snapshot.SnapshotStore")
+    @patch("dbsprout.schema.introspect.introspect")
+    def test_json_old_snapshot_is_8_char_hex_prefix(
+        self,
+        mock_introspect: MagicMock,
+        mock_store_cls: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        """``old_snapshot`` should be exactly 8 characters (schema_hash prefix)."""
+        old = _simple_schema_for_diff()
+        new = DatabaseSchema(
+            tables=[
+                *old.tables,
+                TableSchema(
+                    name="orders",
+                    columns=[
+                        ColumnSchema(name="id", data_type=ColumnType.INTEGER, nullable=False),
+                    ],
+                    primary_key=["id"],
+                ),
+            ],
+            dialect="sqlite",
+        )
+        mock_introspect.return_value = new
+        mock_store = MagicMock()
+        mock_store.load_latest.return_value = old
+        mock_store_cls.return_value = mock_store
+
+        result = runner.invoke(
+            app,
+            [
+                "diff",
+                "--db",
+                "sqlite:///x.db",
+                "--format",
+                "json",
+                "--output-dir",
+                str(tmp_path),
+            ],
+        )
+        payload = json.loads(result.output)
+        assert len(payload["old_snapshot"]) == 8
+        assert all(c in string.hexdigits for c in payload["old_snapshot"])
+
+
+class TestDiffSchemaChangeTypeGrouping:
+    """Canary: every SchemaChangeType variant must be grouped by _render_rich_changes."""
+
+    def test_all_schema_change_types_are_grouped(self) -> None:
+        """If a new variant is added, this test fails with a clear message."""
+        table_group = {SchemaChangeType.TABLE_ADDED, SchemaChangeType.TABLE_REMOVED}
+        column_group = {
+            SchemaChangeType.COLUMN_ADDED,
+            SchemaChangeType.COLUMN_REMOVED,
+            SchemaChangeType.COLUMN_TYPE_CHANGED,
+            SchemaChangeType.COLUMN_NULLABILITY_CHANGED,
+            SchemaChangeType.COLUMN_DEFAULT_CHANGED,
+        }
+        fk_group = {
+            SchemaChangeType.FOREIGN_KEY_ADDED,
+            SchemaChangeType.FOREIGN_KEY_REMOVED,
+        }
+        index_group = {
+            SchemaChangeType.INDEX_ADDED,
+            SchemaChangeType.INDEX_REMOVED,
+        }
+        enum_group = {SchemaChangeType.ENUM_CHANGED}
+
+        all_grouped = table_group | column_group | fk_group | index_group | enum_group
+        missing = set(SchemaChangeType) - all_grouped
+
+        assert not missing, (
+            f"SchemaChangeType variants not grouped in _render_rich_changes: {missing}. "
+            "Update dbsprout/cli/commands/diff.py::_render_rich_changes to group these."
+        )

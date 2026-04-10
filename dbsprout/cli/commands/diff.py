@@ -29,11 +29,13 @@ def _resolve_source(
     if file is not None:
         return ("file", file)
 
+    from pydantic import ValidationError  # noqa: PLC0415
+
     from dbsprout.config import load_config  # noqa: PLC0415
 
     try:
         cfg = load_config(output_dir / "dbsprout.toml")
-    except ValueError:
+    except (ValueError, OSError, ValidationError):
         console.print("[red]Error:[/red] No schema source. Provide --db or --file.")
         raise typer.Exit(code=2) from None
 
@@ -234,7 +236,7 @@ def _format_change_line(c: SchemaChange) -> str:
     ct = c.change_type
     col_ref = f"{c.table_name}.{c.column_name}"
     formatters: dict[SchemaChangeType, str] = {
-        SchemaChangeType.ENUM_CHANGED: f"enum {c.column_name or '<unknown>'}",
+        SchemaChangeType.ENUM_CHANGED: f"enum: {c.column_name or '<unknown>'}",
         SchemaChangeType.COLUMN_ADDED: col_ref,
         SchemaChangeType.COLUMN_REMOVED: col_ref,
         SchemaChangeType.COLUMN_TYPE_CHANGED: f"{col_ref}: {c.old_value} → {c.new_value}",
@@ -254,6 +256,59 @@ def _format_change_line(c: SchemaChange) -> str:
     return formatters.get(ct, str(ct.value))
 
 
+def _load_old_schema(output_dir: Path, snapshot: str | None) -> DatabaseSchema:
+    """Load the base snapshot, honoring ``--snapshot`` or falling back to latest."""
+    from dbsprout.cli.console import console  # noqa: PLC0415
+    from dbsprout.migrate.snapshot import SnapshotStore  # noqa: PLC0415
+
+    store = SnapshotStore(base_dir=output_dir / ".dbsprout" / "snapshots")
+    if snapshot is not None:
+        old_schema = store.load_by_hash(snapshot)
+        if old_schema is None:
+            console.print(f"[red]Error:[/red] Snapshot not found: {snapshot}")
+            raise typer.Exit(code=2)
+        return old_schema
+
+    old_schema = store.load_latest()
+    if old_schema is None:
+        console.print("[red]Error:[/red] No snapshots found. Run 'dbsprout init' first.")
+        raise typer.Exit(code=2)
+    return old_schema
+
+
+def _load_new_schema(
+    source_kind: Literal["db", "file"], source_value: str
+) -> tuple[DatabaseSchema, str]:
+    """Resolve the new schema from either a DB URL or a schema file.
+
+    Returns the new :class:`DatabaseSchema` and a display-safe source string
+    (DB URLs are rendered with passwords hidden).
+    """
+    import importlib  # noqa: PLC0415
+
+    import sqlalchemy as sa  # noqa: PLC0415
+
+    from dbsprout.cli.console import console  # noqa: PLC0415
+
+    # NOTE: ``dbsprout.schema.__init__`` re-exports the ``introspect`` function,
+    # which shadows the submodule attribute lookup. Use ``importlib`` so
+    # ``@patch("dbsprout.schema.introspect.introspect")`` still works in tests.
+    introspect_module = importlib.import_module("dbsprout.schema.introspect")
+
+    if source_kind == "db":
+        try:
+            new_schema: DatabaseSchema = introspect_module.introspect(source_value)
+            safe_new_source = sa.engine.make_url(source_value).render_as_string(hide_password=True)
+        except (ValueError, sa.exc.SQLAlchemyError) as exc:
+            console.print(f"[red]Error:[/red] {exc}")
+            raise typer.Exit(code=2) from None
+        return new_schema, safe_new_source
+
+    # File source: parse the schema file and echo the path unmodified.
+    new_schema = _parse_schema_file(source_value)
+    return new_schema, source_value
+
+
 def diff_command(
     db: str | None,
     file: str | None,
@@ -267,51 +322,16 @@ def diff_command(
     if db is not None and file is not None:
         console.print("[red]Error:[/red] Provide only one of --db or --file.")
         raise typer.Exit(code=2)
-
     if output_format not in ("rich", "json"):
         console.print("[red]Error:[/red] Invalid format. Use 'rich' or 'json'.")
         raise typer.Exit(code=2)
 
-    _source_kind, _source_value = _resolve_source(db, file, output_dir)
-
-    from dbsprout.migrate.snapshot import SnapshotStore  # noqa: PLC0415
-
-    store = SnapshotStore(base_dir=output_dir / ".dbsprout" / "snapshots")
-    if snapshot is not None:
-        old_schema = store.load_by_hash(snapshot)
-        if old_schema is None:
-            console.print(f"[red]Error:[/red] Snapshot not found: {snapshot}")
-            raise typer.Exit(code=2)
-    else:
-        old_schema = store.load_latest()
-        if old_schema is None:
-            console.print("[red]Error:[/red] No snapshots found. Run 'dbsprout init' first.")
-            raise typer.Exit(code=2)
-
-    # ── New schema resolution (Task 5: db, Task 6: file) ────────────
-    import importlib  # noqa: PLC0415
-
-    import sqlalchemy as sa  # noqa: PLC0415
-
-    # NOTE: ``dbsprout.schema.__init__`` re-exports the ``introspect`` function,
-    # which shadows the submodule attribute lookup. Use ``importlib`` so
-    # ``@patch("dbsprout.schema.introspect.introspect")`` still works in tests.
-    introspect_module = importlib.import_module("dbsprout.schema.introspect")
-
-    if _source_kind == "db":
-        try:
-            new_schema = introspect_module.introspect(_source_value)
-            safe_new_source = sa.engine.make_url(_source_value).render_as_string(hide_password=True)
-        except (ValueError, sa.exc.SQLAlchemyError) as exc:
-            console.print(f"[red]Error:[/red] {exc}")
-            raise typer.Exit(code=2) from None
-    else:  # _source_kind == "file"
-        new_schema = _parse_schema_file(_source_value)
-        safe_new_source = _source_value
+    source_kind, source_value = _resolve_source(db, file, output_dir)
+    old_schema = _load_old_schema(output_dir, snapshot)
+    new_schema, safe_new_source = _load_new_schema(source_kind, source_value)
 
     from dbsprout.migrate.differ import SchemaDiffer  # noqa: PLC0415
 
-    assert new_schema is not None, "guaranteed by source resolution branch above"
     changes = SchemaDiffer.diff(old_schema, new_schema)
 
     if not changes:
@@ -322,7 +342,6 @@ def diff_command(
         _render_json(changes, old_schema, safe_new_source)
     else:
         _render_rich(changes, old_schema, safe_new_source)
-
     raise typer.Exit(code=1)  # drift detected → CI signal
 
 
