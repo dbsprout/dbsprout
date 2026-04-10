@@ -276,6 +276,28 @@ def _load_old_schema(output_dir: Path, snapshot: str | None) -> DatabaseSchema:
     return old_schema
 
 
+def _scrub_secrets(message: str, source_url: str) -> str:
+    """Remove any password from *message* by replacing it with ``***``.
+
+    Uses :func:`sqlalchemy.engine.make_url` to extract the password from
+    *source_url*. If the URL can't be parsed or carries no password, the
+    message is returned unchanged (nothing to scrub). Both the raw password
+    and the full source URL are substituted (belt-and-suspenders: some
+    SQLAlchemy exceptions embed only the password, others the whole URL).
+    """
+    import sqlalchemy as sa  # noqa: PLC0415
+
+    try:
+        url = sa.engine.make_url(source_url)
+    except sa.exc.ArgumentError:
+        return message
+    password = url.password
+    if not password:
+        return message
+    safe_url = url.render_as_string(hide_password=True)
+    return message.replace(password, "***").replace(source_url, safe_url)
+
+
 def _load_new_schema(
     source_kind: Literal["db", "file"], source_value: str
 ) -> tuple[DatabaseSchema, str]:
@@ -296,11 +318,19 @@ def _load_new_schema(
     introspect_module = importlib.import_module("dbsprout.schema.introspect")
 
     if source_kind == "db":
+        # Pre-compute the sanitized URL so it's available for both success and
+        # error paths (SQLAlchemy exception messages can embed the raw URL with
+        # its password — see :func:`_scrub_secrets`).
+        try:
+            safe_new_source = sa.engine.make_url(source_value).render_as_string(hide_password=True)
+        except sa.exc.ArgumentError:
+            safe_new_source = "<invalid URL>"
+
         try:
             new_schema: DatabaseSchema = introspect_module.introspect(source_value)
-            safe_new_source = sa.engine.make_url(source_value).render_as_string(hide_password=True)
         except (ValueError, sa.exc.SQLAlchemyError) as exc:
-            console.print(f"[red]Error:[/red] {exc}")
+            msg = _scrub_secrets(str(exc), source_value)
+            console.print(f"[red]Error:[/red] {msg}")
             raise typer.Exit(code=2) from None
         return new_schema, safe_new_source
 

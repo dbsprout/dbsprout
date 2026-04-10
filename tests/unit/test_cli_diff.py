@@ -248,18 +248,47 @@ class TestDiffDbIntrospection:
                 "diff",
                 "--db",
                 "postgresql://user:supersecret@host/db",
+                "--format",
+                "json",
                 "--output-dir",
                 str(tmp_path),
             ],
         )
         assert result.exit_code == 2
-        # The URL string we control must not leak — we can't control what sa puts in exc message
-        # So we only verify the sanitized URL we *would* display does not contain the password
-        # by asserting our sanitization helper works:
-        safe = sa.engine.make_url("postgresql://user:supersecret@host/db").render_as_string(
-            hide_password=True
+        assert "supersecret" not in _strip_ansi(result.output), (
+            "DB password leaked in diff command output via exception message"
         )
-        assert "supersecret" not in safe
+
+    @patch("dbsprout.migrate.snapshot.SnapshotStore")
+    @patch("dbsprout.schema.introspect.introspect")
+    def test_db_password_not_leaked_rich_format(
+        self,
+        mock_introspect: MagicMock,
+        mock_store_cls: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        """Rich (default) format must also scrub the password from error output."""
+        mock_introspect.side_effect = sa.exc.OperationalError(
+            "connect", {}, Exception("auth failed for postgresql://user:supersecret@host/db")
+        )
+        mock_store = MagicMock()
+        mock_store.load_latest.return_value = _simple_schema_for_diff()
+        mock_store_cls.return_value = mock_store
+
+        result = runner.invoke(
+            app,
+            [
+                "diff",
+                "--db",
+                "postgresql://user:supersecret@host/db",
+                "--output-dir",
+                str(tmp_path),
+            ],
+        )
+        assert result.exit_code == 2
+        assert "supersecret" not in _strip_ansi(result.output), (
+            "DB password leaked in diff command Rich output via exception message"
+        )
 
 
 class TestDiffFilePath:
