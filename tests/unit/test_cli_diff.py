@@ -251,3 +251,55 @@ class TestDiffDbIntrospection:
             hide_password=True
         )
         assert "supersecret" not in safe
+
+
+class TestDiffFilePath:
+    @patch("dbsprout.migrate.snapshot.SnapshotStore")
+    def test_file_not_found_exits_2(self, mock_store_cls: MagicMock, tmp_path: Path) -> None:
+        """--file pointing at nonexistent path → exit 2."""
+        mock_store = MagicMock()
+        mock_store.load_latest.return_value = _simple_schema_for_diff()
+        mock_store_cls.return_value = mock_store
+
+        missing = tmp_path / "missing.sql"
+        result = runner.invoke(
+            app,
+            ["diff", "--file", str(missing), "--output-dir", str(tmp_path)],
+        )
+        assert result.exit_code == 2
+        output = _strip_ansi(result.output)
+        assert "file not found" in output.lower()
+        assert str(missing) in output
+
+    @patch("dbsprout.migrate.snapshot.SnapshotStore")
+    def test_file_sql_ddl_parsed(self, mock_store_cls: MagicMock, tmp_path: Path) -> None:
+        """--file with valid SQL DDL parses and flows past source resolution."""
+        sql_file = tmp_path / "schema.sql"
+        sql_file.write_text("CREATE TABLE users (id INTEGER PRIMARY KEY, email VARCHAR(255));")
+        mock_store = MagicMock()
+        mock_store.load_latest.return_value = _simple_schema_for_diff()
+        mock_store_cls.return_value = mock_store
+
+        result = runner.invoke(
+            app,
+            ["diff", "--file", str(sql_file), "--output-dir", str(tmp_path)],
+        )
+        # NotImplementedError at end of pipeline → exit != 2 means file parsing succeeded
+        assert result.exit_code != 2
+
+    @patch("dbsprout.migrate.snapshot.SnapshotStore")
+    def test_file_parse_error_exits_2(self, mock_store_cls: MagicMock, tmp_path: Path) -> None:
+        """--file with unparseable SQL → exit 2."""
+        bad_file = tmp_path / "broken.sql"
+        bad_file.write_text("THIS IS NOT VALID SQL DDL @@@ garbage")
+        mock_store = MagicMock()
+        mock_store.load_latest.return_value = _simple_schema_for_diff()
+        mock_store_cls.return_value = mock_store
+
+        result = runner.invoke(
+            app,
+            ["diff", "--file", str(bad_file), "--output-dir", str(tmp_path)],
+        )
+        assert result.exit_code == 2
+        output = _strip_ansi(result.output)
+        assert "error" in output.lower()
