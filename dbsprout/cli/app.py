@@ -125,6 +125,34 @@ def validate_proxy(  # noqa: PLR0913
     )
 
 
+@app.command(name="diff")
+def diff_proxy(
+    db: str | None = typer.Option(None, "--db", help="Database URL.", envvar="DBSPROUT_TARGET_DB"),
+    file: str | None = typer.Option(
+        None, "--file", "-f", help="Schema file (SQL/DBML/Mermaid/PlantUML/Prisma)."
+    ),
+    snapshot: str | None = typer.Option(
+        None, "--snapshot", help="Base snapshot hash prefix (default: latest)."
+    ),
+    output_format: str = typer.Option("rich", "--format", help="Output format: rich, json."),
+    output_dir: str = typer.Option(
+        ".", "--output-dir", "-o", help="Project root containing .dbsprout/."
+    ),
+) -> None:
+    """Report schema changes since the last snapshot."""
+    from pathlib import Path  # noqa: PLC0415
+
+    from dbsprout.cli.commands.diff import diff_command  # noqa: PLC0415
+
+    diff_command(
+        db=db,
+        file=file,
+        snapshot=snapshot,
+        output_format=output_format,
+        output_dir=Path(output_dir),
+    )
+
+
 @app.command(name="audit")
 def audit_proxy(
     last: int | None = typer.Option(None, "--last", "-n", min=1),
