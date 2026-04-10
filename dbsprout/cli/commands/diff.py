@@ -107,6 +107,25 @@ def _render_no_changes(
         console.print("[green]✓ No changes detected.[/green]")
 
 
+def _render_json(
+    changes: list[SchemaChange],
+    old_schema: DatabaseSchema,
+    safe_new_source: str,
+) -> None:
+    """Render a non-empty diff result as JSON to stdout."""
+    import json  # noqa: PLC0415
+    from datetime import datetime, timezone  # noqa: PLC0415
+
+    payload = {
+        "summary": _summarize(changes),
+        "old_snapshot": old_schema.schema_hash()[:8],
+        "new_source": safe_new_source,
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "changes": [c.model_dump(mode="json") for c in changes],
+    }
+    print(json.dumps(payload, indent=2))  # noqa: T201
+
+
 def _render_rich(
     changes: list[SchemaChange],
     old_schema: DatabaseSchema,
@@ -300,10 +319,11 @@ def diff_command(
         raise typer.Exit(code=0)
 
     if output_format == "json":
-        raise NotImplementedError  # Task 12
+        _render_json(changes, old_schema, safe_new_source)
+    else:
+        _render_rich(changes, old_schema, safe_new_source)
 
-    _render_rich(changes, old_schema, safe_new_source)
-    raise typer.Exit(code=0)  # Task 13 will change to code=1
+    raise typer.Exit(code=1)  # drift detected → CI signal
 
 
 def _parse_schema_file(file_path: str) -> DatabaseSchema:

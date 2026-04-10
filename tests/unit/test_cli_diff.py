@@ -485,7 +485,7 @@ class TestDiffRichRender:
         # Grouped section
         assert "Tables" in output
         assert "+ orders" in output
-        assert result.exit_code == 0  # Task 13 will change to 1
+        assert result.exit_code == 1  # drift detected → CI signal
 
     @patch("dbsprout.migrate.snapshot.SnapshotStore")
     @patch("dbsprout.schema.introspect.introspect")
@@ -537,7 +537,7 @@ class TestDiffRichRender:
         assert "→" in output
         # Should NOT show sentinel
         assert "__enums__" not in output
-        assert result.exit_code == 0
+        assert result.exit_code == 1
 
     @patch("dbsprout.migrate.snapshot.SnapshotStore")
     @patch("dbsprout.schema.introspect.introspect")
@@ -583,4 +583,169 @@ class TestDiffRichRender:
         assert "Enums" in output
         assert "order_status" in output
         assert "__enums__" not in output
-        assert result.exit_code == 0
+        assert result.exit_code == 1
+
+
+class TestDiffJsonRender:
+    @patch("dbsprout.migrate.snapshot.SnapshotStore")
+    @patch("dbsprout.schema.introspect.introspect")
+    def test_json_shape_and_content(
+        self,
+        mock_introspect: MagicMock,
+        mock_store_cls: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        """--format json on non-empty diff → valid JSON with expected shape."""
+        old = _simple_schema_for_diff()
+        new = DatabaseSchema(
+            tables=[
+                *old.tables,
+                TableSchema(
+                    name="orders",
+                    columns=[ColumnSchema(name="id", data_type=ColumnType.INTEGER, nullable=False)],
+                    primary_key=["id"],
+                ),
+            ],
+            dialect="sqlite",
+        )
+        mock_introspect.return_value = new
+        mock_store = MagicMock()
+        mock_store.load_latest.return_value = old
+        mock_store_cls.return_value = mock_store
+
+        result = runner.invoke(
+            app,
+            [
+                "diff",
+                "--db",
+                "sqlite:///x.db",
+                "--format",
+                "json",
+                "--output-dir",
+                str(tmp_path),
+            ],
+        )
+        payload = json.loads(result.output)
+        assert payload["summary"]["total"] == 1
+        assert payload["summary"]["table_added"] == 1
+        assert len(payload["changes"]) == 1
+        assert payload["changes"][0]["change_type"] == "table_added"
+        assert "old_snapshot" in payload
+        assert "new_source" in payload
+        assert "generated_at" in payload
+
+    @patch("dbsprout.migrate.snapshot.SnapshotStore")
+    @patch("dbsprout.schema.introspect.introspect")
+    def test_json_output_has_no_ansi_codes(
+        self,
+        mock_introspect: MagicMock,
+        mock_store_cls: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        """JSON output must be parseable — no Rich markup leaks."""
+        old = _simple_schema_for_diff()
+        new = DatabaseSchema(
+            tables=[
+                *old.tables,
+                TableSchema(
+                    name="orders",
+                    columns=[ColumnSchema(name="id", data_type=ColumnType.INTEGER, nullable=False)],
+                    primary_key=["id"],
+                ),
+            ],
+            dialect="sqlite",
+        )
+        mock_introspect.return_value = new
+        mock_store = MagicMock()
+        mock_store.load_latest.return_value = old
+        mock_store_cls.return_value = mock_store
+
+        result = runner.invoke(
+            app,
+            [
+                "diff",
+                "--db",
+                "sqlite:///x.db",
+                "--format",
+                "json",
+                "--output-dir",
+                str(tmp_path),
+            ],
+        )
+        assert "\x1b[" not in result.output
+        # And it must parse as valid JSON
+        json.loads(result.output)
+
+
+class TestDiffExitCodes:
+    @patch("dbsprout.migrate.snapshot.SnapshotStore")
+    @patch("dbsprout.schema.introspect.introspect")
+    def test_exit_1_on_drift_rich(
+        self,
+        mock_introspect: MagicMock,
+        mock_store_cls: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        """Non-empty diff in rich format → exit 1 (drift signal for CI)."""
+        old = _simple_schema_for_diff()
+        new = DatabaseSchema(
+            tables=[
+                *old.tables,
+                TableSchema(
+                    name="orders",
+                    columns=[ColumnSchema(name="id", data_type=ColumnType.INTEGER, nullable=False)],
+                    primary_key=["id"],
+                ),
+            ],
+            dialect="sqlite",
+        )
+        mock_introspect.return_value = new
+        mock_store = MagicMock()
+        mock_store.load_latest.return_value = old
+        mock_store_cls.return_value = mock_store
+
+        result = runner.invoke(
+            app,
+            ["diff", "--db", "sqlite:///x.db", "--output-dir", str(tmp_path)],
+        )
+        assert result.exit_code == 1
+
+    @patch("dbsprout.migrate.snapshot.SnapshotStore")
+    @patch("dbsprout.schema.introspect.introspect")
+    def test_exit_1_on_drift_json(
+        self,
+        mock_introspect: MagicMock,
+        mock_store_cls: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        """Non-empty diff in json format → exit 1."""
+        old = _simple_schema_for_diff()
+        new = DatabaseSchema(
+            tables=[
+                *old.tables,
+                TableSchema(
+                    name="orders",
+                    columns=[ColumnSchema(name="id", data_type=ColumnType.INTEGER, nullable=False)],
+                    primary_key=["id"],
+                ),
+            ],
+            dialect="sqlite",
+        )
+        mock_introspect.return_value = new
+        mock_store = MagicMock()
+        mock_store.load_latest.return_value = old
+        mock_store_cls.return_value = mock_store
+
+        result = runner.invoke(
+            app,
+            [
+                "diff",
+                "--db",
+                "sqlite:///x.db",
+                "--format",
+                "json",
+                "--output-dir",
+                str(tmp_path),
+            ],
+        )
+        assert result.exit_code == 1
