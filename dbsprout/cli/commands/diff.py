@@ -84,4 +84,30 @@ def diff_command(
             console.print("[red]Error:[/red] No snapshots found. Run 'dbsprout init' first.")
             raise typer.Exit(code=2)
 
+    # ── New schema resolution (Task 5: db, Task 6: file) ────────────
+    import importlib  # noqa: PLC0415
+
+    import sqlalchemy as sa  # noqa: PLC0415
+
+    # NOTE: ``dbsprout.schema.__init__`` re-exports the ``introspect`` function,
+    # which shadows the submodule attribute lookup. Use ``importlib`` so
+    # ``@patch("dbsprout.schema.introspect.introspect")`` still works in tests.
+    introspect_module = importlib.import_module("dbsprout.schema.introspect")
+
+    if _source_kind == "db":
+        try:
+            new_schema = introspect_module.introspect(_source_value)
+            safe_new_source = sa.engine.make_url(_source_value).render_as_string(hide_password=True)
+        except (ValueError, sa.exc.SQLAlchemyError) as exc:
+            console.print(f"[red]Error:[/red] {exc}")
+            raise typer.Exit(code=2) from None
+    else:  # _source_kind == "file" — handled in Task 6
+        new_schema = None  # placeholder; Task 6 wires file parsing
+        safe_new_source = _source_value
+
+    # Variables consumed by later tasks — silence "unused" warnings here
+    _ = old_schema
+    _ = new_schema
+    _ = safe_new_source
+
     raise NotImplementedError
