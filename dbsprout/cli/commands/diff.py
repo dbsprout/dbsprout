@@ -9,6 +9,7 @@ import typer
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from dbsprout.migrate.models import SchemaChange
     from dbsprout.schema.models import DatabaseSchema
 
 
@@ -50,6 +51,20 @@ def _resolve_source(
     if url.drivername:
         return ("db", src)
     return ("file", src)
+
+
+def _summarize(changes: list[SchemaChange]) -> dict[str, int]:
+    """Count changes by SchemaChangeType plus a total.
+
+    Returns a dict with one key per SchemaChangeType variant (value used
+    as the key), all initialized to 0, plus a "total" key.
+    """
+    from dbsprout.migrate.models import SchemaChangeType  # noqa: PLC0415
+
+    summary: dict[str, int] = {"total": len(changes)}
+    for ct in SchemaChangeType:
+        summary[ct.value] = sum(1 for c in changes if c.change_type == ct)
+    return summary
 
 
 def diff_command(

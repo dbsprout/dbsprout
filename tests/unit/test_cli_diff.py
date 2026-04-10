@@ -11,6 +11,8 @@ import sqlalchemy as sa
 from typer.testing import CliRunner
 
 from dbsprout.cli.app import app
+from dbsprout.cli.commands.diff import _summarize
+from dbsprout.migrate.models import SchemaChange, SchemaChangeType
 from dbsprout.schema.models import (
     ColumnSchema,
     ColumnType,
@@ -419,3 +421,23 @@ class TestDiffNoChanges:
         assert "old_snapshot" in payload
         assert "new_source" in payload
         assert "generated_at" in payload
+
+
+class TestDiffSummaryHelper:
+    def test_summarize_empty_list(self) -> None:
+        """Empty change list → total 0, every change type 0."""
+        result = _summarize([])
+        assert result["total"] == 0
+        for ct in SchemaChangeType:
+            assert result[ct.value] == 0
+
+    def test_summarize_covers_all_change_types(self) -> None:
+        """One SchemaChange per SchemaChangeType → total == count, each type == 1."""
+        changes = [
+            SchemaChange(change_type=ct, table_name=f"t_{ct.value}") for ct in SchemaChangeType
+        ]
+        result = _summarize(changes)
+
+        assert result["total"] == len(list(SchemaChangeType))
+        for ct in SchemaChangeType:
+            assert result[ct.value] == 1
