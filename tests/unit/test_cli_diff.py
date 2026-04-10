@@ -29,3 +29,17 @@ class TestDiffHelp:
         assert "--format" in output
         assert "--output-dir" in output
         assert "Report schema changes" in output
+
+
+class TestDiffArgValidation:
+    def test_db_and_file_both_provided_exits_2(self) -> None:
+        result = runner.invoke(app, ["diff", "--db", "sqlite:///x", "--file", "schema.sql"])
+        assert result.exit_code == 2
+        output = _strip_ansi(result.output)
+        assert "only one of --db or --file" in output.lower()
+
+    def test_invalid_format_exits_2(self) -> None:
+        result = runner.invoke(app, ["diff", "--db", "sqlite:///x", "--format", "xml"])
+        assert result.exit_code == 2
+        output = _strip_ansi(result.output)
+        assert "invalid format" in output.lower()
