@@ -9,6 +9,12 @@ from unittest.mock import MagicMock, patch
 from typer.testing import CliRunner
 
 from dbsprout.cli.app import app
+from dbsprout.schema.models import (
+    ColumnSchema,
+    ColumnType,
+    DatabaseSchema,
+    TableSchema,
+)
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -72,3 +78,68 @@ class TestDiffErrorPaths:
         assert result.exit_code == 2
         output = _strip_ansi(result.output)
         assert "no snapshots found" in output.lower()
+
+
+class TestDiffSnapshotFlag:
+    @patch("dbsprout.migrate.snapshot.SnapshotStore")
+    def test_snapshot_hash_not_found_exits_2(
+        self, mock_store_cls: MagicMock, tmp_path: Path
+    ) -> None:
+        """--snapshot HASH that matches no snapshot file → exit 2."""
+        mock_store = MagicMock()
+        mock_store.load_by_hash.return_value = None
+        mock_store_cls.return_value = mock_store
+
+        result = runner.invoke(
+            app,
+            [
+                "diff",
+                "--db",
+                "sqlite:///x.db",
+                "--snapshot",
+                "deadbeef",
+                "--output-dir",
+                str(tmp_path),
+            ],
+        )
+        assert result.exit_code == 2
+        output = _strip_ansi(result.output)
+        assert "snapshot not found" in output.lower()
+        assert "deadbeef" in output
+        mock_store.load_latest.assert_not_called()
+        mock_store.load_by_hash.assert_called_once_with("deadbeef")
+
+    @patch("dbsprout.migrate.snapshot.SnapshotStore")
+    def test_snapshot_hash_found_falls_through_to_next_stage(
+        self, mock_store_cls: MagicMock, tmp_path: Path
+    ) -> None:
+        """--snapshot HASH that matches → load_by_hash returns schema, falls through."""
+        schema = DatabaseSchema(
+            tables=[
+                TableSchema(
+                    name="users",
+                    columns=[ColumnSchema(name="id", data_type=ColumnType.INTEGER, nullable=False)],
+                    primary_key=["id"],
+                )
+            ],
+            dialect="sqlite",
+        )
+        mock_store = MagicMock()
+        mock_store.load_by_hash.return_value = schema
+        mock_store_cls.return_value = mock_store
+
+        result = runner.invoke(
+            app,
+            [
+                "diff",
+                "--db",
+                "sqlite:///x.db",
+                "--snapshot",
+                "abc12345",
+                "--output-dir",
+                str(tmp_path),
+            ],
+        )
+        assert result.exit_code != 2
+        mock_store.load_by_hash.assert_called_once_with("abc12345")
+        mock_store.load_latest.assert_not_called()

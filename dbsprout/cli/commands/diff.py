@@ -53,7 +53,7 @@ def _resolve_source(
 def diff_command(
     db: str | None,
     file: str | None,
-    snapshot: str | None,  # noqa: ARG001
+    snapshot: str | None,
     output_format: str,
     output_dir: Path,
 ) -> None:
@@ -73,9 +73,15 @@ def diff_command(
     from dbsprout.migrate.snapshot import SnapshotStore  # noqa: PLC0415
 
     store = SnapshotStore(base_dir=output_dir / ".dbsprout" / "snapshots")
-    old_schema = store.load_latest()
-    if old_schema is None:
-        console.print("[red]Error:[/red] No snapshots found. Run 'dbsprout init' first.")
-        raise typer.Exit(code=2)
+    if snapshot is not None:
+        old_schema = store.load_by_hash(snapshot)
+        if old_schema is None:
+            console.print(f"[red]Error:[/red] Snapshot not found: {snapshot}")
+            raise typer.Exit(code=2)
+    else:
+        old_schema = store.load_latest()
+        if old_schema is None:
+            console.print("[red]Error:[/red] No snapshots found. Run 'dbsprout init' first.")
+            raise typer.Exit(code=2)
 
     raise NotImplementedError
