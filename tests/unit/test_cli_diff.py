@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
@@ -358,3 +359,63 @@ class TestDiffConfigFallback:
         assert result.exit_code == 2
         output = _strip_ansi(result.output)
         assert "no schema source" in output.lower()
+
+
+class TestDiffNoChanges:
+    @patch("dbsprout.migrate.snapshot.SnapshotStore")
+    @patch("dbsprout.schema.introspect.introspect")
+    def test_no_changes_exits_0_rich_format(
+        self,
+        mock_introspect: MagicMock,
+        mock_store_cls: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        """Identical old and new schemas → exit 0, 'No changes detected' printed."""
+        schema = _simple_schema_for_diff()
+        mock_introspect.return_value = schema
+        mock_store = MagicMock()
+        mock_store.load_latest.return_value = schema
+        mock_store_cls.return_value = mock_store
+
+        result = runner.invoke(
+            app,
+            ["diff", "--db", "sqlite:///x.db", "--output-dir", str(tmp_path)],
+        )
+        assert result.exit_code == 0
+        output = _strip_ansi(result.output)
+        assert "no changes detected" in output.lower()
+
+    @patch("dbsprout.migrate.snapshot.SnapshotStore")
+    @patch("dbsprout.schema.introspect.introspect")
+    def test_no_changes_exits_0_json_format(
+        self,
+        mock_introspect: MagicMock,
+        mock_store_cls: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        """Identical schemas with --format json → exit 0, valid JSON payload."""
+        schema = _simple_schema_for_diff()
+        mock_introspect.return_value = schema
+        mock_store = MagicMock()
+        mock_store.load_latest.return_value = schema
+        mock_store_cls.return_value = mock_store
+
+        result = runner.invoke(
+            app,
+            [
+                "diff",
+                "--db",
+                "sqlite:///x.db",
+                "--format",
+                "json",
+                "--output-dir",
+                str(tmp_path),
+            ],
+        )
+        assert result.exit_code == 0
+        payload = json.loads(result.output)
+        assert payload["summary"]["total"] == 0
+        assert payload["changes"] == []
+        assert "old_snapshot" in payload
+        assert "new_source" in payload
+        assert "generated_at" in payload

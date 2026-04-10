@@ -107,10 +107,27 @@ def diff_command(
         new_schema = _parse_schema_file(_source_value)
         safe_new_source = _source_value
 
-    # Variables consumed by later tasks — silence "unused" warnings here
-    _ = old_schema
-    _ = new_schema
-    _ = safe_new_source
+    from dbsprout.migrate.differ import SchemaDiffer  # noqa: PLC0415
+
+    assert new_schema is not None, "guaranteed by source resolution branch above"
+    changes = SchemaDiffer.diff(old_schema, new_schema)
+
+    if not changes:
+        if output_format == "json":
+            import json  # noqa: PLC0415
+            from datetime import datetime, timezone  # noqa: PLC0415
+
+            payload = {
+                "summary": {"total": 0},
+                "old_snapshot": old_schema.schema_hash()[:8],
+                "new_source": safe_new_source,
+                "generated_at": datetime.now(timezone.utc).isoformat(),
+                "changes": [],
+            }
+            print(json.dumps(payload, indent=2))  # noqa: T201
+        else:
+            console.print("[green]✓ No changes detected.[/green]")
+        raise typer.Exit(code=0)
 
     raise NotImplementedError
 
