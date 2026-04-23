@@ -56,6 +56,13 @@ def test_schema_source_is_frozen_dataclass() -> None:
         src.kind = "db"  # type: ignore[misc]
 
 
+def test_invalid_db_url_yields_invalid_url_display(tmp_path: Path) -> None:
+    """Malformed URL string bypasses SA parsing and produces a guard display."""
+    src = resolve_schema_source(db="://", file=None, output_dir=tmp_path)
+    assert src.kind == "db"
+    assert src.display_value == "<invalid URL>"
+
+
 def test_scheme_detection_uses_colon_slashes(tmp_path: Path) -> None:
     """Windows-style file path with a drive letter should not look like a URL."""
     src_path = "C:/schema.sql"

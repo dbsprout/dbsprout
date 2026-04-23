@@ -161,6 +161,36 @@ class TestIncrementalColumnAdded:
         assert "column_added" in out or "generate_column" in out or "+cols" in out
 
 
+class TestIncrementalSnapshotArg:
+    def test_explicit_snapshot_hash_is_used(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """--snapshot HASH loads that snapshot instead of latest."""
+        monkeypatch.chdir(tmp_path)
+        store = SnapshotStore()
+        info = store.save(_minimal_schema())
+
+        schema_path = _write_schema_sql(tmp_path)
+
+        result = runner.invoke(
+            app,
+            [
+                "generate",
+                "--incremental",
+                "--file",
+                str(schema_path),
+                "--snapshot",
+                info.schema_hash[:8],
+                "--output-dir",
+                str(tmp_path / "seeds"),
+                "--output-format",
+                "sql",
+            ],
+        )
+        assert result.exit_code == 0
+        assert "no schema changes" in _strip_ansi(result.output).lower()
+
+
 class TestIncrementalArgValidation:
     def test_both_db_and_file_exits_2(self, tmp_path: Path) -> None:
         result = runner.invoke(
