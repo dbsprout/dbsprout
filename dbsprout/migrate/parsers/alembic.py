@@ -302,6 +302,46 @@ _OP_HANDLERS["add_column"] = _handle_add_column
 _OP_HANDLERS["drop_column"] = _handle_drop_column
 
 
+def _handle_alter_column(node: ast.Call) -> list[SchemaChange]:
+    from dbsprout.migrate.models import SchemaChangeType  # noqa: PLC0415
+
+    table = _literal(node.args[0])
+    column = _literal(node.args[1])
+    kw = {k.arg: k.value for k in node.keywords if k.arg is not None}
+    out: list[SchemaChange] = []
+    if "type_" in kw:
+        out.append(
+            SchemaChange(
+                change_type=SchemaChangeType.COLUMN_TYPE_CHANGED,
+                table_name=table,
+                column_name=column,
+                new_value=ast.unparse(kw["type_"]),
+            )
+        )
+    if "nullable" in kw:
+        out.append(
+            SchemaChange(
+                change_type=SchemaChangeType.COLUMN_NULLABILITY_CHANGED,
+                table_name=table,
+                column_name=column,
+                new_value=ast.unparse(kw["nullable"]),
+            )
+        )
+    if "server_default" in kw:
+        out.append(
+            SchemaChange(
+                change_type=SchemaChangeType.COLUMN_DEFAULT_CHANGED,
+                table_name=table,
+                column_name=column,
+                new_value=ast.unparse(kw["server_default"]),
+            )
+        )
+    return out
+
+
+_OP_HANDLERS["alter_column"] = _handle_alter_column
+
+
 @dataclass(frozen=True)
 class _Revision:
     """Internal — parsed revision header + AST for a single Alembic file."""

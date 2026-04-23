@@ -274,3 +274,57 @@ class TestColumnAddDrop:
         assert c.change_type == SchemaChangeType.COLUMN_REMOVED
         assert c.table_name == "items"
         assert c.column_name == "legacy_col"
+
+
+class TestAlterColumn:
+    def _run(self, body: str) -> list:
+        import ast  # noqa: PLC0415
+
+        from dbsprout.migrate.parsers.alembic import _parse_upgrade, _Revision  # noqa: PLC0415
+
+        src = f'revision = "r"\ndown_revision = None\n\ndef upgrade():\n{body}\n'
+        module = ast.parse(src)
+        rev = _Revision(path=Path("r.py"), revision="r", down_revision=None, module=module)
+        return _parse_upgrade(rev)
+
+    def test_alter_type_only(self) -> None:
+        from dbsprout.migrate.models import SchemaChangeType  # noqa: PLC0415
+
+        changes = self._run('    op.alter_column("items", "name", type_=sa.String(length=200))')
+        assert len(changes) == 1
+        assert changes[0].change_type == SchemaChangeType.COLUMN_TYPE_CHANGED
+        assert changes[0].table_name == "items"
+        assert changes[0].column_name == "name"
+        assert changes[0].new_value is not None
+        assert "String" in changes[0].new_value
+
+    def test_alter_nullable_only(self) -> None:
+        from dbsprout.migrate.models import SchemaChangeType  # noqa: PLC0415
+
+        changes = self._run('    op.alter_column("items", "name", nullable=False)')
+        assert len(changes) == 1
+        assert changes[0].change_type == SchemaChangeType.COLUMN_NULLABILITY_CHANGED
+        assert changes[0].new_value == "False"
+
+    def test_alter_server_default_only(self) -> None:
+        from dbsprout.migrate.models import SchemaChangeType  # noqa: PLC0415
+
+        changes = self._run('    op.alter_column("items", "active", server_default="1")')
+        assert len(changes) == 1
+        assert changes[0].change_type == SchemaChangeType.COLUMN_DEFAULT_CHANGED
+        assert changes[0].new_value is not None
+        assert "1" in changes[0].new_value
+
+    def test_alter_multi_axis(self) -> None:
+        from dbsprout.migrate.models import SchemaChangeType  # noqa: PLC0415
+
+        changes = self._run('    op.alter_column("items", "n", type_=sa.Text(), nullable=True)')
+        kinds = {c.change_type for c in changes}
+        assert kinds == {
+            SchemaChangeType.COLUMN_TYPE_CHANGED,
+            SchemaChangeType.COLUMN_NULLABILITY_CHANGED,
+        }
+
+    def test_alter_no_recognized_kw_is_noop(self) -> None:
+        changes = self._run('    op.alter_column("items", "n", comment="x")')
+        assert changes == []
