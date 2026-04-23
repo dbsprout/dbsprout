@@ -404,6 +404,54 @@ _OP_HANDLERS["create_foreign_key"] = _handle_create_foreign_key
 _OP_HANDLERS["drop_constraint"] = _handle_drop_constraint
 
 
+def _handle_create_index(node: ast.Call) -> list[SchemaChange]:
+    from dbsprout.migrate.models import SchemaChangeType  # noqa: PLC0415
+
+    if len(node.args) < 3:
+        raise MigrationParseError("op.create_index expects (name, table, columns, ...)")
+    name = _literal(node.args[0])
+    table = _literal(node.args[1])
+    cols = _literal_list(node.args[2])
+    kw = {k.arg: k.value for k in node.keywords if k.arg is not None}
+    unique = False
+    if "unique" in kw:
+        try:
+            unique = bool(ast.literal_eval(kw["unique"]))
+        except ValueError:
+            unique = False
+    return [
+        SchemaChange(
+            change_type=SchemaChangeType.INDEX_ADDED,
+            table_name=table,
+            detail={"name": name, "cols": cols, "unique": unique},
+        )
+    ]
+
+
+def _handle_drop_index(node: ast.Call) -> list[SchemaChange]:
+    from dbsprout.migrate.models import SchemaChangeType  # noqa: PLC0415
+
+    name = _literal(node.args[0])
+    kw = {k.arg: k.value for k in node.keywords if k.arg is not None}
+    if len(node.args) >= 2:
+        table = _literal(node.args[1])
+    elif "table_name" in kw:
+        table = _literal(kw["table_name"])
+    else:
+        raise MigrationParseError("op.drop_index requires a table (positional or table_name=)")
+    return [
+        SchemaChange(
+            change_type=SchemaChangeType.INDEX_REMOVED,
+            table_name=table,
+            detail={"name": name},
+        )
+    ]
+
+
+_OP_HANDLERS["create_index"] = _handle_create_index
+_OP_HANDLERS["drop_index"] = _handle_drop_index
+
+
 @dataclass(frozen=True)
 class _Revision:
     """Internal — parsed revision header + AST for a single Alembic file."""

@@ -387,3 +387,51 @@ class TestForeignKey:
         # Only foreign-key constraints emit a change; other types are ignored.
         changes = self._run('    op.drop_constraint("uq_items_name", "items", type_="unique")')
         assert changes == []
+
+
+class TestIndex:
+    def _run(self, body: str) -> list:
+        import ast  # noqa: PLC0415
+
+        from dbsprout.migrate.parsers.alembic import _parse_upgrade, _Revision  # noqa: PLC0415
+
+        src = f'revision = "r"\ndown_revision = None\n\ndef upgrade():\n{body}\n'
+        module = ast.parse(src)
+        rev = _Revision(path=Path("r.py"), revision="r", down_revision=None, module=module)
+        return _parse_upgrade(rev)
+
+    def test_create_index(self) -> None:
+        from dbsprout.migrate.models import SchemaChangeType  # noqa: PLC0415
+
+        body = '    op.create_index("ix_items_name", "items", ["name"], unique=True)'
+        changes = self._run(body)
+        assert len(changes) == 1
+        c = changes[0]
+        assert c.change_type == SchemaChangeType.INDEX_ADDED
+        assert c.table_name == "items"
+        assert c.detail == {
+            "name": "ix_items_name",
+            "cols": ["name"],
+            "unique": True,
+        }
+
+    def test_create_index_default_unique_false(self) -> None:
+        body = '    op.create_index("ix_items_n", "items", ["name"])'
+        changes = self._run(body)
+        assert changes[0].detail is not None
+        assert changes[0].detail["unique"] is False
+
+    def test_drop_index_positional(self) -> None:
+        from dbsprout.migrate.models import SchemaChangeType  # noqa: PLC0415
+
+        changes = self._run('    op.drop_index("ix_items_name", "items")')
+        assert changes[0].change_type == SchemaChangeType.INDEX_REMOVED
+        assert changes[0].table_name == "items"
+        assert changes[0].detail == {"name": "ix_items_name"}
+
+    def test_drop_index_kwarg_table(self) -> None:
+        from dbsprout.migrate.models import SchemaChangeType  # noqa: PLC0415
+
+        changes = self._run('    op.drop_index("ix_items_name", table_name="items")')
+        assert changes[0].change_type == SchemaChangeType.INDEX_REMOVED
+        assert changes[0].table_name == "items"
