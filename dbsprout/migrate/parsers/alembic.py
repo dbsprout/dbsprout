@@ -8,6 +8,7 @@ Also offers an opt-in ``compare_metadata`` wrapper that delegates to
 
 from __future__ import annotations
 
+import ast
 import configparser
 import logging
 from dataclasses import dataclass
@@ -23,6 +24,10 @@ if TYPE_CHECKING:
     from dbsprout.migrate.models import SchemaChange
 
 logger = logging.getLogger(__name__)
+
+_MAX_REVISION_BYTES = 1024 * 1024  # 1 MB
+
+_UNSET: object = object()
 
 
 @dataclass(frozen=True)
@@ -69,8 +74,49 @@ def _discover_versions_dir(project_path: Path) -> Path:
     raise MigrationParseError("No Alembic versions/ directory found", file_path=project_path)
 
 
-def _collect_revisions(versions_dir: Path) -> list[_Revision]:  # noqa: ARG001
-    return []
+def _collect_revisions(versions_dir: Path) -> list[_Revision]:
+    """Parse every ``.py`` file in *versions_dir* into ``_Revision`` records."""
+    revs: list[_Revision] = []
+    for f in sorted(versions_dir.glob("*.py")):
+        if f.name.startswith("__"):
+            continue
+        if f.stat().st_size > _MAX_REVISION_BYTES:
+            raise MigrationParseError(
+                f"Revision file too large (> {_MAX_REVISION_BYTES} bytes): {f}",
+                file_path=f,
+            )
+        module = ast.parse(f.read_text(encoding="utf-8"), filename=str(f))
+        rev, down = _extract_revision_ids(module, f)
+        revs.append(_Revision(path=f, revision=rev, down_revision=down, module=module))
+    return revs
+
+
+def _extract_revision_ids(module: ast.Module, path: Path) -> tuple[str, str | None]:
+    rev: str | None = None
+    down: object = _UNSET
+    for node in module.body:
+        if not isinstance(node, ast.Assign) or len(node.targets) != 1:
+            continue
+        target = node.targets[0]
+        if not isinstance(target, ast.Name):
+            continue
+        if target.id == "revision" and isinstance(node.value, ast.Constant):
+            if isinstance(node.value.value, str):
+                rev = node.value.value
+        elif target.id == "down_revision" and isinstance(node.value, ast.Constant):  # noqa: SIM102
+            if node.value.value is None or isinstance(node.value.value, str):
+                down = node.value.value
+    if rev is None:
+        raise MigrationParseError(
+            f'Revision file missing `revision = "..."` assignment: {path}',
+            file_path=path,
+        )
+    if down is _UNSET:
+        raise MigrationParseError(
+            f"Revision file missing `down_revision = ...` assignment: {path}",
+            file_path=path,
+        )
+    return rev, down  # type: ignore[return-value]
 
 
 def _linearize_revisions(revisions: list[_Revision]) -> list[_Revision]:  # noqa: ARG001
