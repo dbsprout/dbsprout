@@ -9,6 +9,7 @@ Also offers an opt-in ``compare_metadata`` wrapper that delegates to
 from __future__ import annotations
 
 import ast
+import collections
 import configparser
 import logging
 from dataclasses import dataclass
@@ -119,8 +120,35 @@ def _extract_revision_ids(module: ast.Module, path: Path) -> tuple[str, str | No
     return rev, down  # type: ignore[return-value]
 
 
-def _linearize_revisions(revisions: list[_Revision]) -> list[_Revision]:  # noqa: ARG001
-    return []
+def _linearize_revisions(revisions: list[_Revision]) -> list[_Revision]:
+    """Walk ``revisions`` from base to head via ``down_revision`` edges."""
+    if not revisions:
+        return []
+
+    by_id: dict[str, _Revision] = {r.revision: r for r in revisions}
+    children: dict[str | None, list[str]] = collections.defaultdict(list)
+    for r in revisions:
+        children[r.down_revision].append(r.revision)
+
+    roots = [r.revision for r in revisions if r.down_revision is None]
+    if len(roots) == 0:
+        raise MigrationParseError("No root revision (all revisions reference a down_revision)")
+    if len(roots) > 1:
+        raise MigrationParseError(f"Multiple root revisions: {sorted(roots)} — expected one")
+
+    heads = [r.revision for r in revisions if not children.get(r.revision)]
+    if len(heads) > 1:
+        raise MigrationParseError(f"Multiple heads: {sorted(heads)} — merge before parsing")
+
+    ordered: list[_Revision] = []
+    current: str | None = roots[0]
+    while current is not None:
+        ordered.append(by_id[current])
+        kids = children.get(current, [])
+        if len(kids) > 1:
+            raise MigrationParseError(f"Branching at revision {current}: children={sorted(kids)}")
+        current = kids[0] if kids else None
+    return ordered
 
 
 def _parse_upgrade(rev: _Revision) -> list[SchemaChange]:  # noqa: ARG001

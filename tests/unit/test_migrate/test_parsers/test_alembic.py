@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from pathlib import Path  # noqa: TC003
+from pathlib import Path
 
 import pytest
 
@@ -108,3 +108,45 @@ class TestCollectRevisions:
         monkeypatch.setattr(am, "_MAX_REVISION_BYTES", 4)
         with pytest.raises(MigrationParseError, match="too large"):
             am._collect_revisions(versions)
+
+
+class TestLinearize:
+    def _rev(self, rid: str, down: str | None) -> object:
+        import ast  # noqa: PLC0415
+
+        from dbsprout.migrate.parsers.alembic import _Revision  # noqa: PLC0415
+
+        return _Revision(
+            path=Path(f"{rid}.py"),
+            revision=rid,
+            down_revision=down,
+            module=ast.parse(""),
+        )
+
+    def test_empty(self) -> None:
+        from dbsprout.migrate.parsers.alembic import _linearize_revisions  # noqa: PLC0415
+
+        assert _linearize_revisions([]) == []
+
+    def test_linear_chain(self) -> None:
+        from dbsprout.migrate.parsers.alembic import _linearize_revisions  # noqa: PLC0415
+
+        revs = [self._rev("c", "b"), self._rev("a", None), self._rev("b", "a")]
+        ordered = _linearize_revisions(revs)
+        assert [r.revision for r in ordered] == ["a", "b", "c"]
+
+    def test_multiple_heads(self) -> None:
+        from dbsprout.migrate.parsers import MigrationParseError  # noqa: PLC0415
+        from dbsprout.migrate.parsers.alembic import _linearize_revisions  # noqa: PLC0415
+
+        revs = [self._rev("a", None), self._rev("b", "a"), self._rev("c", "a")]
+        with pytest.raises(MigrationParseError, match="head"):
+            _linearize_revisions(revs)
+
+    def test_multiple_roots(self) -> None:
+        from dbsprout.migrate.parsers import MigrationParseError  # noqa: PLC0415
+        from dbsprout.migrate.parsers.alembic import _linearize_revisions  # noqa: PLC0415
+
+        revs = [self._rev("a", None), self._rev("b", None)]
+        with pytest.raises(MigrationParseError, match=r"head|root"):
+            _linearize_revisions(revs)
