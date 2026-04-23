@@ -902,3 +902,39 @@ class TestEdgeBranches:
         )
         with pytest.raises(MigrationParseError, match="upgrade"):
             AlembicParser().detect_changes(tmp_path)
+
+
+class TestHandlerErrorsCarryFilePath:
+    """§10 contract — handler-raised MigrationParseError carries the revision path."""
+
+    def test_bad_add_column_has_file_path(self, tmp_path: Path) -> None:
+        from dbsprout.migrate.parsers import MigrationParseError  # noqa: PLC0415
+        from dbsprout.migrate.parsers.alembic import AlembicParser  # noqa: PLC0415
+
+        versions = tmp_path / "alembic" / "versions"
+        versions.mkdir(parents=True)
+        rev = versions / "0001.py"
+        rev.write_text(
+            'revision = "a"\ndown_revision = None\n\n'
+            'def upgrade():\n    op.add_column("t", "not_a_column")\n',
+            encoding="utf-8",
+        )
+        with pytest.raises(MigrationParseError) as exc_info:
+            AlembicParser().detect_changes(tmp_path)
+        assert exc_info.value.file_path == rev
+
+    def test_literal_error_has_file_path(self, tmp_path: Path) -> None:
+        from dbsprout.migrate.parsers import MigrationParseError  # noqa: PLC0415
+        from dbsprout.migrate.parsers.alembic import AlembicParser  # noqa: PLC0415
+
+        versions = tmp_path / "alembic" / "versions"
+        versions.mkdir(parents=True)
+        rev = versions / "0001.py"
+        rev.write_text(
+            'revision = "a"\ndown_revision = None\n\n'
+            "def upgrade():\n    op.drop_table(TABLE_CONST)\n",
+            encoding="utf-8",
+        )
+        with pytest.raises(MigrationParseError) as exc_info:
+            AlembicParser().detect_changes(tmp_path)
+        assert exc_info.value.file_path == rev

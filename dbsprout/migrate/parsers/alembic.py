@@ -174,8 +174,6 @@ def _linearize_revisions(revisions: list[_Revision]) -> list[_Revision]:
     while current is not None:
         ordered.append(by_id[current])
         kids = children.get(current, [])
-        if len(kids) > 1:
-            raise MigrationParseError(f"Branching at revision {current}: children={sorted(kids)}")
         current = kids[0] if kids else None
     return ordered
 
@@ -196,7 +194,12 @@ def _parse_upgrade(rev: _Revision) -> list[SchemaChange]:
             if handler is None:
                 logger.debug("Skipping unrecognized op.%s in %s", verb, rev.path)
                 continue
-            changes.extend(handler(node))
+            try:
+                changes.extend(handler(node))
+            except MigrationParseError as exc:
+                if exc.file_path is None:
+                    exc.file_path = rev.path
+                raise
     return changes
 
 
