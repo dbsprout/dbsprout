@@ -48,10 +48,13 @@ class AlembicParser:
     def compare_metadata(self, db_url: str, metadata: MetaData) -> list[SchemaChange]:
         """Diff a SQLAlchemy MetaData against a live DB via Alembic autogenerate.
 
+        Tuples Alembic returns with a verb we do not yet translate are skipped
+        with a ``logger.debug`` entry rather than raising — this keeps the
+        parser forward-compatible with new Alembic operations.
+
         Raises:
-            MigrationParseError: ``alembic`` is not installed (install
-                ``dbsprout[migrate]``) or Alembic's autogenerate returned a shape we
-                cannot translate.
+            MigrationParseError: ``alembic`` is not installed (install with
+                ``pip install dbsprout[migrate]``).
         """
         try:
             from alembic.autogenerate import (  # noqa: PLC0415
