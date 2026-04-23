@@ -328,3 +328,62 @@ class TestAlterColumn:
     def test_alter_no_recognized_kw_is_noop(self) -> None:
         changes = self._run('    op.alter_column("items", "n", comment="x")')
         assert changes == []
+
+
+class TestForeignKey:
+    def _run(self, body: str) -> list:
+        import ast  # noqa: PLC0415
+
+        from dbsprout.migrate.parsers.alembic import _parse_upgrade, _Revision  # noqa: PLC0415
+
+        src = f'revision = "r"\ndown_revision = None\n\ndef upgrade():\n{body}\n'
+        module = ast.parse(src)
+        rev = _Revision(path=Path("r.py"), revision="r", down_revision=None, module=module)
+        return _parse_upgrade(rev)
+
+    def test_create_fk(self) -> None:
+        from dbsprout.migrate.models import SchemaChangeType  # noqa: PLC0415
+
+        body = (
+            "    op.create_foreign_key(\n"
+            '        "fk_items_owner", "items", "users",\n'
+            '        ["owner_id"], ["id"]\n'
+            "    )"
+        )
+        changes = self._run(body)
+        assert len(changes) == 1
+        c = changes[0]
+        assert c.change_type == SchemaChangeType.FOREIGN_KEY_ADDED
+        assert c.table_name == "items"
+        assert c.detail == {
+            "name": "fk_items_owner",
+            "ref_table": "users",
+            "local_cols": ["owner_id"],
+            "remote_cols": ["id"],
+        }
+
+    def test_drop_foreign_key_positional(self) -> None:
+        from dbsprout.migrate.models import SchemaChangeType  # noqa: PLC0415
+
+        changes = self._run('    op.drop_constraint("fk_items_owner", "items", type_="foreignkey")')
+        assert len(changes) == 1
+        c = changes[0]
+        assert c.change_type == SchemaChangeType.FOREIGN_KEY_REMOVED
+        assert c.table_name == "items"
+        assert c.detail == {"name": "fk_items_owner"}
+
+    def test_drop_foreign_key_kwarg_table(self) -> None:
+        from dbsprout.migrate.models import SchemaChangeType  # noqa: PLC0415
+
+        changes = self._run(
+            "    op.drop_constraint(\n"
+            '        "fk_items_owner", table_name="items", type_="foreignkey"\n'
+            "    )"
+        )
+        assert len(changes) == 1
+        assert changes[0].change_type == SchemaChangeType.FOREIGN_KEY_REMOVED
+
+    def test_drop_non_fk_constraint_skipped(self) -> None:
+        # Only foreign-key constraints emit a change; other types are ignored.
+        changes = self._run('    op.drop_constraint("uq_items_name", "items", type_="unique")')
+        assert changes == []

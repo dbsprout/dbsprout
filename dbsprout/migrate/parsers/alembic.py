@@ -342,6 +342,68 @@ def _handle_alter_column(node: ast.Call) -> list[SchemaChange]:
 _OP_HANDLERS["alter_column"] = _handle_alter_column
 
 
+def _handle_create_foreign_key(node: ast.Call) -> list[SchemaChange]:
+    from dbsprout.migrate.models import SchemaChangeType  # noqa: PLC0415
+
+    if len(node.args) < 5:
+        raise MigrationParseError(
+            "op.create_foreign_key expects (name, source, referent, local_cols, remote_cols)"
+        )
+    name = _literal(node.args[0])
+    source = _literal(node.args[1])
+    referent = _literal(node.args[2])
+    local_cols = _literal_list(node.args[3])
+    remote_cols = _literal_list(node.args[4])
+    return [
+        SchemaChange(
+            change_type=SchemaChangeType.FOREIGN_KEY_ADDED,
+            table_name=source,
+            detail={
+                "name": name,
+                "ref_table": referent,
+                "local_cols": local_cols,
+                "remote_cols": remote_cols,
+            },
+        )
+    ]
+
+
+def _handle_drop_constraint(node: ast.Call) -> list[SchemaChange]:
+    from dbsprout.migrate.models import SchemaChangeType  # noqa: PLC0415
+
+    kw = {k.arg: k.value for k in node.keywords if k.arg is not None}
+    type_node = kw.get("type_")
+    if type_node is None or _safe_literal(type_node) != "foreignkey":
+        return []
+    name = _literal(node.args[0])
+    if len(node.args) >= 2:
+        table = _literal(node.args[1])
+    elif "table_name" in kw:
+        table = _literal(kw["table_name"])
+    else:
+        raise MigrationParseError(
+            "op.drop_constraint requires a table name (positional or table_name=)"
+        )
+    return [
+        SchemaChange(
+            change_type=SchemaChangeType.FOREIGN_KEY_REMOVED,
+            table_name=table,
+            detail={"name": name},
+        )
+    ]
+
+
+def _safe_literal(node: ast.AST) -> str | None:
+    """Return the string value of a Constant node, else None."""
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return node.value
+    return None
+
+
+_OP_HANDLERS["create_foreign_key"] = _handle_create_foreign_key
+_OP_HANDLERS["drop_constraint"] = _handle_drop_constraint
+
+
 @dataclass(frozen=True)
 class _Revision:
     """Internal — parsed revision header + AST for a single Alembic file."""
