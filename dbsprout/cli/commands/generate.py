@@ -22,6 +22,11 @@ if TYPE_CHECKING:
 
 console = Console()
 
+# Snapshot directory is always project-root-relative so that ``init``, ``diff``,
+# and ``generate --incremental`` agree on where snapshots live, regardless of
+# ``--output-dir`` (which is the seeds directory for ``generate``).
+_SNAPSHOT_DIR = Path(".dbsprout") / "snapshots"
+
 
 def generate_command(  # noqa: PLR0913
     schema_snapshot: Path | None = None,
@@ -421,8 +426,8 @@ def _insertion_order_for(schema: DatabaseSchema) -> list[str]:
     return out
 
 
-def _print_actions_applied(result: UpdateResult) -> None:
-    """Render the list of applied actions as a Rich table."""
+def _print_actions_applied(result: UpdateResult, unchanged_tables: list[str]) -> None:
+    """Render the list of applied actions as a Rich table, plus unchanged tables."""
     table = Table(title="Incremental Updates")
     table.add_column("Action", style="bold")
     table.add_column("Table")
@@ -441,6 +446,10 @@ def _print_actions_applied(result: UpdateResult) -> None:
         f"[blue]Rows modified:[/blue] {result.rows_modified} | "
         f"added: {result.rows_added} | removed: {result.rows_removed}"
     )
+    if unchanged_tables:
+        console.print(
+            f"[dim]Unchanged tables (skipped): {', '.join(sorted(unchanged_tables))}[/dim]"
+        )
 
 
 def _load_schema_from_source(source: SchemaSource) -> DatabaseSchema:
@@ -477,7 +486,7 @@ def _run_full_gen_from_source(  # noqa: PLR0913
     _persist_result(result, schema, output_dir, output_format, dialect, upsert, insert_method)
 
     try:
-        SnapshotStore().save(schema)
+        SnapshotStore(base_dir=_SNAPSHOT_DIR).save(schema)
     except (ValueError, OSError) as exc:  # pragma: no cover — defensive
         console.print(f"[yellow]Warning: could not save snapshot:[/yellow] {exc}")
 
@@ -507,7 +516,7 @@ def _run_incremental(  # noqa: PLR0913
         raise typer.Exit(code=2)
 
     source = resolve_schema_source(db, file, output_dir)
-    store = SnapshotStore()  # .dbsprout/snapshots relative to cwd
+    store = SnapshotStore(base_dir=_SNAPSHOT_DIR)
     old_schema = store.load_by_hash(snapshot) if snapshot is not None else store.load_latest()
 
     if old_schema is None:
@@ -553,8 +562,12 @@ def _run_incremental(  # noqa: PLR0913
             console.print(f"[yellow]Warning: could not save snapshot:[/yellow] {exc}")
         return
 
+    import time  # noqa: PLC0415
+
     updater = IncrementalUpdater(new_schema, config, seed=seed)
+    apply_start = time.monotonic()
     update_result = updater.update(changes, existing.tables_data)
+    apply_duration = time.monotonic() - apply_start
 
     insertion_order = _insertion_order_for(new_schema)
     applied_result = GenerateResult(
@@ -562,8 +575,11 @@ def _run_incremental(  # noqa: PLR0913
         insertion_order=[t for t in insertion_order if t in update_result.tables_data],
         total_rows=sum(len(rows) for rows in update_result.tables_data.values()),
         total_tables=len(update_result.tables_data),
-        duration_seconds=existing.duration_seconds,
+        duration_seconds=round(apply_duration, 3),
     )
+
+    changed_tables = {a.change.table_name for a in update_result.actions_applied}
+    unchanged_tables = [t for t in applied_result.tables_data if t not in changed_tables]
 
     _persist_result(
         applied_result,
@@ -574,7 +590,7 @@ def _run_incremental(  # noqa: PLR0913
         upsert,
         insert_method,
     )
-    _print_actions_applied(update_result)
+    _print_actions_applied(update_result, unchanged_tables)
     try:
         store.save(new_schema)
     except (ValueError, OSError) as exc:  # pragma: no cover — defensive

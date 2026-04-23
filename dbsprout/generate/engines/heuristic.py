@@ -76,6 +76,12 @@ class HeuristicEngine:
         # Reseed stdlib random + every Mimesis provider so a given
         # (seed, table, column) triple yields identical output across runs.
         # Mimesis providers hold their own Random instance reachable via reseed().
+        #
+        # NOTE: ``random.seed`` is called on the global module here because the
+        # builtin generators below (``_gen_random_string`` etc.) use the module
+        # directly. Determinism in the current single-threaded CLI is fine; if
+        # parallel batch generation is ever introduced, convert the builtins to
+        # accept a ``Random`` instance and plumb it through.
         random.seed(col_seed)
         for provider in (
             self._person,
