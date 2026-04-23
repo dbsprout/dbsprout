@@ -34,6 +34,9 @@ def generate_command(  # noqa: PLR0913
     target_db: str | None = None,
     upsert: bool = False,
     insert_method: str = "auto",
+    file: str | None = None,  # noqa: ARG001 — wired in later tasks
+    incremental: bool = False,  # noqa: ARG001
+    snapshot: str | None = None,  # noqa: ARG001
 ) -> None:
     """Generate seed data from a schema snapshot."""
     # Validate insert_method

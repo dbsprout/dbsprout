@@ -66,6 +66,21 @@ def generate_proxy(  # noqa: PLR0913
         "--insert-method",
         help="Insertion method for direct output: auto, copy, load_data, batch.",
     ),
+    file: str | None = typer.Option(
+        None,
+        "--file",
+        help="Schema file for incremental (SQL/DBML/Mermaid/PlantUML/Prisma).",
+    ),
+    incremental: bool = typer.Option(
+        False,
+        "--incremental",
+        help="Apply only schema-diff-driven updates to existing seed data.",
+    ),
+    snapshot: str | None = typer.Option(
+        None,
+        "--snapshot",
+        help="Base snapshot hash prefix (default: latest).",
+    ),
 ) -> None:
     """Generate seed data from a schema snapshot."""
     from pathlib import Path  # noqa: PLC0415
@@ -85,6 +100,9 @@ def generate_proxy(  # noqa: PLR0913
         target_db=db,
         upsert=upsert,
         insert_method=insert_method,
+        file=file,
+        incremental=incremental,
+        snapshot=snapshot,
     )
 
 
