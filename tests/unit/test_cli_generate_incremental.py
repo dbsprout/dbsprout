@@ -159,3 +159,36 @@ class TestIncrementalColumnAdded:
         assert '"created_at"' in rows
         out = _strip_ansi(result.output).lower()
         assert "column_added" in out or "generate_column" in out or "+cols" in out
+
+
+class TestIncrementalArgValidation:
+    def test_both_db_and_file_exits_2(self, tmp_path: Path) -> None:
+        result = runner.invoke(
+            app,
+            [
+                "generate",
+                "--incremental",
+                "--db",
+                "sqlite:///x.db",
+                "--file",
+                "schema.sql",
+                "--output-dir",
+                str(tmp_path),
+            ],
+        )
+        assert result.exit_code == 2
+        assert "only one of --db or --file" in _strip_ansi(result.output).lower()
+
+    def test_no_source_exits_2(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.chdir(tmp_path)
+        result = runner.invoke(
+            app,
+            [
+                "generate",
+                "--incremental",
+                "--output-dir",
+                str(tmp_path),
+            ],
+        )
+        assert result.exit_code == 2
+        assert "no schema source" in _strip_ansi(result.output).lower()

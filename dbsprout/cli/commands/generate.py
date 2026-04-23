@@ -502,6 +502,10 @@ def _run_incremental(  # noqa: PLR0913
     from dbsprout.migrate.snapshot import SnapshotStore  # noqa: PLC0415
     from dbsprout.migrate.updater import IncrementalUpdater  # noqa: PLC0415
 
+    if db is not None and file is not None:
+        console.print("[red]Error:[/red] Provide only one of --db or --file.")
+        raise typer.Exit(code=2)
+
     source = resolve_schema_source(db, file, output_dir)
     store = SnapshotStore()  # .dbsprout/snapshots relative to cwd
     old_schema = store.load_by_hash(snapshot) if snapshot is not None else store.load_latest()
