@@ -6,9 +6,8 @@ from dataclasses import FrozenInstanceError
 from typing import TYPE_CHECKING
 
 import pytest
-import typer
 
-from dbsprout.cli.sources import SchemaSource, resolve_schema_source
+from dbsprout.cli.sources import SchemaSource, SchemaSourceError, resolve_schema_source
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -44,10 +43,9 @@ def test_config_fallback_file(tmp_path: Path) -> None:
     assert src.raw_value == "schema.sql"
 
 
-def test_no_source_raises_exit_2(tmp_path: Path) -> None:
-    with pytest.raises(typer.Exit) as exc:
+def test_no_source_raises_schema_source_error(tmp_path: Path) -> None:
+    with pytest.raises(SchemaSourceError, match="No schema source"):
         resolve_schema_source(db=None, file=None, output_dir=tmp_path)
-    assert exc.value.exit_code == 2
 
 
 def test_schema_source_is_frozen_dataclass() -> None:
@@ -63,7 +61,11 @@ def test_invalid_db_url_yields_invalid_url_display(tmp_path: Path) -> None:
     assert src.display_value == "<invalid URL>"
 
 
-def test_scheme_detection_uses_colon_slashes(tmp_path: Path) -> None:
-    """Windows-style file path with a drive letter should not look like a URL."""
-    src_path = "C:/schema.sql"
-    assert "://" not in src_path
+def test_config_source_windows_path_treated_as_file(tmp_path: Path) -> None:
+    """Windows-style drive path (``C:/schema.sql``) must not be mistaken for a URL."""
+    (tmp_path / "dbsprout.toml").write_text(
+        '[schema]\nsource = "C:/schema.sql"\n', encoding="utf-8"
+    )
+    src = resolve_schema_source(db=None, file=None, output_dir=tmp_path)
+    assert src.kind == "file"
+    assert src.raw_value == "C:/schema.sql"

@@ -1,8 +1,12 @@
-"""Shared CLI helper — resolve schema source from flags or config.
+"""Shared helper — resolve schema source from flags or config.
 
 Used by ``dbsprout diff`` and ``dbsprout generate --incremental`` so the
 two commands always accept the same precedence (``--db`` > ``--file`` >
 ``config.schema.source``).
+
+The helper is CLI-framework-agnostic: on failure it raises
+:class:`SchemaSourceError`. CLI callers translate that into their preferred
+``typer.Exit`` code.
 """
 
 from __future__ import annotations
@@ -10,10 +14,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
 
-import typer
-
 if TYPE_CHECKING:
     from pathlib import Path
+
+
+class SchemaSourceError(ValueError):
+    """No schema source could be resolved from flags or config."""
 
 
 @dataclass(frozen=True)
@@ -33,10 +39,8 @@ def resolve_schema_source(
     """Resolve the schema source from flags or ``dbsprout.toml``.
 
     Precedence: ``--db`` > ``--file`` > ``config.schema.source``.
-    Raises ``typer.Exit(code=2)`` if none is set.
+    Raises :class:`SchemaSourceError` if none is set.
     """
-    from dbsprout.cli.console import console  # noqa: PLC0415
-
     if db is not None:
         return _make_db_source(db)
     if file is not None:
@@ -48,14 +52,14 @@ def resolve_schema_source(
 
     try:
         cfg = load_config(output_dir / "dbsprout.toml")
-    except (ValueError, OSError, ValidationError):
-        console.print("[red]Error:[/red] No schema source. Provide --db or --file.")
-        raise typer.Exit(code=2) from None
+    except (ValueError, OSError, ValidationError) as exc:
+        msg = "No schema source. Provide --db or --file."
+        raise SchemaSourceError(msg) from exc
 
     src = cfg.schema_.source
     if not src:
-        console.print("[red]Error:[/red] No schema source. Provide --db or --file.")
-        raise typer.Exit(code=2)
+        msg = "No schema source. Provide --db or --file."
+        raise SchemaSourceError(msg)
 
     if "://" in src:
         return _make_db_source(src)

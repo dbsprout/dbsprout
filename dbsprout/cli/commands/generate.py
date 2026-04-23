@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -420,10 +421,7 @@ def _insertion_order_for(schema: DatabaseSchema) -> list[str]:
     except CycleError:  # pragma: no cover — covered by orchestrator tests
         graph = resolve_cycles(schema).graph
 
-    out: list[str] = []
-    for batch in graph.insertion_order:
-        out.extend(sorted(batch))
-    return out
+    return [t for batch in graph.insertion_order for t in sorted(batch)]
 
 
 def _print_actions_applied(result: UpdateResult, unchanged_tables: list[str]) -> None:
@@ -506,7 +504,7 @@ def _run_incremental(  # noqa: PLR0913
     insert_method: str,
 ) -> None:
     """Execute the --incremental path: diff against a prior snapshot and apply updates."""
-    from dbsprout.cli.sources import resolve_schema_source  # noqa: PLC0415
+    from dbsprout.cli.sources import SchemaSourceError, resolve_schema_source  # noqa: PLC0415
     from dbsprout.migrate.differ import SchemaDiffer  # noqa: PLC0415
     from dbsprout.migrate.snapshot import SnapshotStore  # noqa: PLC0415
     from dbsprout.migrate.updater import IncrementalUpdater  # noqa: PLC0415
@@ -515,7 +513,11 @@ def _run_incremental(  # noqa: PLR0913
         console.print("[red]Error:[/red] Provide only one of --db or --file.")
         raise typer.Exit(code=2)
 
-    source = resolve_schema_source(db, file, output_dir)
+    try:
+        source = resolve_schema_source(db, file, output_dir)
+    except SchemaSourceError as exc:
+        console.print(f"[red]Error:[/red] {exc}")
+        raise typer.Exit(code=2) from None
     store = SnapshotStore(base_dir=_SNAPSHOT_DIR)
     old_schema = store.load_by_hash(snapshot) if snapshot is not None else store.load_latest()
 
@@ -561,8 +563,6 @@ def _run_incremental(  # noqa: PLR0913
         except (ValueError, OSError) as exc:  # pragma: no cover — defensive
             console.print(f"[yellow]Warning: could not save snapshot:[/yellow] {exc}")
         return
-
-    import time  # noqa: PLC0415
 
     updater = IncrementalUpdater(new_schema, config, seed=seed)
     apply_start = time.monotonic()

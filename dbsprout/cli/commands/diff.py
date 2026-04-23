@@ -330,9 +330,13 @@ def diff_command(
         console.print("[red]Error:[/red] Invalid format. Use 'rich' or 'json'.")
         raise typer.Exit(code=2)
 
-    from dbsprout.cli.sources import resolve_schema_source  # noqa: PLC0415
+    from dbsprout.cli.sources import SchemaSourceError, resolve_schema_source  # noqa: PLC0415
 
-    source = resolve_schema_source(db, file, output_dir)
+    try:
+        source = resolve_schema_source(db, file, output_dir)
+    except SchemaSourceError as exc:
+        console.print(f"[red]Error:[/red] {exc}")
+        raise typer.Exit(code=2) from None
     old_schema = _load_old_schema(output_dir, snapshot)
     new_schema, safe_new_source = _load_new_schema(source.kind, source.raw_value)
 
