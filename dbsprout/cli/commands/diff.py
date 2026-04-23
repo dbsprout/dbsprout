@@ -13,48 +13,6 @@ if TYPE_CHECKING:
     from dbsprout.schema.models import DatabaseSchema
 
 
-def _resolve_source(
-    db: str | None,
-    file: str | None,
-    output_dir: Path,
-) -> tuple[Literal["db", "file"], str]:
-    """Resolve the schema source from flags or ``dbsprout.toml`` config.
-
-    Precedence: ``--db`` > ``--file`` > ``config.schema.source`` > exit 2.
-    """
-    from dbsprout.cli.console import console  # noqa: PLC0415
-
-    if db is not None:
-        return ("db", db)
-    if file is not None:
-        return ("file", file)
-
-    from pydantic import ValidationError  # noqa: PLC0415
-
-    from dbsprout.config import load_config  # noqa: PLC0415
-
-    try:
-        cfg = load_config(output_dir / "dbsprout.toml")
-    except (ValueError, OSError, ValidationError):
-        console.print("[red]Error:[/red] No schema source. Provide --db or --file.")
-        raise typer.Exit(code=2) from None
-
-    src = cfg.schema_.source
-    if not src:
-        console.print("[red]Error:[/red] No schema source. Provide --db or --file.")
-        raise typer.Exit(code=2)
-
-    import sqlalchemy as sa  # noqa: PLC0415
-
-    try:
-        url = sa.engine.make_url(src)
-    except sa.exc.ArgumentError:
-        return ("file", src)
-    if url.drivername:
-        return ("db", src)
-    return ("file", src)  # pragma: no cover — unreachable: make_url() always yields drivername
-
-
 def _summarize(changes: list[SchemaChange]) -> dict[str, int]:
     """Count changes by SchemaChangeType plus a total.
 
@@ -372,9 +330,11 @@ def diff_command(
         console.print("[red]Error:[/red] Invalid format. Use 'rich' or 'json'.")
         raise typer.Exit(code=2)
 
-    source_kind, source_value = _resolve_source(db, file, output_dir)
+    from dbsprout.cli.sources import resolve_schema_source  # noqa: PLC0415
+
+    source = resolve_schema_source(db, file, output_dir)
     old_schema = _load_old_schema(output_dir, snapshot)
-    new_schema, safe_new_source = _load_new_schema(source_kind, source_value)
+    new_schema, safe_new_source = _load_new_schema(source.kind, source.raw_value)
 
     from dbsprout.migrate.differ import SchemaDiffer  # noqa: PLC0415
 
