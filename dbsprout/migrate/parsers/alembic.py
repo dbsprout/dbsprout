@@ -8,6 +8,7 @@ Also offers an opt-in ``compare_metadata`` wrapper that delegates to
 
 from __future__ import annotations
 
+import configparser
 import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
@@ -44,6 +45,27 @@ class AlembicParser:
 
 
 def _discover_versions_dir(project_path: Path) -> Path:
+    """Resolve the Alembic versions directory.
+
+    Order: ``alembic.ini[alembic].script_location/versions`` →
+    ``./alembic/versions`` → ``./migrations/versions``.
+    """
+    ini = project_path / "alembic.ini"
+    if ini.exists():
+        cp = configparser.ConfigParser()
+        cp.read(ini)
+        if cp.has_option("alembic", "script_location"):
+            loc = project_path / cp.get("alembic", "script_location") / "versions"
+            if loc.is_dir():
+                return loc
+
+    for fallback in (
+        project_path / "alembic" / "versions",
+        project_path / "migrations" / "versions",
+    ):
+        if fallback.is_dir():
+            return fallback
+
     raise MigrationParseError("No Alembic versions/ directory found", file_path=project_path)
 
 
