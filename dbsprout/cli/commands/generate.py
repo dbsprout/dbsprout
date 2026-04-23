@@ -68,6 +68,7 @@ def generate_command(  # noqa: PLR0913
             output_format=output_format,
             output_dir=output_dir,
             dialect=dialect,
+            target_db=target_db,
             upsert=upsert,
             insert_method=insert_method,
         )
@@ -451,13 +452,23 @@ def _print_actions_applied(result: UpdateResult, unchanged_tables: list[str]) ->
 
 
 def _load_schema_from_source(source: SchemaSource) -> DatabaseSchema:
-    """Introspect DB or parse file, returning the new ``DatabaseSchema``."""
+    """Introspect DB or parse file, returning the new ``DatabaseSchema``.
+
+    Converts parser/DB errors to a clean ``typer.Exit(code=2)`` with a
+    user-friendly message instead of letting tracebacks bubble up.
+    """
+    import sqlalchemy as sa  # noqa: PLC0415
+
     from dbsprout.schema.introspect import introspect  # noqa: PLC0415
     from dbsprout.schema.parsers import parse_schema_file  # noqa: PLC0415
 
-    if source.kind == "db":
-        return introspect(source.raw_value)
-    return parse_schema_file(Path(source.raw_value))
+    try:
+        if source.kind == "db":
+            return introspect(source.raw_value)
+        return parse_schema_file(Path(source.raw_value))
+    except (FileNotFoundError, ValueError, OSError, sa.exc.SQLAlchemyError) as exc:
+        console.print(f"[red]Error:[/red] {exc}")
+        raise typer.Exit(code=2) from None
 
 
 def _run_full_gen_from_source(  # noqa: PLR0913
@@ -471,6 +482,7 @@ def _run_full_gen_from_source(  # noqa: PLR0913
     dialect: str,
     upsert: bool,
     insert_method: str,
+    target_db: str | None = None,
 ) -> None:
     """Full-gen path used as a fallback when no prior snapshot exists."""
     from dbsprout.migrate.snapshot import SnapshotStore  # noqa: PLC0415
@@ -481,7 +493,16 @@ def _run_full_gen_from_source(  # noqa: PLR0913
     config = DBSproutConfig.from_toml(cfg_path if cfg_path.exists() else None)
 
     result = orchestrate(schema, config, seed=seed, default_rows=default_rows, engine=engine)
-    _persist_result(result, schema, output_dir, output_format, dialect, upsert, insert_method)
+    _persist_result(
+        result,
+        schema,
+        output_dir,
+        output_format,
+        dialect,
+        upsert,
+        insert_method,
+        target_db=target_db,
+    )
 
     try:
         SnapshotStore(base_dir=_SNAPSHOT_DIR).save(schema)
@@ -502,6 +523,7 @@ def _run_incremental(  # noqa: PLR0913
     dialect: str,
     upsert: bool,
     insert_method: str,
+    target_db: str | None = None,
 ) -> None:
     """Execute the --incremental path: diff against a prior snapshot and apply updates."""
     from dbsprout.cli.sources import SchemaSourceError, resolve_schema_source  # noqa: PLC0415
@@ -514,7 +536,9 @@ def _run_incremental(  # noqa: PLR0913
         raise typer.Exit(code=2)
 
     try:
-        source = resolve_schema_source(db, file, output_dir)
+        # Config lookup is project-root-relative (cwd); output_dir is the seeds dir
+        # for generate, which would never contain dbsprout.toml.
+        source = resolve_schema_source(db, file, Path("."))
     except SchemaSourceError as exc:
         console.print(f"[red]Error:[/red] {exc}")
         raise typer.Exit(code=2) from None
@@ -536,6 +560,7 @@ def _run_incremental(  # noqa: PLR0913
             dialect=dialect,
             upsert=upsert,
             insert_method=insert_method,
+            target_db=target_db,
         )
         return
 
@@ -557,6 +582,7 @@ def _run_incremental(  # noqa: PLR0913
             dialect,
             upsert,
             insert_method,
+            target_db=target_db,
         )
         try:
             store.save(new_schema)
@@ -589,6 +615,7 @@ def _run_incremental(  # noqa: PLR0913
         dialect,
         upsert,
         insert_method,
+        target_db=target_db,
     )
     _print_actions_applied(update_result, unchanged_tables)
     try:

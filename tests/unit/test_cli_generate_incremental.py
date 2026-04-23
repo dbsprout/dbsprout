@@ -190,6 +190,52 @@ class TestIncrementalSnapshotArg:
         assert result.exit_code == 0
         assert "no schema changes" in _strip_ansi(result.output).lower()
 
+    def test_unknown_snapshot_hash_falls_back(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """--snapshot HASH that doesn't match any snapshot falls back to full gen."""
+        monkeypatch.chdir(tmp_path)
+        schema_path = _write_schema_sql(tmp_path)
+
+        result = runner.invoke(
+            app,
+            [
+                "generate",
+                "--incremental",
+                "--file",
+                str(schema_path),
+                "--snapshot",
+                "deadbeef",
+                "--output-dir",
+                str(tmp_path / "seeds"),
+            ],
+        )
+        assert result.exit_code == 0
+        assert "falling back to full generation" in _strip_ansi(result.output).lower()
+
+
+class TestIncrementalBadSource:
+    def test_missing_file_exits_2(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """--incremental --file <missing> exits 2 with a user-friendly message."""
+        monkeypatch.chdir(tmp_path)
+        store = SnapshotStore()
+        store.save(_minimal_schema())
+
+        result = runner.invoke(
+            app,
+            [
+                "generate",
+                "--incremental",
+                "--file",
+                str(tmp_path / "nope.sql"),
+                "--output-dir",
+                str(tmp_path / "seeds"),
+            ],
+        )
+        assert result.exit_code == 2
+        out = _strip_ansi(result.output).lower()
+        assert "file not found" in out
+
 
 class TestIncrementalArgValidation:
     def test_both_db_and_file_exits_2(self, tmp_path: Path) -> None:
