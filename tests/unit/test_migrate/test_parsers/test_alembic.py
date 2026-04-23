@@ -233,3 +233,44 @@ class TestTableOps:
         assert len(changes) == 1
         assert changes[0].change_type == SchemaChangeType.TABLE_REMOVED
         assert changes[0].table_name == "users"
+
+
+class TestColumnAddDrop:
+    def _run(self, body: str) -> list:
+        import ast  # noqa: PLC0415
+
+        from dbsprout.migrate.parsers.alembic import _parse_upgrade, _Revision  # noqa: PLC0415
+
+        src = f'revision = "r"\ndown_revision = None\n\ndef upgrade():\n{body}\n'
+        module = ast.parse(src)
+        rev = _Revision(path=Path("r.py"), revision="r", down_revision=None, module=module)
+        return _parse_upgrade(rev)
+
+    def test_add_column(self) -> None:
+        from dbsprout.migrate.models import SchemaChangeType  # noqa: PLC0415
+
+        body = (
+            "    op.add_column(\n"
+            '        "items",\n'
+            '        sa.Column("created_at", sa.DateTime(), nullable=True),\n'
+            "    )"
+        )
+        changes = self._run(body)
+        assert len(changes) == 1
+        c = changes[0]
+        assert c.change_type == SchemaChangeType.COLUMN_ADDED
+        assert c.table_name == "items"
+        assert c.column_name == "created_at"
+        assert c.detail is not None
+        assert "DateTime" in c.detail["alembic_type"]
+        assert c.detail["nullable"] is True
+
+    def test_drop_column(self) -> None:
+        from dbsprout.migrate.models import SchemaChangeType  # noqa: PLC0415
+
+        changes = self._run('    op.drop_column("items", "legacy_col")')
+        assert len(changes) == 1
+        c = changes[0]
+        assert c.change_type == SchemaChangeType.COLUMN_REMOVED
+        assert c.table_name == "items"
+        assert c.column_name == "legacy_col"

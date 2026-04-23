@@ -264,6 +264,44 @@ _OP_HANDLERS["create_table"] = _handle_create_table
 _OP_HANDLERS["drop_table"] = _handle_drop_table
 
 
+def _handle_add_column(node: ast.Call) -> list[SchemaChange]:
+    from dbsprout.migrate.models import SchemaChangeType  # noqa: PLC0415
+
+    table = _literal(node.args[0])
+    col_node = node.args[1]
+    if not _is_sa_column_call(col_node):
+        raise MigrationParseError(
+            f"op.add_column expected Column(...) arg, got {ast.unparse(col_node)}"
+        )
+    assert isinstance(col_node, ast.Call)
+    spec = _extract_column_spec(col_node)
+    name = str(spec.pop("name"))
+    return [
+        SchemaChange(
+            change_type=SchemaChangeType.COLUMN_ADDED,
+            table_name=table,
+            column_name=name,
+            detail=spec or None,
+        )
+    ]
+
+
+def _handle_drop_column(node: ast.Call) -> list[SchemaChange]:
+    from dbsprout.migrate.models import SchemaChangeType  # noqa: PLC0415
+
+    return [
+        SchemaChange(
+            change_type=SchemaChangeType.COLUMN_REMOVED,
+            table_name=_literal(node.args[0]),
+            column_name=_literal(node.args[1]),
+        )
+    ]
+
+
+_OP_HANDLERS["add_column"] = _handle_add_column
+_OP_HANDLERS["drop_column"] = _handle_drop_column
+
+
 @dataclass(frozen=True)
 class _Revision:
     """Internal — parsed revision header + AST for a single Alembic file."""
