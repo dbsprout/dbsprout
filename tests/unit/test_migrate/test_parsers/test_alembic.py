@@ -938,3 +938,23 @@ class TestHandlerErrorsCarryFilePath:
         with pytest.raises(MigrationParseError) as exc_info:
             AlembicParser().detect_changes(tmp_path)
         assert exc_info.value.file_path == rev
+
+
+class TestSymlinkHardening:
+    """Defensive check — revision-file glob skips symlinks."""
+
+    def test_symlink_is_skipped(self, tmp_path: Path) -> None:
+        from dbsprout.migrate.parsers.alembic import _collect_revisions  # noqa: PLC0415
+
+        versions = tmp_path / "versions"
+        versions.mkdir()
+        real = tmp_path / "external.py"
+        real.write_text(
+            'revision = "ext"\ndown_revision = None\n\ndef upgrade(): pass\n',
+            encoding="utf-8",
+        )
+        link = versions / "0001.py"
+        link.symlink_to(real)
+
+        revs = _collect_revisions(versions)
+        assert revs == []

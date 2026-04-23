@@ -14,7 +14,7 @@ import configparser
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from dbsprout.migrate.models import SchemaChange
 from dbsprout.migrate.parsers import MigrationParseError
@@ -108,10 +108,18 @@ def _discover_versions_dir(project_path: Path) -> Path:
 
 
 def _collect_revisions(versions_dir: Path) -> list[_Revision]:
-    """Parse every ``.py`` file in *versions_dir* into ``_Revision`` records."""
+    """Parse every ``.py`` file in *versions_dir* into ``_Revision`` records.
+
+    Dunder files (``__init__.py`` etc.) and symlinks are skipped. Symlinks are
+    skipped defensively so a malicious symlink to a huge or blocking device
+    (e.g. ``/dev/zero``) cannot bypass the size cap or hang ``read_text``.
+    """
     revs: list[_Revision] = []
     for f in sorted(versions_dir.glob("*.py")):
         if f.name.startswith("__"):
+            continue
+        if f.is_symlink():
+            logger.debug("Skipping symlink in versions/: %s", f)
             continue
         if f.stat().st_size > _MAX_REVISION_BYTES:
             raise MigrationParseError(
@@ -186,13 +194,13 @@ _OP_HANDLERS: dict[str, OpHandler] = {}  # populated in Tasks 7-11
 
 
 def _parse_upgrade(rev: _Revision) -> list[SchemaChange]:
-    assert isinstance(rev.module, ast.Module)
-    upgrade_fn = _find_upgrade(rev.module, rev.path)
+    module = cast("ast.Module", rev.module)  # guaranteed by _Revision construction
+    upgrade_fn = _find_upgrade(module, rev.path)
     changes: list[SchemaChange] = []
     for node in ast.walk(upgrade_fn):
         if isinstance(node, ast.Call) and _is_op_call(node):
-            assert isinstance(node.func, ast.Attribute)
-            verb = node.func.attr
+            func = cast("ast.Attribute", node.func)  # narrowed by _is_op_call
+            verb = func.attr
             handler = _OP_HANDLERS.get(verb)
             if handler is None:
                 logger.debug("Skipping unrecognized op.%s in %s", verb, rev.path)
@@ -272,8 +280,7 @@ def _handle_create_table(node: ast.Call) -> list[SchemaChange]:
     columns: list[dict[str, object]] = []
     for arg in node.args[1:]:
         if _is_sa_column_call(arg):
-            assert isinstance(arg, ast.Call)
-            columns.append(_extract_column_spec(arg))
+            columns.append(_extract_column_spec(cast("ast.Call", arg)))
     detail = {"columns": columns} if columns else None
     return [
         SchemaChange(
@@ -308,8 +315,7 @@ def _handle_add_column(node: ast.Call) -> list[SchemaChange]:
         raise MigrationParseError(
             f"op.add_column expected Column(...) arg, got {ast.unparse(col_node)}"
         )
-    assert isinstance(col_node, ast.Call)
-    spec = _extract_column_spec(col_node)
+    spec = _extract_column_spec(cast("ast.Call", col_node))
     name = str(spec.pop("name"))
     return [
         SchemaChange(
