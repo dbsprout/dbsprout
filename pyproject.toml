@@ -78,6 +78,9 @@ llm = [
     "llama-cpp-python>=0.3",
     "huggingface-hub>=0.20",
 ]
+migrate = [
+    "alembic>=1.12,<2.0",
+]
 cloud = [
     "litellm>=1.0",
     "instructor>=1.0",
@@ -153,6 +156,7 @@ ignore = [
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**/*.py" = ["S101", "ARG001", "ARG002", "T20"]
+"tests/**/fixtures/**/*.py" = ["S101", "ARG001", "ARG002", "T20", "E402", "ANN", "D"]  # fixture files mirror real-world layouts (e.g. Alembic revisions put metadata above imports)
 "dbsprout/cli/commands/*.py" = ["B008"]  # typer.Option() in function defaults is the standard pattern
 "dbsprout/schema/parsers/*.py" = ["PLR0912", "PLR0915"]  # parser functions are inherently branchy
 "dbsprout/spec/patterns.py" = ["E501"]  # pattern data declarations are naturally wide
