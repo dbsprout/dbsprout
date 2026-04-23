@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -14,11 +15,23 @@ from dbsprout.generate.orchestrator import GenerateResult, orchestrate
 from dbsprout.schema.models import DatabaseSchema
 
 if TYPE_CHECKING:
+    from dbsprout.cli.sources import SchemaSource
     from dbsprout.migrate.snapshot import SnapshotStore
+    from dbsprout.migrate.update_models import UpdateResult
     from dbsprout.output.models import InsertResult
     from dbsprout.quality.integrity import IntegrityReport
 
 console = Console()
+
+# Snapshot directory — always project-root-relative so ``init``, ``diff`` and
+# ``generate --incremental`` agree on where snapshots live, regardless of
+# ``--output-dir`` (which is the seeds directory for ``generate``).
+#
+# This is a relative :class:`Path`, resolved against the current working
+# directory at the moment the ``SnapshotStore`` is instantiated. CLI invocations
+# run from the project root; tests that exercise snapshot state must
+# ``monkeypatch.chdir(tmp_path)``.
+_SNAPSHOT_DIR = Path(".dbsprout") / "snapshots"
 
 
 def generate_command(  # noqa: PLR0913
@@ -34,6 +47,9 @@ def generate_command(  # noqa: PLR0913
     target_db: str | None = None,
     upsert: bool = False,
     insert_method: str = "auto",
+    file: str | None = None,
+    incremental: bool = False,
+    snapshot: str | None = None,
 ) -> None:
     """Generate seed data from a schema snapshot."""
     # Validate insert_method
@@ -44,6 +60,27 @@ def generate_command(  # noqa: PLR0913
             f"Use: {', '.join(sorted(valid_methods))}"
         )
         raise typer.Exit(code=1)
+
+    if incremental:
+        # --db URL in incremental mode doubles as the schema introspection
+        # source AND the write target for --output-format direct. Same URL
+        # is passed to both roles by design.
+        _run_incremental(
+            source_db=target_db,
+            file=file,
+            snapshot=snapshot,
+            config_path=config_path,
+            seed=seed,
+            default_rows=rows,
+            engine=engine,
+            output_format=output_format,
+            output_dir=output_dir,
+            dialect=dialect,
+            target_db=target_db,
+            upsert=upsert,
+            insert_method=insert_method,
+        )
+        return
 
     # Load schema (with snapshot fallback)
     from dbsprout.migrate.snapshot import SnapshotStore  # noqa: PLC0415
@@ -340,3 +377,282 @@ def _print_summary(
     table.add_row("Format", output_format)
 
     console.print(table)
+
+
+def _persist_result(  # noqa: PLR0913
+    result: GenerateResult,
+    schema: DatabaseSchema,
+    output_dir: Path,
+    output_format: str,
+    dialect: str,
+    upsert: bool,
+    insert_method: str,
+    target_db: str | None = None,
+) -> None:
+    """Write output, validate integrity, print summary.
+
+    Raises ``typer.Exit(1)`` if integrity validation fails.
+    """
+    from dbsprout.quality.integrity import validate_integrity  # noqa: PLC0415
+
+    if result.total_tables == 0:  # pragma: no cover — pre-checked by callers
+        console.print("[yellow]No tables to generate.[/yellow]")
+        raise typer.Exit(code=0)
+
+    _write_output(
+        result,
+        schema,
+        result.insertion_order,
+        output_dir,
+        output_format,
+        dialect,
+        target_db,
+        upsert,
+        insert_method,
+    )
+    report = validate_integrity(result.tables_data, schema)
+    _print_validation(report)
+    _print_summary(result, output_dir, output_format)
+
+    if not report.passed:  # pragma: no cover — heuristic engine produces valid data
+        console.print("[red]Integrity validation FAILED.[/red]")
+        raise typer.Exit(code=1)
+
+
+def _insertion_order_for(schema: DatabaseSchema) -> list[str]:
+    """Compute FK-safe insertion order for a schema."""
+    from graphlib import CycleError  # noqa: PLC0415
+
+    from dbsprout.schema.graph import FKGraph, resolve_cycles  # noqa: PLC0415
+
+    try:
+        graph = FKGraph.from_schema(schema)
+    except CycleError:  # pragma: no cover — covered by orchestrator tests
+        graph = resolve_cycles(schema).graph
+
+    return [t for batch in graph.insertion_order for t in sorted(batch)]
+
+
+def _print_actions_applied(result: UpdateResult, unchanged_tables: list[str]) -> None:
+    """Render the list of applied actions as a Rich table, plus unchanged tables."""
+    table = Table(title="Incremental Updates")
+    table.add_column("Action", style="bold")
+    table.add_column("Table")
+    table.add_column("Column")
+    table.add_column("Description")
+
+    for action in result.actions_applied:
+        table.add_row(
+            action.action.value,
+            action.change.table_name,
+            action.change.column_name or "",
+            action.description,
+        )
+    console.print(table)
+    console.print(
+        f"[blue]Rows modified:[/blue] {result.rows_modified} | "
+        f"added: {result.rows_added} | removed: {result.rows_removed}"
+    )
+    if unchanged_tables:
+        console.print(
+            f"[dim]Unchanged tables (skipped): {', '.join(sorted(unchanged_tables))}[/dim]"
+        )
+
+
+def _load_schema_from_source(source: SchemaSource) -> DatabaseSchema:
+    """Introspect DB or parse file, returning the new ``DatabaseSchema``.
+
+    Converts parser/DB errors to a clean ``typer.Exit(code=2)`` with a
+    user-friendly message instead of letting tracebacks bubble up.
+
+    DB error messages from SQLAlchemy can embed the raw connection URL
+    (including the password); we scrub them before printing.
+    """
+    import sqlalchemy as sa  # noqa: PLC0415
+
+    from dbsprout.schema.introspect import introspect  # noqa: PLC0415
+    from dbsprout.schema.parsers import parse_schema_file  # noqa: PLC0415
+
+    try:
+        if source.kind == "db":
+            return introspect(source.raw_value)
+        return parse_schema_file(Path(source.raw_value))
+    except (FileNotFoundError, ValueError, OSError, sa.exc.SQLAlchemyError) as exc:
+        msg = _scrub_schema_source_secrets(str(exc), source)
+        console.print(f"[red]Error:[/red] {msg}")
+        raise typer.Exit(code=2) from None
+
+
+def _scrub_schema_source_secrets(message: str, source: SchemaSource) -> str:
+    """Redact raw URL + password from *message* using the source's sanitized form."""
+    if source.kind != "db":
+        return message
+    import sqlalchemy as sa  # noqa: PLC0415
+
+    try:
+        url = sa.engine.make_url(source.raw_value)
+    except sa.exc.ArgumentError:  # pragma: no cover — defensive
+        return message
+    password = url.password
+    safe = source.display_value
+    if password:
+        message = message.replace(password, "***")
+    return message.replace(source.raw_value, safe)
+
+
+def _run_full_gen_from_source(  # noqa: PLR0913
+    source: SchemaSource,
+    config_path: Path | None,
+    seed: int,
+    default_rows: int,
+    engine: str,
+    output_format: str,
+    output_dir: Path,
+    dialect: str,
+    upsert: bool,
+    insert_method: str,
+    target_db: str | None = None,
+) -> None:
+    """Full-gen path used as a fallback when no prior snapshot exists."""
+    from dbsprout.migrate.snapshot import SnapshotStore  # noqa: PLC0415
+
+    schema = _load_schema_from_source(source)
+
+    cfg_path = config_path or Path("dbsprout.toml")
+    config = DBSproutConfig.from_toml(cfg_path if cfg_path.exists() else None)
+
+    result = orchestrate(schema, config, seed=seed, default_rows=default_rows, engine=engine)
+    _persist_result(
+        result,
+        schema,
+        output_dir,
+        output_format,
+        dialect,
+        upsert,
+        insert_method,
+        target_db=target_db,
+    )
+
+    try:
+        SnapshotStore(base_dir=_SNAPSHOT_DIR).save(schema)
+    except (ValueError, OSError) as exc:  # pragma: no cover — defensive
+        console.print(f"[yellow]Warning: could not save snapshot:[/yellow] {exc}")
+
+
+def _run_incremental(  # noqa: PLR0913
+    source_db: str | None,
+    file: str | None,
+    snapshot: str | None,
+    config_path: Path | None,
+    seed: int,
+    default_rows: int,
+    engine: str,
+    output_format: str,
+    output_dir: Path,
+    dialect: str,
+    upsert: bool,
+    insert_method: str,
+    target_db: str | None = None,
+) -> None:
+    """Execute the --incremental path: diff against a prior snapshot and apply updates.
+
+    ``source_db`` is the schema-introspection URL (from ``--db``). ``target_db``
+    is the write target for ``--output-format direct``; callers typically pass
+    the same URL for both.
+    """
+    from dbsprout.cli.sources import SchemaSourceError, resolve_schema_source  # noqa: PLC0415
+    from dbsprout.migrate.differ import SchemaDiffer  # noqa: PLC0415
+    from dbsprout.migrate.snapshot import SnapshotStore  # noqa: PLC0415
+    from dbsprout.migrate.updater import IncrementalUpdater  # noqa: PLC0415
+
+    if source_db is not None and file is not None:
+        console.print("[red]Error:[/red] Provide only one of --db or --file.")
+        raise typer.Exit(code=2)
+
+    try:
+        # Config lookup is project-root-relative (cwd); output_dir is the seeds dir
+        # for generate, which would never contain dbsprout.toml.
+        source = resolve_schema_source(source_db, file, Path("."))
+    except SchemaSourceError as exc:
+        console.print(f"[red]Error:[/red] {exc}")
+        raise typer.Exit(code=2) from None
+    store = SnapshotStore(base_dir=_SNAPSHOT_DIR)
+    old_schema = store.load_by_hash(snapshot) if snapshot is not None else store.load_latest()
+
+    if old_schema is None:
+        console.print(
+            "[yellow]Warning:[/yellow] No prior snapshot found — falling back to full generation."
+        )
+        _run_full_gen_from_source(
+            source=source,
+            config_path=config_path,
+            seed=seed,
+            default_rows=default_rows,
+            engine=engine,
+            output_format=output_format,
+            output_dir=output_dir,
+            dialect=dialect,
+            upsert=upsert,
+            insert_method=insert_method,
+            target_db=target_db,
+        )
+        return
+
+    new_schema = _load_schema_from_source(source)
+
+    cfg_path = config_path or Path("dbsprout.toml")
+    config = DBSproutConfig.from_toml(cfg_path if cfg_path.exists() else None)
+
+    existing = orchestrate(old_schema, config, seed=seed, default_rows=default_rows, engine=engine)
+
+    changes = SchemaDiffer.diff(old_schema, new_schema)
+    if not changes:
+        console.print("[green]No schema changes detected — output unchanged.[/green]")
+        _persist_result(
+            existing,
+            new_schema,
+            output_dir,
+            output_format,
+            dialect,
+            upsert,
+            insert_method,
+            target_db=target_db,
+        )
+        try:
+            store.save(new_schema)
+        except (ValueError, OSError) as exc:  # pragma: no cover — defensive
+            console.print(f"[yellow]Warning: could not save snapshot:[/yellow] {exc}")
+        return
+
+    updater = IncrementalUpdater(new_schema, config, seed=seed)
+    apply_start = time.monotonic()
+    update_result = updater.update(changes, existing.tables_data)
+    apply_duration = time.monotonic() - apply_start
+
+    insertion_order = _insertion_order_for(new_schema)
+    applied_result = GenerateResult(
+        tables_data=update_result.tables_data,
+        insertion_order=[t for t in insertion_order if t in update_result.tables_data],
+        total_rows=sum(len(rows) for rows in update_result.tables_data.values()),
+        total_tables=len(update_result.tables_data),
+        duration_seconds=round(apply_duration, 3),
+    )
+
+    changed_tables = {a.change.table_name for a in update_result.actions_applied}
+    unchanged_tables = [t for t in applied_result.tables_data if t not in changed_tables]
+
+    _persist_result(
+        applied_result,
+        new_schema,
+        output_dir,
+        output_format,
+        dialect,
+        upsert,
+        insert_method,
+        target_db=target_db,
+    )
+    _print_actions_applied(update_result, unchanged_tables)
+    try:
+        store.save(new_schema)
+    except (ValueError, OSError) as exc:  # pragma: no cover — defensive
+        console.print(f"[yellow]Warning: could not save snapshot:[/yellow] {exc}")

@@ -73,6 +73,27 @@ class HeuristicEngine:
         if mapping is None:
             return [None] * num_rows
 
+        # Reseed stdlib random + every Mimesis provider so a given
+        # (seed, table, column) triple yields identical output across runs.
+        # Mimesis providers hold their own Random instance reachable via reseed().
+        #
+        # NOTE: ``random.seed`` is called on the global module here because the
+        # builtin generators below (``_gen_random_string`` etc.) use the module
+        # directly. Determinism in the current single-threaded CLI is fine; if
+        # parallel batch generation is ever introduced, convert the builtins to
+        # accept a ``Random`` instance and plumb it through.
+        random.seed(col_seed)
+        for provider in (
+            self._person,
+            self._address,
+            self._finance,
+            self._internet,
+            self._text,
+            self._dt,
+            self._payment,
+        ):
+            provider.reseed(col_seed)
+
         # Fast path: vectorized NumPy generation for eligible types
         from dbsprout.generate.vectorized import generate_vectorized  # noqa: PLC0415
 

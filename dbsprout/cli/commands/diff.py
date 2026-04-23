@@ -13,48 +13,6 @@ if TYPE_CHECKING:
     from dbsprout.schema.models import DatabaseSchema
 
 
-def _resolve_source(
-    db: str | None,
-    file: str | None,
-    output_dir: Path,
-) -> tuple[Literal["db", "file"], str]:
-    """Resolve the schema source from flags or ``dbsprout.toml`` config.
-
-    Precedence: ``--db`` > ``--file`` > ``config.schema.source`` > exit 2.
-    """
-    from dbsprout.cli.console import console  # noqa: PLC0415
-
-    if db is not None:
-        return ("db", db)
-    if file is not None:
-        return ("file", file)
-
-    from pydantic import ValidationError  # noqa: PLC0415
-
-    from dbsprout.config import load_config  # noqa: PLC0415
-
-    try:
-        cfg = load_config(output_dir / "dbsprout.toml")
-    except (ValueError, OSError, ValidationError):
-        console.print("[red]Error:[/red] No schema source. Provide --db or --file.")
-        raise typer.Exit(code=2) from None
-
-    src = cfg.schema_.source
-    if not src:
-        console.print("[red]Error:[/red] No schema source. Provide --db or --file.")
-        raise typer.Exit(code=2)
-
-    import sqlalchemy as sa  # noqa: PLC0415
-
-    try:
-        url = sa.engine.make_url(src)
-    except sa.exc.ArgumentError:
-        return ("file", src)
-    if url.drivername:
-        return ("db", src)
-    return ("file", src)  # pragma: no cover — unreachable: make_url() always yields drivername
-
-
 def _summarize(changes: list[SchemaChange]) -> dict[str, int]:
     """Count changes by SchemaChangeType plus a total.
 
@@ -343,7 +301,15 @@ def _load_new_schema(
         return new_schema, safe_new_source
 
     # File source: parse the schema file and echo the path unmodified.
-    new_schema = _parse_schema_file(source_value)
+    from pathlib import Path  # noqa: PLC0415
+
+    from dbsprout.schema.parsers import parse_schema_file  # noqa: PLC0415
+
+    try:
+        new_schema = parse_schema_file(Path(source_value))
+    except (FileNotFoundError, ValueError, OSError) as exc:
+        console.print(f"[red]Error:[/red] {exc}")
+        raise typer.Exit(code=2) from None
     return new_schema, source_value
 
 
@@ -364,9 +330,15 @@ def diff_command(
         console.print("[red]Error:[/red] Invalid format. Use 'rich' or 'json'.")
         raise typer.Exit(code=2)
 
-    source_kind, source_value = _resolve_source(db, file, output_dir)
+    from dbsprout.cli.sources import SchemaSourceError, resolve_schema_source  # noqa: PLC0415
+
+    try:
+        source = resolve_schema_source(db, file, output_dir)
+    except SchemaSourceError as exc:
+        console.print(f"[red]Error:[/red] {exc}")
+        raise typer.Exit(code=2) from None
     old_schema = _load_old_schema(output_dir, snapshot)
-    new_schema, safe_new_source = _load_new_schema(source_kind, source_value)
+    new_schema, safe_new_source = _load_new_schema(source.kind, source.raw_value)
 
     from dbsprout.migrate.differ import SchemaDiffer  # noqa: PLC0415
 
@@ -381,52 +353,3 @@ def diff_command(
     else:
         _render_rich(changes, old_schema, safe_new_source)
     raise typer.Exit(code=1)  # drift detected → CI signal
-
-
-def _parse_schema_file(file_path: str) -> DatabaseSchema:
-    """Parse a schema file based on suffix. Raises ``typer.Exit(2)`` on error.
-
-    Supports: ``.sql`` (DDL), ``.dbml``, ``.mermaid``/``.mmd``,
-    ``.puml``/``.plantuml``/``.pu``, ``.prisma``. Unknown suffixes fall back to
-    SQL DDL. Mirrors :func:`dbsprout.cli.commands.init._init_from_file` dispatch.
-    """
-    from pathlib import Path  # noqa: PLC0415
-
-    from dbsprout.cli.console import console  # noqa: PLC0415
-
-    max_ddl_bytes = 10 * 1024 * 1024  # 10 MB cap — matches init_command
-
-    path = Path(file_path)
-    if not path.exists():
-        console.print(f"[red]Error:[/red] File not found: {file_path}")
-        raise typer.Exit(code=2)
-    if path.stat().st_size > max_ddl_bytes:  # pragma: no cover — requires >10MB file
-        console.print(f"[red]Error:[/red] File too large (>10 MB): {file_path}")
-        raise typer.Exit(code=2)
-
-    try:
-        file_text = path.read_text(encoding="utf-8")
-        suffix = path.suffix.lower()
-        if suffix == ".dbml":
-            from dbsprout.schema.parsers.dbml import parse_dbml  # noqa: PLC0415
-
-            return parse_dbml(file_text, source_file=str(file_path))
-        if suffix in (".mermaid", ".mmd"):
-            from dbsprout.schema.parsers.mermaid import parse_mermaid  # noqa: PLC0415
-
-            return parse_mermaid(file_text, source_file=str(file_path))
-        if suffix in (".puml", ".plantuml", ".pu"):
-            from dbsprout.schema.parsers.plantuml import parse_plantuml  # noqa: PLC0415
-
-            return parse_plantuml(file_text, source_file=str(file_path))
-        if suffix == ".prisma":
-            from dbsprout.schema.parsers.prisma import parse_prisma  # noqa: PLC0415
-
-            return parse_prisma(file_text, source_file=str(file_path))
-        # Default: SQL DDL
-        from dbsprout.schema.parsers.ddl import parse_ddl  # noqa: PLC0415
-
-        return parse_ddl(file_text, source_file=str(file_path))
-    except (ValueError, OSError) as exc:
-        console.print(f"[red]Error:[/red] {exc}")
-        raise typer.Exit(code=2) from None

@@ -78,6 +78,21 @@ class TestGenerateHelp:
         assert "--privacy" in output
 
 
+class TestGenerateIncrementalFlags:
+    def test_incremental_flag_in_help(self) -> None:
+        result = runner.invoke(app, ["generate", "--help"])
+        assert result.exit_code == 0
+        assert "--incremental" in _strip_ansi(result.output)
+
+    def test_snapshot_flag_in_help(self) -> None:
+        result = runner.invoke(app, ["generate", "--help"])
+        assert "--snapshot" in _strip_ansi(result.output)
+
+    def test_file_flag_in_help(self) -> None:
+        result = runner.invoke(app, ["generate", "--help"])
+        assert "--file" in _strip_ansi(result.output)
+
+
 class TestGenerateRequiresSchema:
     def test_errors_without_schema(self, tmp_path: Path) -> None:
         """Must error if no schema snapshot exists."""
