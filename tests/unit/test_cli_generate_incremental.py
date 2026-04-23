@@ -158,7 +158,107 @@ class TestIncrementalColumnAdded:
         rows = json_files[0].read_text(encoding="utf-8")
         assert '"created_at"' in rows
         out = _strip_ansi(result.output).lower()
-        assert "column_added" in out or "generate_column" in out or "+cols" in out
+        assert "generate_column" in out
+
+
+class TestIncrementalColumnTypeChanged:
+    def test_type_change_regenerates_column(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Column data type change → REGENERATE_COLUMN action fires."""
+        monkeypatch.chdir(tmp_path)
+        store = SnapshotStore()
+        store.save(_minimal_schema())
+
+        schema_path = tmp_path / "schema.sql"
+        schema_path.write_text(
+            "CREATE TABLE items (id INTEGER PRIMARY KEY, name INTEGER NOT NULL);",
+            encoding="utf-8",
+        )
+
+        result = runner.invoke(
+            app,
+            [
+                "generate",
+                "--incremental",
+                "--file",
+                str(schema_path),
+                "--output-dir",
+                str(tmp_path / "seeds"),
+                "--output-format",
+                "json",
+                "--rows",
+                "3",
+            ],
+        )
+        assert result.exit_code == 0
+        assert "regenerate_column" in _strip_ansi(result.output).lower()
+
+
+class TestIncrementalTableRemoved:
+    def test_table_removed_drops_from_output(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Table removed from NEW schema → DROP_TABLE action fires, no output for it."""
+        monkeypatch.chdir(tmp_path)
+        store = SnapshotStore()
+        two_tables = DatabaseSchema(
+            tables=[
+                TableSchema(
+                    name="items",
+                    columns=[
+                        ColumnSchema(
+                            name="id",
+                            data_type=ColumnType.INTEGER,
+                            nullable=False,
+                            primary_key=True,
+                        )
+                    ],
+                    primary_key=["id"],
+                ),
+                TableSchema(
+                    name="legacy",
+                    columns=[
+                        ColumnSchema(
+                            name="id",
+                            data_type=ColumnType.INTEGER,
+                            nullable=False,
+                            primary_key=True,
+                        )
+                    ],
+                    primary_key=["id"],
+                ),
+            ]
+        )
+        store.save(two_tables)
+
+        schema_path = tmp_path / "schema.sql"
+        schema_path.write_text(
+            "CREATE TABLE items (id INTEGER PRIMARY KEY);",
+            encoding="utf-8",
+        )
+
+        result = runner.invoke(
+            app,
+            [
+                "generate",
+                "--incremental",
+                "--file",
+                str(schema_path),
+                "--output-dir",
+                str(tmp_path / "seeds"),
+                "--output-format",
+                "json",
+                "--rows",
+                "3",
+            ],
+        )
+        assert result.exit_code == 0
+        out = _strip_ansi(result.output).lower()
+        assert "drop_table" in out
+        seeds = tmp_path / "seeds"
+        assert any(seeds.glob("*items.json"))
+        assert not any(seeds.glob("*legacy.json"))
 
 
 class TestIncrementalSnapshotArg:

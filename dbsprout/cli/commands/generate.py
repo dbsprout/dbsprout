@@ -23,9 +23,14 @@ if TYPE_CHECKING:
 
 console = Console()
 
-# Snapshot directory is always project-root-relative so that ``init``, ``diff``,
-# and ``generate --incremental`` agree on where snapshots live, regardless of
+# Snapshot directory — always project-root-relative so ``init``, ``diff`` and
+# ``generate --incremental`` agree on where snapshots live, regardless of
 # ``--output-dir`` (which is the seeds directory for ``generate``).
+#
+# This is a relative :class:`Path`, resolved against the current working
+# directory at the moment the ``SnapshotStore`` is instantiated. CLI invocations
+# run from the project root; tests that exercise snapshot state must
+# ``monkeypatch.chdir(tmp_path)``.
 _SNAPSHOT_DIR = Path(".dbsprout") / "snapshots"
 
 
@@ -57,8 +62,11 @@ def generate_command(  # noqa: PLR0913
         raise typer.Exit(code=1)
 
     if incremental:
+        # --db URL in incremental mode doubles as the schema introspection
+        # source AND the write target for --output-format direct. Same URL
+        # is passed to both roles by design.
         _run_incremental(
-            db=target_db,
+            source_db=target_db,
             file=file,
             snapshot=snapshot,
             config_path=config_path,
@@ -456,6 +464,9 @@ def _load_schema_from_source(source: SchemaSource) -> DatabaseSchema:
 
     Converts parser/DB errors to a clean ``typer.Exit(code=2)`` with a
     user-friendly message instead of letting tracebacks bubble up.
+
+    DB error messages from SQLAlchemy can embed the raw connection URL
+    (including the password); we scrub them before printing.
     """
     import sqlalchemy as sa  # noqa: PLC0415
 
@@ -467,8 +478,26 @@ def _load_schema_from_source(source: SchemaSource) -> DatabaseSchema:
             return introspect(source.raw_value)
         return parse_schema_file(Path(source.raw_value))
     except (FileNotFoundError, ValueError, OSError, sa.exc.SQLAlchemyError) as exc:
-        console.print(f"[red]Error:[/red] {exc}")
+        msg = _scrub_schema_source_secrets(str(exc), source)
+        console.print(f"[red]Error:[/red] {msg}")
         raise typer.Exit(code=2) from None
+
+
+def _scrub_schema_source_secrets(message: str, source: SchemaSource) -> str:
+    """Redact raw URL + password from *message* using the source's sanitized form."""
+    if source.kind != "db":
+        return message
+    import sqlalchemy as sa  # noqa: PLC0415
+
+    try:
+        url = sa.engine.make_url(source.raw_value)
+    except sa.exc.ArgumentError:  # pragma: no cover — defensive
+        return message
+    password = url.password
+    safe = source.display_value
+    if password:
+        message = message.replace(password, "***")
+    return message.replace(source.raw_value, safe)
 
 
 def _run_full_gen_from_source(  # noqa: PLR0913
@@ -511,7 +540,7 @@ def _run_full_gen_from_source(  # noqa: PLR0913
 
 
 def _run_incremental(  # noqa: PLR0913
-    db: str | None,
+    source_db: str | None,
     file: str | None,
     snapshot: str | None,
     config_path: Path | None,
@@ -525,20 +554,25 @@ def _run_incremental(  # noqa: PLR0913
     insert_method: str,
     target_db: str | None = None,
 ) -> None:
-    """Execute the --incremental path: diff against a prior snapshot and apply updates."""
+    """Execute the --incremental path: diff against a prior snapshot and apply updates.
+
+    ``source_db`` is the schema-introspection URL (from ``--db``). ``target_db``
+    is the write target for ``--output-format direct``; callers typically pass
+    the same URL for both.
+    """
     from dbsprout.cli.sources import SchemaSourceError, resolve_schema_source  # noqa: PLC0415
     from dbsprout.migrate.differ import SchemaDiffer  # noqa: PLC0415
     from dbsprout.migrate.snapshot import SnapshotStore  # noqa: PLC0415
     from dbsprout.migrate.updater import IncrementalUpdater  # noqa: PLC0415
 
-    if db is not None and file is not None:
+    if source_db is not None and file is not None:
         console.print("[red]Error:[/red] Provide only one of --db or --file.")
         raise typer.Exit(code=2)
 
     try:
         # Config lookup is project-root-relative (cwd); output_dir is the seeds dir
         # for generate, which would never contain dbsprout.toml.
-        source = resolve_schema_source(db, file, Path("."))
+        source = resolve_schema_source(source_db, file, Path("."))
     except SchemaSourceError as exc:
         console.print(f"[red]Error:[/red] {exc}")
         raise typer.Exit(code=2) from None
