@@ -343,7 +343,15 @@ def _load_new_schema(
         return new_schema, safe_new_source
 
     # File source: parse the schema file and echo the path unmodified.
-    new_schema = _parse_schema_file(source_value)
+    from pathlib import Path  # noqa: PLC0415
+
+    from dbsprout.schema.parsers import parse_schema_file  # noqa: PLC0415
+
+    try:
+        new_schema = parse_schema_file(Path(source_value))
+    except (FileNotFoundError, ValueError, OSError) as exc:
+        console.print(f"[red]Error:[/red] {exc}")
+        raise typer.Exit(code=2) from None
     return new_schema, source_value
 
 
@@ -381,52 +389,3 @@ def diff_command(
     else:
         _render_rich(changes, old_schema, safe_new_source)
     raise typer.Exit(code=1)  # drift detected → CI signal
-
-
-def _parse_schema_file(file_path: str) -> DatabaseSchema:
-    """Parse a schema file based on suffix. Raises ``typer.Exit(2)`` on error.
-
-    Supports: ``.sql`` (DDL), ``.dbml``, ``.mermaid``/``.mmd``,
-    ``.puml``/``.plantuml``/``.pu``, ``.prisma``. Unknown suffixes fall back to
-    SQL DDL. Mirrors :func:`dbsprout.cli.commands.init._init_from_file` dispatch.
-    """
-    from pathlib import Path  # noqa: PLC0415
-
-    from dbsprout.cli.console import console  # noqa: PLC0415
-
-    max_ddl_bytes = 10 * 1024 * 1024  # 10 MB cap — matches init_command
-
-    path = Path(file_path)
-    if not path.exists():
-        console.print(f"[red]Error:[/red] File not found: {file_path}")
-        raise typer.Exit(code=2)
-    if path.stat().st_size > max_ddl_bytes:  # pragma: no cover — requires >10MB file
-        console.print(f"[red]Error:[/red] File too large (>10 MB): {file_path}")
-        raise typer.Exit(code=2)
-
-    try:
-        file_text = path.read_text(encoding="utf-8")
-        suffix = path.suffix.lower()
-        if suffix == ".dbml":
-            from dbsprout.schema.parsers.dbml import parse_dbml  # noqa: PLC0415
-
-            return parse_dbml(file_text, source_file=str(file_path))
-        if suffix in (".mermaid", ".mmd"):
-            from dbsprout.schema.parsers.mermaid import parse_mermaid  # noqa: PLC0415
-
-            return parse_mermaid(file_text, source_file=str(file_path))
-        if suffix in (".puml", ".plantuml", ".pu"):
-            from dbsprout.schema.parsers.plantuml import parse_plantuml  # noqa: PLC0415
-
-            return parse_plantuml(file_text, source_file=str(file_path))
-        if suffix == ".prisma":
-            from dbsprout.schema.parsers.prisma import parse_prisma  # noqa: PLC0415
-
-            return parse_prisma(file_text, source_file=str(file_path))
-        # Default: SQL DDL
-        from dbsprout.schema.parsers.ddl import parse_ddl  # noqa: PLC0415
-
-        return parse_ddl(file_text, source_file=str(file_path))
-    except (ValueError, OSError) as exc:
-        console.print(f"[red]Error:[/red] {exc}")
-        raise typer.Exit(code=2) from None
