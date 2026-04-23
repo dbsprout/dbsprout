@@ -78,6 +78,9 @@ llm = [
     "llama-cpp-python>=0.3",
     "huggingface-hub>=0.20",
 ]
+migrate = [
+    "alembic>=1.12,<2.0",
+]
 cloud = [
     "litellm>=1.0",
     "instructor>=1.0",

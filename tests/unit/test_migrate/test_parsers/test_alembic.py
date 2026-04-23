@@ -435,3 +435,52 @@ class TestIndex:
         changes = self._run('    op.drop_index("ix_items_name", table_name="items")')
         assert changes[0].change_type == SchemaChangeType.INDEX_REMOVED
         assert changes[0].table_name == "items"
+
+
+class TestCompareMetadata:
+    def test_raises_when_alembic_missing(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        import builtins  # noqa: PLC0415
+
+        from dbsprout.migrate.parsers import MigrationParseError  # noqa: PLC0415
+        from dbsprout.migrate.parsers.alembic import AlembicParser  # noqa: PLC0415
+
+        real_import = builtins.__import__
+
+        def fake_import(name: str, *args, **kwargs):  # type: ignore[no-untyped-def]
+            if name.startswith("alembic"):
+                raise ImportError("pretend missing")
+            return real_import(name, *args, **kwargs)
+
+        monkeypatch.setattr(builtins, "__import__", fake_import)
+
+        import sqlalchemy as sa  # noqa: PLC0415
+
+        md = sa.MetaData()
+        with pytest.raises(MigrationParseError, match="alembic"):
+            AlembicParser().compare_metadata("sqlite:///:memory:", md)
+
+    def test_adds_missing_table(self, tmp_path: Path) -> None:
+        pytest.importorskip("alembic")
+        import sqlalchemy as sa  # noqa: PLC0415
+
+        from dbsprout.migrate.models import SchemaChangeType  # noqa: PLC0415
+        from dbsprout.migrate.parsers.alembic import AlembicParser  # noqa: PLC0415
+
+        db_path = tmp_path / "compare.db"
+        engine = sa.create_engine(f"sqlite:///{db_path}")
+        md_empty = sa.MetaData()
+        md_empty.create_all(engine)
+
+        md_with_table = sa.MetaData()
+        sa.Table(
+            "users",
+            md_with_table,
+            sa.Column("id", sa.Integer, primary_key=True),
+            sa.Column("name", sa.String(50)),
+        )
+
+        changes = AlembicParser().compare_metadata(f"sqlite:///{db_path}", md_with_table)
+        kinds = [c.change_type for c in changes]
+        assert SchemaChangeType.TABLE_ADDED in kinds
+        added = next(c for c in changes if c.change_type == SchemaChangeType.TABLE_ADDED)
+        assert added.table_name == "users"

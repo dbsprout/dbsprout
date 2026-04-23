@@ -14,7 +14,7 @@ import configparser
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from dbsprout.migrate.models import SchemaChange
 from dbsprout.migrate.parsers import MigrationParseError
@@ -46,8 +46,37 @@ class AlembicParser:
         return changes
 
     def compare_metadata(self, db_url: str, metadata: MetaData) -> list[SchemaChange]:
-        """Diff a SQLAlchemy MetaData against a live DB via Alembic autogenerate."""
-        raise NotImplementedError  # filled in Task 12
+        """Diff a SQLAlchemy MetaData against a live DB via Alembic autogenerate.
+
+        Raises:
+            MigrationParseError: ``alembic`` is not installed (install
+                ``dbsprout[migrate]``) or Alembic's autogenerate returned a shape we
+                cannot translate.
+        """
+        try:
+            from alembic.autogenerate import (  # noqa: PLC0415
+                compare_metadata as _alembic_compare,
+            )
+            from alembic.runtime.migration import MigrationContext  # noqa: PLC0415
+        except ImportError as exc:
+            raise MigrationParseError(
+                "alembic is required for compare_metadata(); "
+                "install with `pip install dbsprout[migrate]`"
+            ) from exc
+
+        import sqlalchemy as sa  # noqa: PLC0415
+
+        engine = sa.create_engine(db_url)
+        with engine.connect() as conn:
+            ctx = MigrationContext.configure(conn)
+            raw_diffs = _alembic_compare(ctx, metadata)
+
+        changes: list[SchemaChange] = []
+        for diff in _flatten(raw_diffs):
+            translated = _translate_alembic_diff(diff)
+            if translated is not None:
+                changes.append(translated)
+        return changes
 
 
 def _discover_versions_dir(project_path: Path) -> Path:
@@ -461,3 +490,107 @@ class _Revision:
     down_revision: str | None
     # ast.Module stored loosely as object to keep dataclass frozen-hashable-friendly
     module: object
+
+
+def _flatten(diffs: object) -> list[tuple[Any, ...]]:
+    """Alembic may return nested lists when multiple schemas are present."""
+    out: list[tuple[Any, ...]] = []
+    if isinstance(diffs, tuple):
+        out.append(diffs)
+        return out
+    if isinstance(diffs, list):
+        for item in diffs:
+            out.extend(_flatten(item))
+    return out
+
+
+def _translate_alembic_diff(diff: tuple[Any, ...]) -> SchemaChange | None:  # noqa: PLR0911
+    """Convert a single Alembic autogenerate tuple into a SchemaChange, or None."""
+    from dbsprout.migrate.models import SchemaChangeType  # noqa: PLC0415
+
+    verb = diff[0]
+    if verb == "add_table":
+        table = diff[1]
+        return SchemaChange(
+            change_type=SchemaChangeType.TABLE_ADDED,
+            table_name=str(table.name),
+        )
+    if verb == "remove_table":
+        table = diff[1]
+        return SchemaChange(
+            change_type=SchemaChangeType.TABLE_REMOVED,
+            table_name=str(table.name),
+        )
+    if verb == "add_column":
+        _, _schema, table_name, column = diff
+        return SchemaChange(
+            change_type=SchemaChangeType.COLUMN_ADDED,
+            table_name=str(table_name),
+            column_name=str(column.name),
+            detail={"alembic_type": str(column.type)},
+        )
+    if verb == "remove_column":
+        _, _schema, table_name, column = diff
+        return SchemaChange(
+            change_type=SchemaChangeType.COLUMN_REMOVED,
+            table_name=str(table_name),
+            column_name=str(column.name),
+        )
+    if verb == "modify_type":
+        # (verb, schema, table, column, existing_kw, old_type, new_type)  # noqa: ERA001
+        table_name, column = diff[2], diff[3]
+        new_type = diff[-1]
+        return SchemaChange(
+            change_type=SchemaChangeType.COLUMN_TYPE_CHANGED,
+            table_name=str(table_name),
+            column_name=str(column),
+            new_value=str(new_type),
+        )
+    if verb == "modify_nullable":
+        table_name, column = diff[2], diff[3]
+        new_nullable = diff[-1]
+        return SchemaChange(
+            change_type=SchemaChangeType.COLUMN_NULLABILITY_CHANGED,
+            table_name=str(table_name),
+            column_name=str(column),
+            new_value=str(new_nullable),
+        )
+    if verb == "modify_default":
+        table_name, column = diff[2], diff[3]
+        new_default = diff[-1]
+        return SchemaChange(
+            change_type=SchemaChangeType.COLUMN_DEFAULT_CHANGED,
+            table_name=str(table_name),
+            column_name=str(column),
+            new_value=str(new_default),
+        )
+    if verb == "add_index":
+        idx = diff[1]
+        return SchemaChange(
+            change_type=SchemaChangeType.INDEX_ADDED,
+            table_name=str(idx.table.name),
+            detail={"name": idx.name},
+        )
+    if verb == "remove_index":
+        idx = diff[1]
+        return SchemaChange(
+            change_type=SchemaChangeType.INDEX_REMOVED,
+            table_name=str(idx.table.name),
+            detail={"name": idx.name},
+        )
+    if verb == "add_fk":
+        fk = diff[1]
+        return SchemaChange(
+            change_type=SchemaChangeType.FOREIGN_KEY_ADDED,
+            table_name=str(fk.table.name),
+            detail={"name": fk.name},
+        )
+    if verb == "remove_fk":
+        fk = diff[1]
+        return SchemaChange(
+            change_type=SchemaChangeType.FOREIGN_KEY_REMOVED,
+            table_name=str(fk.table.name),
+            detail={"name": fk.name},
+        )
+    logger.debug("Unrecognized Alembic autogenerate verb: %s", verb)
+    return None
