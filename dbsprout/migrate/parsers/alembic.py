@@ -12,17 +12,17 @@ import ast
 import collections
 import configparser
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from dbsprout.migrate.models import SchemaChange
 from dbsprout.migrate.parsers import MigrationParseError
 
 if TYPE_CHECKING:
     from pathlib import Path
 
     from sqlalchemy import MetaData
-
-    from dbsprout.migrate.models import SchemaChange
 
 logger = logging.getLogger(__name__)
 
@@ -151,8 +151,53 @@ def _linearize_revisions(revisions: list[_Revision]) -> list[_Revision]:
     return ordered
 
 
-def _parse_upgrade(rev: _Revision) -> list[SchemaChange]:  # noqa: ARG001
-    return []
+OpHandler = Callable[[ast.Call], list[SchemaChange]]
+_OP_HANDLERS: dict[str, OpHandler] = {}  # populated in Tasks 7-11
+
+
+def _parse_upgrade(rev: _Revision) -> list[SchemaChange]:
+    assert isinstance(rev.module, ast.Module)
+    upgrade_fn = _find_upgrade(rev.module, rev.path)
+    changes: list[SchemaChange] = []
+    for node in ast.walk(upgrade_fn):
+        if isinstance(node, ast.Call) and _is_op_call(node):
+            assert isinstance(node.func, ast.Attribute)
+            verb = node.func.attr
+            handler = _OP_HANDLERS.get(verb)
+            if handler is None:
+                logger.debug("Skipping unrecognized op.%s in %s", verb, rev.path)
+                continue
+            changes.extend(handler(node))
+    return changes
+
+
+def _find_upgrade(module: ast.Module, path: Path) -> ast.FunctionDef:
+    fns = [n for n in module.body if isinstance(n, ast.FunctionDef) and n.name == "upgrade"]
+    if not fns:
+        raise MigrationParseError(f"Missing upgrade() function in {path}", file_path=path)
+    if len(fns) > 1:
+        raise MigrationParseError(f"Multiple upgrade() functions in {path}", file_path=path)
+    return fns[0]
+
+
+def _is_op_call(node: ast.Call) -> bool:
+    return (
+        isinstance(node.func, ast.Attribute)
+        and isinstance(node.func.value, ast.Name)
+        and node.func.value.id == "op"
+    )
+
+
+def _literal(node: ast.AST) -> str:
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return node.value
+    raise MigrationParseError(f"Expected string literal, got {ast.unparse(node)}")
+
+
+def _literal_list(node: ast.AST) -> list[str]:
+    if not isinstance(node, (ast.List, ast.Tuple)):
+        raise MigrationParseError(f"Expected list/tuple literal, got {ast.unparse(node)}")
+    return [_literal(el) for el in node.elts]
 
 
 @dataclass(frozen=True)

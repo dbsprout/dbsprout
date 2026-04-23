@@ -150,3 +150,35 @@ class TestLinearize:
         revs = [self._rev("a", None), self._rev("b", None)]
         with pytest.raises(MigrationParseError, match=r"head|root"):
             _linearize_revisions(revs)
+
+
+class TestWalker:
+    def _parse_upgrade_body(self, body: str) -> list:
+        import ast  # noqa: PLC0415
+
+        from dbsprout.migrate.parsers.alembic import _parse_upgrade, _Revision  # noqa: PLC0415
+
+        src = f'revision = "r"\ndown_revision = None\n\ndef upgrade():\n{body}\n'
+        module = ast.parse(src)
+        rev = _Revision(path=Path("r.py"), revision="r", down_revision=None, module=module)
+        return _parse_upgrade(rev)
+
+    def test_unknown_verb_is_skipped(self) -> None:
+        # op.execute is intentionally unmapped
+        changes = self._parse_upgrade_body('    op.execute("SELECT 1")')
+        assert changes == []
+
+    def test_non_op_call_ignored(self) -> None:
+        changes = self._parse_upgrade_body('    print("hi")')
+        assert changes == []
+
+    def test_missing_upgrade_raises(self) -> None:
+        import ast  # noqa: PLC0415
+
+        from dbsprout.migrate.parsers import MigrationParseError  # noqa: PLC0415
+        from dbsprout.migrate.parsers.alembic import _parse_upgrade, _Revision  # noqa: PLC0415
+
+        module = ast.parse('revision = "r"\ndown_revision = None\n')
+        rev = _Revision(path=Path("r.py"), revision="r", down_revision=None, module=module)
+        with pytest.raises(MigrationParseError, match="upgrade"):
+            _parse_upgrade(rev)
