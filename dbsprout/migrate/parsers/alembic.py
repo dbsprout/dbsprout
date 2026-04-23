@@ -200,6 +200,70 @@ def _literal_list(node: ast.AST) -> list[str]:
     return [_literal(el) for el in node.elts]
 
 
+def _is_sa_column_call(node: ast.AST) -> bool:
+    """Detect ``sa.Column(...)`` or ``Column(...)`` nodes."""
+    if not isinstance(node, ast.Call):
+        return False
+    if isinstance(node.func, ast.Name) and node.func.id == "Column":
+        return True
+    return bool(isinstance(node.func, ast.Attribute) and node.func.attr == "Column")
+
+
+def _extract_column_spec(node: ast.Call) -> dict[str, object]:
+    """Extract ``{name, alembic_type, nullable?, server_default?}`` from ``Column(...)``."""
+    spec: dict[str, object] = {}
+    args = node.args
+    if args and isinstance(args[0], ast.Constant) and isinstance(args[0].value, str):
+        spec["name"] = args[0].value
+    else:
+        spec["name"] = ast.unparse(args[0]) if args else ""
+    if len(args) >= 2:
+        spec["alembic_type"] = ast.unparse(args[1])
+    kw = {k.arg: k.value for k in node.keywords if k.arg is not None}
+    if "nullable" in kw:
+        try:
+            spec["nullable"] = bool(ast.literal_eval(kw["nullable"]))
+        except ValueError:
+            spec["nullable"] = ast.unparse(kw["nullable"])
+    if "server_default" in kw:
+        spec["server_default"] = ast.unparse(kw["server_default"])
+    return spec
+
+
+def _handle_create_table(node: ast.Call) -> list[SchemaChange]:
+    from dbsprout.migrate.models import SchemaChangeType  # noqa: PLC0415
+
+    name = _literal(node.args[0])
+    columns: list[dict[str, object]] = []
+    for arg in node.args[1:]:
+        if _is_sa_column_call(arg):
+            assert isinstance(arg, ast.Call)
+            columns.append(_extract_column_spec(arg))
+    detail = {"columns": columns} if columns else None
+    return [
+        SchemaChange(
+            change_type=SchemaChangeType.TABLE_ADDED,
+            table_name=name,
+            detail=detail,
+        )
+    ]
+
+
+def _handle_drop_table(node: ast.Call) -> list[SchemaChange]:
+    from dbsprout.migrate.models import SchemaChangeType  # noqa: PLC0415
+
+    return [
+        SchemaChange(
+            change_type=SchemaChangeType.TABLE_REMOVED,
+            table_name=_literal(node.args[0]),
+        )
+    ]
+
+
+_OP_HANDLERS["create_table"] = _handle_create_table
+_OP_HANDLERS["drop_table"] = _handle_drop_table
+
+
 @dataclass(frozen=True)
 class _Revision:
     """Internal — parsed revision header + AST for a single Alembic file."""

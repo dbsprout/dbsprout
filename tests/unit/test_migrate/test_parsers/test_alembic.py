@@ -182,3 +182,54 @@ class TestWalker:
         rev = _Revision(path=Path("r.py"), revision="r", down_revision=None, module=module)
         with pytest.raises(MigrationParseError, match="upgrade"):
             _parse_upgrade(rev)
+
+
+class TestTableOps:
+    def _run(self, body: str) -> list:
+        import ast  # noqa: PLC0415
+
+        from dbsprout.migrate.parsers.alembic import _parse_upgrade, _Revision  # noqa: PLC0415
+
+        src = f'revision = "r"\ndown_revision = None\n\ndef upgrade():\n{body}\n'
+        module = ast.parse(src)
+        rev = _Revision(path=Path("r.py"), revision="r", down_revision=None, module=module)
+        return _parse_upgrade(rev)
+
+    def test_create_table_empty(self) -> None:
+        from dbsprout.migrate.models import SchemaChangeType  # noqa: PLC0415
+
+        changes = self._run('    op.create_table("users")')
+        assert len(changes) == 1
+        assert changes[0].change_type == SchemaChangeType.TABLE_ADDED
+        assert changes[0].table_name == "users"
+
+    def test_create_table_with_columns(self) -> None:
+        from dbsprout.migrate.models import SchemaChangeType  # noqa: PLC0415
+
+        body = (
+            "    op.create_table(\n"
+            '        "items",\n'
+            '        sa.Column("id", sa.Integer(), nullable=False),\n'
+            '        sa.Column("name", sa.String(length=120), nullable=True),\n'
+            "    )"
+        )
+        changes = self._run(body)
+        assert len(changes) == 1
+        c = changes[0]
+        assert c.change_type == SchemaChangeType.TABLE_ADDED
+        assert c.table_name == "items"
+        assert c.detail is not None
+        cols = c.detail["columns"]
+        assert cols[0]["name"] == "id"
+        assert "Integer" in cols[0]["alembic_type"]
+        assert cols[0]["nullable"] is False
+        assert cols[1]["name"] == "name"
+        assert cols[1]["nullable"] is True
+
+    def test_drop_table(self) -> None:
+        from dbsprout.migrate.models import SchemaChangeType  # noqa: PLC0415
+
+        changes = self._run('    op.drop_table("users")')
+        assert len(changes) == 1
+        assert changes[0].change_type == SchemaChangeType.TABLE_REMOVED
+        assert changes[0].table_name == "users"
