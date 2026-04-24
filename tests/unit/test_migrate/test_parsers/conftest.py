@@ -10,8 +10,6 @@ import ast
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from dbsprout.migrate.parsers.alembic import _parse_upgrade, _Revision
-
 if TYPE_CHECKING:
     from dbsprout.migrate.models import SchemaChange
 
@@ -23,7 +21,16 @@ def run_upgrade_body(body: str) -> list[SchemaChange]:
 
     Replaces the `_run(body)` / `_parse_upgrade_body(body)` helpers that were
     duplicated across 6+ test classes in the pre-split monolith.
+
+    Imports from ``dbsprout.migrate.parsers.alembic`` are deferred into the
+    function body on purpose: eager import at module scope pulls in
+    ``dbsprout.migrate.__init__`` (and therefore ``numpy``) at collection time,
+    which under ``--cov`` tracing causes a ``cannot load module more than once``
+    crash. Lazy import mirrors the ``# noqa: PLC0415`` pattern used by the
+    pre-split monolith.
     """
+    from dbsprout.migrate.parsers.alembic import _parse_upgrade, _Revision  # noqa: PLC0415
+
     src = f'revision = "r"\ndown_revision = None\n\ndef upgrade():\n{body}\n'
     module = ast.parse(src)
     rev = _Revision(path=Path("r.py"), revision="r", down_revision=None, module=module)
