@@ -5,7 +5,11 @@ from typing import TYPE_CHECKING
 import pytest
 
 from dbsprout.migrate.parsers import MigrationParseError
-from dbsprout.migrate.parsers.django import DjangoMigrationParser, _discover_migration_files
+from dbsprout.migrate.parsers.django import (
+    DjangoMigrationParser,
+    _discover_migration_files,
+    _parse_migration_file,
+)
 from tests.unit.test_migrate.test_parsers.conftest import build_django_project
 
 if TYPE_CHECKING:
@@ -71,3 +75,46 @@ class TestDiscovery:
         (tmp_path / "manage.py").write_text("", encoding="utf-8")
         with pytest.raises(MigrationParseError, match=r"no .*migrations"):
             DjangoMigrationParser().detect_changes(tmp_path)
+
+
+class TestWalker:
+    def test_extracts_dependencies_and_operations(self, tmp_path: Path) -> None:
+        body = (
+            "from django.db import migrations\n\n"
+            "class Migration(migrations.Migration):\n"
+            "    dependencies = [('accounts', '0001_initial')]\n"
+            "    operations = [\n"
+            "        migrations.CreateModel(name='Post', fields=[]),\n"
+            "        migrations.AddField("
+            "model_name='Post', name='title', field=models.CharField()),\n"
+            "    ]\n"
+        )
+        root = build_django_project(tmp_path, apps={"blog": [("0001_initial", body)]})
+        path = root / "blog" / "migrations" / "0001_initial.py"
+        parsed = _parse_migration_file(path, app_label="blog")
+        assert parsed is not None
+        assert parsed.app_label == "blog"
+        assert parsed.name == "0001_initial"
+        assert parsed.prefix == 1
+        assert parsed.dependencies == (("accounts", "0001_initial"),)
+        assert [op.func.attr for op in parsed.operations] == ["CreateModel", "AddField"]
+
+    def test_missing_migration_class_returns_none(self, tmp_path: Path) -> None:
+        body = "x = 1\n"
+        root = build_django_project(tmp_path, apps={"blog": [("0001_stub", body)]})
+        path = root / "blog" / "migrations" / "0001_stub.py"
+        assert _parse_migration_file(path, app_label="blog") is None
+
+    def test_syntax_error_raises(self, tmp_path: Path) -> None:
+        body = "class Migration(\n"
+        root = build_django_project(tmp_path, apps={"blog": [("0001_broken", body)]})
+        path = root / "blog" / "migrations" / "0001_broken.py"
+        with pytest.raises(MigrationParseError, match="unparseable"):
+            _parse_migration_file(path, app_label="blog")
+
+    def test_missing_numeric_prefix_raises(self, tmp_path: Path) -> None:
+        body = EMPTY_MIG
+        root = build_django_project(tmp_path, apps={"blog": [("initial_setup", body)]})
+        path = root / "blog" / "migrations" / "initial_setup.py"
+        with pytest.raises(MigrationParseError, match="numeric prefix"):
+            _parse_migration_file(path, app_label="blog")

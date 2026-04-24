@@ -7,7 +7,9 @@ no Django runtime dependency.
 
 from __future__ import annotations
 
+import ast
 import logging
+import re
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -21,6 +23,18 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _MAX_MIGRATION_BYTES = 1024 * 1024  # 1 MB
+
+_PREFIX_RE = re.compile(r"^(\d+)_")
+
+
+@dataclass(frozen=True)
+class _ParsedMigration:
+    path: Path
+    app_label: str
+    name: str
+    prefix: int
+    dependencies: tuple[tuple[str, str], ...]
+    operations: tuple[ast.Call, ...]
 
 
 @dataclass(frozen=True)
@@ -67,3 +81,80 @@ def _discover_migration_files(project_path: Path) -> list[Path]:
             continue
         found.append(path)
     return found
+
+
+def _parse_migration_file(path: Path, *, app_label: str) -> _ParsedMigration | None:
+    """Return a parsed migration, or ``None`` if the file has no ``Migration`` class."""
+    stem = path.stem
+    prefix_match = _PREFIX_RE.match(stem)
+    if not prefix_match:
+        raise MigrationParseError(
+            f"migration filename missing numeric prefix: {stem}",
+            file_path=path,
+        )
+    prefix = int(prefix_match.group(1))
+
+    try:
+        source = path.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise MigrationParseError("unreadable migration file", file_path=path) from exc
+
+    try:
+        tree = ast.parse(source)
+    except SyntaxError as exc:
+        raise MigrationParseError("unparseable migration file", file_path=path) from exc
+
+    migration_cls: ast.ClassDef | None = None
+    for node in tree.body:
+        if isinstance(node, ast.ClassDef) and node.name == "Migration":
+            migration_cls = node
+            break
+    if migration_cls is None:
+        logger.debug("no Migration class in %s — skipping", path)
+        return None
+
+    deps = _extract_dependencies(migration_cls)
+    ops = _extract_operations(migration_cls)
+    return _ParsedMigration(
+        path=path,
+        app_label=app_label,
+        name=stem,
+        prefix=prefix,
+        dependencies=deps,
+        operations=ops,
+    )
+
+
+def _extract_dependencies(cls_node: ast.ClassDef) -> tuple[tuple[str, str], ...]:
+    assign = _find_class_assign(cls_node, "dependencies")
+    if assign is None or not isinstance(assign.value, (ast.List, ast.Tuple)):
+        return ()
+    result: list[tuple[str, str]] = []
+    for elt in assign.value.elts:
+        if not isinstance(elt, ast.Tuple) or len(elt.elts) != 2:
+            logger.debug("non-tuple dependency element; skipping")
+            continue
+        app_node, name_node = elt.elts
+        if not (isinstance(app_node, ast.Constant) and isinstance(name_node, ast.Constant)):
+            logger.debug("non-literal dependency element; skipping")
+            continue
+        if not (isinstance(app_node.value, str) and isinstance(name_node.value, str)):
+            continue
+        result.append((app_node.value, name_node.value))
+    return tuple(result)
+
+
+def _extract_operations(cls_node: ast.ClassDef) -> tuple[ast.Call, ...]:
+    assign = _find_class_assign(cls_node, "operations")
+    if assign is None or not isinstance(assign.value, (ast.List, ast.Tuple)):
+        return ()
+    return tuple(elt for elt in assign.value.elts if isinstance(elt, ast.Call))
+
+
+def _find_class_assign(cls_node: ast.ClassDef, target_name: str) -> ast.Assign | None:
+    for stmt in cls_node.body:
+        if isinstance(stmt, ast.Assign):
+            for target in stmt.targets:
+                if isinstance(target, ast.Name) and target.id == target_name:
+                    return stmt
+    return None
