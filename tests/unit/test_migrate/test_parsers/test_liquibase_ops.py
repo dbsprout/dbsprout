@@ -280,3 +280,49 @@ class TestDropColumn:
         )
         changes = LiquibaseMigrationParser().detect_changes(project)
         assert [c.column_name for c in changes] == ["age", "bio"]
+
+
+class TestModifyDataType:
+    def test_modify_data_type(self, tmp_path: Path) -> None:
+        project = build_liquibase_project(
+            tmp_path,
+            changelogs={
+                "changelog.xml": _wrap(
+                    '<modifyDataType tableName="users" columnName="email"'
+                    ' newDataType="VARCHAR(320)"/>'
+                ),
+            },
+        )
+        [change] = LiquibaseMigrationParser().detect_changes(project)
+        assert change.change_type is SchemaChangeType.COLUMN_TYPE_CHANGED
+        assert change.table_name == "users"
+        assert change.column_name == "email"
+        assert change.new_value == "VARCHAR(320)"
+
+
+class TestNullability:
+    def test_add_not_null(self, tmp_path: Path) -> None:
+        project = build_liquibase_project(
+            tmp_path,
+            changelogs={
+                "changelog.xml": _wrap(
+                    '<addNotNullConstraint tableName="users" columnName="email"/>'
+                ),
+            },
+        )
+        [change] = LiquibaseMigrationParser().detect_changes(project)
+        assert change.change_type is SchemaChangeType.COLUMN_NULLABILITY_CHANGED
+        assert change.new_value == "NOT NULL"
+
+    def test_drop_not_null(self, tmp_path: Path) -> None:
+        project = build_liquibase_project(
+            tmp_path,
+            changelogs={
+                "changelog.xml": _wrap(
+                    '<dropNotNullConstraint tableName="users" columnName="bio"/>'
+                ),
+            },
+        )
+        [change] = LiquibaseMigrationParser().detect_changes(project)
+        assert change.change_type is SchemaChangeType.COLUMN_NULLABILITY_CHANGED
+        assert change.new_value == "NULL"

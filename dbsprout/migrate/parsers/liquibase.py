@@ -369,6 +369,39 @@ def _handle_drop_column(elem: Element, _ledger: _FKLedger) -> list[SchemaChange]
     return out
 
 
+def _handle_modify_data_type(elem: Element, _ledger: _FKLedger) -> list[SchemaChange]:
+    return [
+        SchemaChange(
+            change_type=SchemaChangeType.COLUMN_TYPE_CHANGED,
+            table_name=elem.get("tableName", ""),
+            column_name=elem.get("columnName", ""),
+            new_value=elem.get("newDataType", ""),
+        )
+    ]
+
+
+def _handle_add_not_null(elem: Element, _ledger: _FKLedger) -> list[SchemaChange]:
+    return [
+        SchemaChange(
+            change_type=SchemaChangeType.COLUMN_NULLABILITY_CHANGED,
+            table_name=elem.get("tableName", ""),
+            column_name=elem.get("columnName", ""),
+            new_value="NOT NULL",
+        )
+    ]
+
+
+def _handle_drop_not_null(elem: Element, _ledger: _FKLedger) -> list[SchemaChange]:
+    return [
+        SchemaChange(
+            change_type=SchemaChangeType.COLUMN_NULLABILITY_CHANGED,
+            table_name=elem.get("tableName", ""),
+            column_name=elem.get("columnName", ""),
+            new_value="NULL",
+        )
+    ]
+
+
 _OpHandler = Callable[[Any, "_FKLedger"], "list[SchemaChange]"]
 
 _OP_HANDLERS: dict[str, _OpHandler] = {
@@ -378,6 +411,9 @@ _OP_HANDLERS: dict[str, _OpHandler] = {
     "renameColumn": _handle_rename_column,
     "addColumn": _handle_add_column,
     "dropColumn": _handle_drop_column,
+    "modifyDataType": _handle_modify_data_type,
+    "addNotNullConstraint": _handle_add_not_null,
+    "dropNotNullConstraint": _handle_drop_not_null,
 }
 
 _DEBUG_SKIP_TAGS: frozenset[str] = frozenset(
