@@ -8,7 +8,9 @@ from dbsprout.migrate.parsers import MigrationParseError
 from dbsprout.migrate.parsers.django import (
     DjangoMigrationParser,
     _discover_migration_files,
+    _linearize_migrations,
     _parse_migration_file,
+    _ParsedMigration,
 )
 from tests.unit.test_migrate.test_parsers.conftest import build_django_project
 
@@ -118,3 +120,55 @@ class TestWalker:
         path = root / "blog" / "migrations" / "initial_setup.py"
         with pytest.raises(MigrationParseError, match="numeric prefix"):
             _parse_migration_file(path, app_label="blog")
+
+
+def _parsed(
+    app: str,
+    name: str,
+    prefix: int,
+    deps: tuple[tuple[str, str], ...] = (),
+) -> _ParsedMigration:
+    from pathlib import Path  # noqa: PLC0415
+
+    return _ParsedMigration(
+        path=Path(f"/{app}/migrations/{name}.py"),
+        app_label=app,
+        name=name,
+        prefix=prefix,
+        dependencies=deps,
+        operations=(),
+    )
+
+
+class TestLinearize:
+    def test_in_app_prefix_order(self) -> None:
+        a2 = _parsed("blog", "0002_add", 2)
+        a1 = _parsed("blog", "0001_initial", 1)
+        ordered = _linearize_migrations([a2, a1])
+        assert [m.name for m in ordered] == ["0001_initial", "0002_add"]
+
+    def test_cross_app_dependency_ordering(self) -> None:
+        blog_1 = _parsed("blog", "0001_initial", 1, deps=(("accounts", "0001_initial"),))
+        accounts_1 = _parsed("accounts", "0001_initial", 1)
+        ordered = _linearize_migrations([blog_1, accounts_1])
+        assert [(m.app_label, m.name) for m in ordered] == [
+            ("accounts", "0001_initial"),
+            ("blog", "0001_initial"),
+        ]
+
+    def test_cycle_raises(self) -> None:
+        a = _parsed("app_a", "0001_initial", 1, deps=(("app_b", "0001_initial"),))
+        b = _parsed("app_b", "0001_initial", 1, deps=(("app_a", "0001_initial"),))
+        with pytest.raises(MigrationParseError, match="cycle"):
+            _linearize_migrations([a, b])
+
+    def test_duplicate_prefix_raises(self) -> None:
+        x = _parsed("blog", "0001_a", 1)
+        y = _parsed("blog", "0001_b", 1)
+        with pytest.raises(MigrationParseError, match="duplicate migration prefix"):
+            _linearize_migrations([x, y])
+
+    def test_dangling_dep_to_unknown_app_is_ignored(self) -> None:
+        m = _parsed("blog", "0001_initial", 1, deps=(("auth", "0001_initial"),))
+        ordered = _linearize_migrations([m])
+        assert ordered == [m]

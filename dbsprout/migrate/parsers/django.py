@@ -8,8 +8,11 @@ no Django runtime dependency.
 from __future__ import annotations
 
 import ast
+import graphlib
+import itertools
 import logging
 import re
+from collections import defaultdict
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -158,3 +161,42 @@ def _find_class_assign(cls_node: ast.ClassDef, target_name: str) -> ast.Assign |
                 if isinstance(target, ast.Name) and target.id == target_name:
                     return stmt
     return None
+
+
+def _linearize_migrations(parsed: list[_ParsedMigration]) -> list[_ParsedMigration]:
+    """Topologically sort migrations across apps, with in-app prefix order."""
+    # In-app sort + duplicate-prefix detection.
+    by_app: dict[str, list[_ParsedMigration]] = defaultdict(list)
+    for mig in parsed:
+        by_app[mig.app_label].append(mig)
+    for app, migs in by_app.items():
+        migs.sort(key=lambda m: m.prefix)
+        for prev, curr in itertools.pairwise(migs):
+            if prev.prefix == curr.prefix:
+                raise MigrationParseError(
+                    f"duplicate migration prefix {curr.prefix} in app {app}: "
+                    f"{prev.path}, {curr.path}",
+                    file_path=prev.path,
+                )
+
+    known: dict[tuple[str, str], _ParsedMigration] = {(m.app_label, m.name): m for m in parsed}
+
+    # Deterministic insertion order: (app_label, prefix).
+    sorter: graphlib.TopologicalSorter[tuple[str, str]] = graphlib.TopologicalSorter()
+    for key in sorted(known, key=lambda k: (k[0], known[k].prefix)):
+        mig = known[key]
+        # Intra-app chain: depend on previous numeric prefix in same app.
+        siblings = by_app[mig.app_label]
+        idx = siblings.index(mig)
+        intra = [(mig.app_label, siblings[idx - 1].name)] if idx > 0 else []
+        # Cross-app deps, filtered to known nodes (dangling deps = no-op edges).
+        cross = [dep for dep in mig.dependencies if dep in known]
+        sorter.add(key, *intra, *cross)
+
+    try:
+        ordered_keys = list(sorter.static_order())
+    except graphlib.CycleError as exc:
+        cycle = " ↔ ".join(f"{a}:{n}" for a, n in exc.args[1][:2])
+        raise MigrationParseError(f"cycle in migration dependencies: {cycle}") from exc
+
+    return [known[k] for k in ordered_keys]
