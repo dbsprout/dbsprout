@@ -82,7 +82,10 @@ class TestPgCopyLive:
             import psycopg  # noqa: PLC0415
 
             with psycopg.connect(pg_url) as conn, conn.cursor() as cur:
-                cur.execute("SELECT currval(pg_get_serial_sequence('users', 'id'))")
+                cur.execute(
+                    "SELECT last_value FROM pg_sequences "
+                    "WHERE sequencename = pg_get_serial_sequence('users', 'id')::regclass::text"
+                )
                 seq_val = cur.fetchone()[0]
                 assert seq_val == 100
         finally:
