@@ -195,3 +195,88 @@ class TestRename:
         assert (changes[0].detail or {})["rename_of"] == "display_name"
         assert changes[1].column_name == "display_name"
         assert (changes[1].detail or {})["rename_of"] == "fullname"
+
+
+class TestAddColumn:
+    def test_single_add_column(self, tmp_path: Path) -> None:
+        project = build_liquibase_project(
+            tmp_path,
+            changelogs={
+                "changelog.xml": _wrap(
+                    '<addColumn tableName="users"><column name="age" type="INTEGER"/></addColumn>'
+                ),
+            },
+        )
+        [change] = LiquibaseMigrationParser().detect_changes(project)
+        assert change.change_type is SchemaChangeType.COLUMN_ADDED
+        assert change.table_name == "users"
+        assert change.column_name == "age"
+        detail = change.detail or {}
+        assert detail["sql_type"] == "INTEGER"
+        assert detail["nullable"] is True
+        assert detail["default"] is None
+        assert detail["primary_key"] is False
+
+    def test_add_column_with_inline_fk(self, tmp_path: Path) -> None:
+        project = build_liquibase_project(
+            tmp_path,
+            changelogs={
+                "changelog.xml": _wrap(
+                    '<addColumn tableName="orders">'
+                    '<column name="user_id" type="BIGINT">'
+                    '<constraints foreignKeyName="fk_o_u" references="users(id)"/>'
+                    "</column>"
+                    "</addColumn>"
+                ),
+            },
+        )
+        changes = LiquibaseMigrationParser().detect_changes(project)
+        assert [c.change_type for c in changes] == [
+            SchemaChangeType.COLUMN_ADDED,
+            SchemaChangeType.FOREIGN_KEY_ADDED,
+        ]
+        assert (changes[1].detail or {})["constraint_name"] == "fk_o_u"
+
+    def test_add_multiple_columns(self, tmp_path: Path) -> None:
+        project = build_liquibase_project(
+            tmp_path,
+            changelogs={
+                "changelog.xml": _wrap(
+                    '<addColumn tableName="users">'
+                    '<column name="age" type="INTEGER"/>'
+                    '<column name="bio" type="TEXT"/>'
+                    "</addColumn>"
+                ),
+            },
+        )
+        changes = LiquibaseMigrationParser().detect_changes(project)
+        assert [c.column_name for c in changes] == ["age", "bio"]
+
+
+class TestDropColumn:
+    def test_drop_column_attr_form(self, tmp_path: Path) -> None:
+        project = build_liquibase_project(
+            tmp_path,
+            changelogs={
+                "changelog.xml": _wrap('<dropColumn tableName="users" columnName="age"/>'),
+            },
+        )
+        [change] = LiquibaseMigrationParser().detect_changes(project)
+        assert change.change_type is SchemaChangeType.COLUMN_REMOVED
+        assert change.table_name == "users"
+        assert change.column_name == "age"
+
+    def test_drop_column_nested_form(self, tmp_path: Path) -> None:
+        project = build_liquibase_project(
+            tmp_path,
+            changelogs={
+                "changelog.xml": _wrap(
+                    '<dropColumn tableName="users">'
+                    '<column name="age"/>'
+                    '<column name="bio"/>'
+                    "</dropColumn>"
+                ),
+            },
+        )
+        changes = LiquibaseMigrationParser().detect_changes(project)
+        assert [c.column_name for c in changes] == ["age", "bio"]

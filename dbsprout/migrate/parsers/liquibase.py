@@ -316,6 +316,59 @@ def _handle_rename_column(elem: Element, _ledger: _FKLedger) -> list[SchemaChang
     ]
 
 
+def _handle_add_column(elem: Element, _ledger: _FKLedger) -> list[SchemaChange]:
+    table = elem.get("tableName", "")
+    changes: list[SchemaChange] = []
+    for child in elem:
+        if _strip_ns(child.tag) != "column":
+            continue
+        col, inline_fk = _parse_column(child)
+        name = str(col["name"])
+        detail: dict[str, object] = {k: v for k, v in col.items() if k != "name"}
+        changes.append(
+            SchemaChange(
+                change_type=SchemaChangeType.COLUMN_ADDED,
+                table_name=table,
+                column_name=name,
+                detail=detail,
+            )
+        )
+        if inline_fk is not None:
+            changes.append(
+                SchemaChange(
+                    change_type=SchemaChangeType.FOREIGN_KEY_ADDED,
+                    table_name=table,
+                    detail=inline_fk,
+                )
+            )
+    return changes
+
+
+def _handle_drop_column(elem: Element, _ledger: _FKLedger) -> list[SchemaChange]:
+    table = elem.get("tableName", "")
+    direct = elem.get("columnName")
+    if direct:
+        return [
+            SchemaChange(
+                change_type=SchemaChangeType.COLUMN_REMOVED,
+                table_name=table,
+                column_name=direct,
+            )
+        ]
+    out: list[SchemaChange] = []
+    for child in elem:
+        if _strip_ns(child.tag) != "column":
+            continue
+        out.append(
+            SchemaChange(
+                change_type=SchemaChangeType.COLUMN_REMOVED,
+                table_name=table,
+                column_name=child.get("name", ""),
+            )
+        )
+    return out
+
+
 _OpHandler = Callable[[Any, "_FKLedger"], "list[SchemaChange]"]
 
 _OP_HANDLERS: dict[str, _OpHandler] = {
@@ -323,6 +376,8 @@ _OP_HANDLERS: dict[str, _OpHandler] = {
     "dropTable": _handle_drop_table,
     "renameTable": _handle_rename_table,
     "renameColumn": _handle_rename_column,
+    "addColumn": _handle_add_column,
+    "dropColumn": _handle_drop_column,
 }
 
 _DEBUG_SKIP_TAGS: frozenset[str] = frozenset(
