@@ -454,3 +454,36 @@ class TestForeignKey:
         )
         changes = LiquibaseMigrationParser().detect_changes(project)
         assert changes == []
+
+
+class TestIndex:
+    def test_create_index_multi_col(self, tmp_path: Path) -> None:
+        project = build_liquibase_project(
+            tmp_path,
+            changelogs={
+                "changelog.xml": _wrap(
+                    '<createIndex tableName="users" indexName="ix_users_email">'
+                    '<column name="email"/>'
+                    '<column name="tenant_id"/>'
+                    "</createIndex>"
+                ),
+            },
+        )
+        [change] = LiquibaseMigrationParser().detect_changes(project)
+        assert change.change_type is SchemaChangeType.INDEX_ADDED
+        assert change.table_name == "users"
+        detail = change.detail or {}
+        assert detail["index_name"] == "ix_users_email"
+        assert detail["cols"] == ["email", "tenant_id"]
+
+    def test_drop_index(self, tmp_path: Path) -> None:
+        project = build_liquibase_project(
+            tmp_path,
+            changelogs={
+                "changelog.xml": _wrap('<dropIndex tableName="users" indexName="ix_users_email"/>'),
+            },
+        )
+        [change] = LiquibaseMigrationParser().detect_changes(project)
+        assert change.change_type is SchemaChangeType.INDEX_REMOVED
+        assert change.table_name == "users"
+        assert (change.detail or {})["index_name"] == "ix_users_email"

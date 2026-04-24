@@ -468,6 +468,30 @@ def _handle_drop_foreign_key(elem: Element, ledger: _FKLedger) -> list[SchemaCha
     ]
 
 
+def _handle_create_index(elem: Element, _ledger: _FKLedger) -> list[SchemaChange]:
+    cols = [child.get("name", "") for child in elem if _strip_ns(child.tag) == "column"]
+    return [
+        SchemaChange(
+            change_type=SchemaChangeType.INDEX_ADDED,
+            table_name=elem.get("tableName", ""),
+            detail={
+                "index_name": elem.get("indexName", ""),
+                "cols": cols,
+            },
+        )
+    ]
+
+
+def _handle_drop_index(elem: Element, _ledger: _FKLedger) -> list[SchemaChange]:
+    return [
+        SchemaChange(
+            change_type=SchemaChangeType.INDEX_REMOVED,
+            table_name=elem.get("tableName", ""),
+            detail={"index_name": elem.get("indexName", "")},
+        )
+    ]
+
+
 _OpHandler = Callable[[Any, "_FKLedger"], "list[SchemaChange]"]
 
 _OP_HANDLERS: dict[str, _OpHandler] = {
@@ -484,6 +508,8 @@ _OP_HANDLERS: dict[str, _OpHandler] = {
     "dropDefaultValue": _handle_drop_default_value,
     "addForeignKeyConstraint": _handle_add_foreign_key,
     "dropForeignKeyConstraint": _handle_drop_foreign_key,
+    "createIndex": _handle_create_index,
+    "dropIndex": _handle_drop_index,
 }
 
 _DEBUG_SKIP_TAGS: frozenset[str] = frozenset(
