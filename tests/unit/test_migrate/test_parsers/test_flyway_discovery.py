@@ -139,3 +139,16 @@ class TestPlaceholders:
         file_path = tmp_path / "V1__x.sql"
         with pytest.raises(MigrationParseError, match=r"unresolved placeholder \$\{schema\}"):
             _check_unresolved("CREATE TABLE ${schema}.t();", file_path)
+
+
+class TestSymlinkGuard:
+    def test_symlink_skipped(self, tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+        root = build_flyway_project(tmp_path, {"V1__a": EMPTY_SQL})
+        mig_dir = root / "db" / "migration"
+        target = mig_dir / "V1__a.sql"
+        link = mig_dir / "V2__link.sql"
+        link.symlink_to(target)
+        with caplog.at_level("DEBUG", logger="dbsprout.migrate.parsers.flyway"):
+            files = _discover_migration_files(root, None)
+        assert [f.name for f in files] == ["V1__a.sql"]
+        assert "symlink" in caplog.text.lower()

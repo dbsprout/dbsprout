@@ -108,6 +108,9 @@ def _discover_migration_files(
         for sql_file in sorted(d.rglob("*.sql")):
             name = sql_file.name
             try:
+                if sql_file.is_symlink():
+                    logger.debug("skipping symlink %s", sql_file)
+                    continue
                 size = sql_file.stat().st_size
             except OSError:
                 logger.debug("cannot stat %s; skipping", sql_file)
