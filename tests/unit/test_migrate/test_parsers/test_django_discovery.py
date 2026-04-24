@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import ast
+import unittest.mock
 from typing import TYPE_CHECKING
 
 import pytest
@@ -9,7 +11,11 @@ from dbsprout.migrate.parsers.django import (
     _MAX_MIGRATION_BYTES,
     DjangoMigrationParser,
     _discover_migration_files,
+    _extract_dependencies,
+    _extract_operations,
+    _find_class_assign_value,
     _linearize_migrations,
+    _op_name,
     _parse_migration_file,
     _ParsedMigration,
 )
@@ -188,3 +194,82 @@ class TestLinearize:
         m = _parsed("blog", "0001_initial", 1, deps=(("auth", "0001_initial"),))
         ordered = _linearize_migrations([m])
         assert ordered == [m]
+
+
+class TestDiscoveryEdgeBranches:
+    """Coverage for guard branches in _discover_migration_files and _parse_migration_file."""
+
+    def test_stat_oserror_skips_file(self, tmp_path: Path) -> None:
+        """File that raises OSError on stat() is silently skipped."""
+        root = build_django_project(tmp_path, apps={"blog": [("0001_initial", EMPTY_MIG)]})
+        target = root / "blog" / "migrations" / "0001_initial.py"
+
+        # Build a mock path whose stat() raises but whose other methods work normally.
+        mock_path = unittest.mock.MagicMock(spec=type(target))
+        mock_path.name = target.name
+        mock_path.parts = target.parts
+        mock_path.resolve.return_value = target.resolve()
+        mock_path.stat.side_effect = OSError("stat failed")
+
+        with unittest.mock.patch.object(root.__class__, "rglob", return_value=[mock_path]):
+            found = _discover_migration_files(root)
+        assert mock_path not in found
+
+    def test_read_text_oserror_raises_parse_error(self, tmp_path: Path) -> None:
+        """File that raises OSError on read_text raises MigrationParseError."""
+        root = build_django_project(tmp_path, apps={"blog": [("0001_initial", EMPTY_MIG)]})
+        path = root / "blog" / "migrations" / "0001_initial.py"
+        with (
+            unittest.mock.patch.object(
+                path.__class__, "read_text", side_effect=OSError("read failed")
+            ),
+            pytest.raises(MigrationParseError, match="unreadable"),
+        ):
+            _parse_migration_file(path, app_label="blog")
+
+
+class TestExtractHelpers:
+    """Unit tests for AST extraction helpers, covering non-standard input branches."""
+
+    def _make_cls(self, body: str) -> ast.ClassDef:
+        tree = ast.parse(f"class Migration:\n{body}")
+        return next(n for n in ast.walk(tree) if isinstance(n, ast.ClassDef))
+
+    def test_extract_dependencies_non_list_returns_empty(self) -> None:
+        cls = self._make_cls("    dependencies = 'bad'\n")
+        assert _extract_dependencies(cls) == ()
+
+    def test_extract_dependencies_non_tuple_element_skipped(self) -> None:
+        cls = self._make_cls("    dependencies = ['not_a_tuple']\n")
+        assert _extract_dependencies(cls) == ()
+
+    def test_extract_dependencies_non_literal_element_skipped(self) -> None:
+        cls = self._make_cls("    dependencies = [(some_var, '0001_initial')]\n")
+        assert _extract_dependencies(cls) == ()
+
+    def test_extract_dependencies_non_str_constant_skipped(self) -> None:
+        cls = self._make_cls("    dependencies = [(1, 2)]\n")
+        assert _extract_dependencies(cls) == ()
+
+    def test_extract_operations_non_list_returns_empty(self) -> None:
+        cls = self._make_cls("    operations = 'bad'\n")
+        assert _extract_operations(cls) == ()
+
+    def test_find_class_assign_value_returns_none_when_missing(self) -> None:
+        cls = self._make_cls("    pass\n")
+        assert _find_class_assign_value(cls, "dependencies") is None
+
+    def test_find_class_assign_value_ann_assign_no_value_returns_none(self) -> None:
+        """Forward-declaration AnnAssign (name: type with no value) returns None."""
+        cls = self._make_cls("    dependencies: list\n")
+        assert _find_class_assign_value(cls, "dependencies") is None
+
+    def test_op_name_ast_name(self) -> None:
+        """_op_name handles ast.Name func (bare function call)."""
+        call = ast.parse("CreateModel()").body[0].value  # type: ignore[attr-defined]
+        assert _op_name(call) == "CreateModel"
+
+    def test_op_name_unknown_returns_sentinel(self) -> None:
+        """_op_name with an unsupported func type returns '<unknown>'."""
+        call = ast.Call(func=ast.Constant(value="not_a_func"), args=[], keywords=[])
+        assert _op_name(call) == "<unknown>"

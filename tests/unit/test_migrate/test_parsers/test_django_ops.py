@@ -440,3 +440,175 @@ class TestIndexes:
         idx = [c for c in changes if c.change_type is SchemaChangeType.INDEX_REMOVED]
         assert len(idx) == 1
         assert idx[0].detail["index_name"] == "idx_post_title"
+
+    def test_add_index_without_fields_kwarg(self, tmp_path: Path) -> None:
+        """AddIndex where the index call has no 'fields' keyword → empty cols list."""
+        create = "migrations.CreateModel(name='Post', fields=[('id', models.AutoField())]),"
+        add_idx = "migrations.AddIndex(model_name='Post', index=models.Index(name='idx_bare')),"
+        root = build_django_project(
+            tmp_path,
+            apps={
+                "blog": [
+                    ("0001_initial", _mig(create)),
+                    ("0002_idx", _mig(add_idx)),
+                ]
+            },
+        )
+        changes = DjangoMigrationParser().detect_changes(root)
+        idx = [c for c in changes if c.change_type is SchemaChangeType.INDEX_ADDED]
+        assert len(idx) == 1
+        assert idx[0].detail["cols"] == []
+        assert idx[0].detail["index_name"] == "idx_bare"
+
+    def test_add_index_non_literal_model_skipped(self, tmp_path: Path) -> None:
+        """AddIndex with non-literal model_name kwarg is silently skipped."""
+        add_idx = "migrations.AddIndex(index=models.Index(fields=['x'], name='i')),"
+        root = build_django_project(tmp_path, apps={"blog": [("0001_initial", _mig(add_idx))]})
+        changes = DjangoMigrationParser().detect_changes(root)
+        assert all(c.change_type is not SchemaChangeType.INDEX_ADDED for c in changes)
+
+    def test_add_index_non_call_index_skipped(self, tmp_path: Path) -> None:
+        """AddIndex where index= is not a Call node is silently skipped."""
+        add_idx = "migrations.AddIndex(model_name='Post', index='bad'),"
+        root = build_django_project(tmp_path, apps={"blog": [("0001_initial", _mig(add_idx))]})
+        changes = DjangoMigrationParser().detect_changes(root)
+        assert all(c.change_type is not SchemaChangeType.INDEX_ADDED for c in changes)
+
+    def test_remove_index_non_literal_skipped(self, tmp_path: Path) -> None:
+        """RemoveIndex with missing name kwarg is silently skipped."""
+        rm_idx = "migrations.RemoveIndex(model_name='Post'),"
+        root = build_django_project(tmp_path, apps={"blog": [("0001_initial", _mig(rm_idx))]})
+        changes = DjangoMigrationParser().detect_changes(root)
+        assert all(c.change_type is not SchemaChangeType.INDEX_REMOVED for c in changes)
+
+
+class TestNonLiteralArgSkips:
+    """Guard branches: non-literal or malformed op args → silent skip."""
+
+    def test_create_model_non_literal_name_skipped(self, tmp_path: Path) -> None:
+        body = "migrations.CreateModel(name=some_var, fields=[]),"
+        root = build_django_project(tmp_path, apps={"blog": [("0001_initial", _mig(body))]})
+        changes = DjangoMigrationParser().detect_changes(root)
+        assert all(c.change_type is not SchemaChangeType.TABLE_ADDED for c in changes)
+
+    def test_add_field_non_literal_model_skipped(self, tmp_path: Path) -> None:
+        body = "migrations.AddField(model_name=x, name='t', field=models.CharField()),"
+        root = build_django_project(tmp_path, apps={"blog": [("0001_initial", _mig(body))]})
+        changes = DjangoMigrationParser().detect_changes(root)
+        assert all(c.change_type is not SchemaChangeType.COLUMN_ADDED for c in changes)
+
+    def test_remove_field_non_literal_skipped(self, tmp_path: Path) -> None:
+        body = "migrations.RemoveField(model_name=x, name='t'),"
+        root = build_django_project(tmp_path, apps={"blog": [("0001_initial", _mig(body))]})
+        changes = DjangoMigrationParser().detect_changes(root)
+        assert all(c.change_type is not SchemaChangeType.COLUMN_REMOVED for c in changes)
+
+    def test_alter_field_non_literal_skipped(self, tmp_path: Path) -> None:
+        body = "migrations.AlterField(model_name=x, name='t', field=models.CharField()),"
+        root = build_django_project(tmp_path, apps={"blog": [("0001_initial", _mig(body))]})
+        changes = DjangoMigrationParser().detect_changes(root)
+        assert all(c.change_type is not SchemaChangeType.COLUMN_TYPE_CHANGED for c in changes)
+
+    def test_rename_field_non_literal_skipped(self, tmp_path: Path) -> None:
+        body = "migrations.RenameField(model_name=x, old_name='a', new_name='b'),"
+        root = build_django_project(tmp_path, apps={"blog": [("0001_initial", _mig(body))]})
+        changes = DjangoMigrationParser().detect_changes(root)
+        assert not any(c.detail and c.detail.get("rename_of") for c in changes)
+
+    def test_rename_model_non_literal_skipped(self, tmp_path: Path) -> None:
+        body = "migrations.RenameModel(old_name=x, new_name='Post'),"
+        root = build_django_project(tmp_path, apps={"blog": [("0001_initial", _mig(body))]})
+        changes = DjangoMigrationParser().detect_changes(root)
+        assert not any(c.detail and c.detail.get("rename_of") for c in changes)
+
+    def test_unknown_op_is_skipped(self, tmp_path: Path) -> None:
+        """Unsupported op names are silently skipped (logged as debug)."""
+        body = "migrations.SomeNewOp(model_name='Post'),"
+        root = build_django_project(tmp_path, apps={"blog": [("0001_initial", _mig(body))]})
+        changes = DjangoMigrationParser().detect_changes(root)
+        assert changes == []
+
+    def test_rename_field_no_prior_snap_still_emits_pair(self, tmp_path: Path) -> None:
+        """RenameField when field not in ledger still emits COLUMN_REMOVED + COLUMN_ADDED."""
+        rename = "migrations.RenameField(model_name='Post', old_name='x', new_name='y'),"
+        root = build_django_project(tmp_path, apps={"blog": [("0001_initial", _mig(rename))]})
+        changes = DjangoMigrationParser().detect_changes(root)
+        pair = [c for c in changes if c.detail and c.detail.get("rename_of")]
+        assert len(pair) == 2
+
+    def test_add_field_fk_non_literal_ref_resolves_default(self, tmp_path: Path) -> None:
+        """FK with non-string first arg → ref_table is None, no FK_ADDED emitted."""
+        body = (
+            "migrations.AddField(model_name='Post', name='author',"
+            " field=models.ForeignKey(SomeVar, on_delete=models.CASCADE)),"
+        )
+        root = build_django_project(tmp_path, apps={"blog": [("0001_initial", _mig(body))]})
+        changes = DjangoMigrationParser().detect_changes(root)
+        assert all(c.change_type is not SchemaChangeType.FOREIGN_KEY_ADDED for c in changes)
+
+    def test_add_field_m2m_with_explicit_through_skipped(self, tmp_path: Path) -> None:
+        """M2M with explicit through= model does not emit a through-table TABLE_ADDED."""
+        body = (
+            "migrations.AddField(model_name='Post', name='tags',"
+            " field=models.ManyToManyField('Tag', through='Membership')),"
+        )
+        root = build_django_project(tmp_path, apps={"blog": [("0001_initial", _mig(body))]})
+        changes = DjangoMigrationParser().detect_changes(root)
+        m2m_through = [c for c in changes if c.table_name == "blog_post_tags"]
+        assert m2m_through == []
+
+    def test_add_field_m2m_without_literal_target_skipped(self, tmp_path: Path) -> None:
+        """M2M with a non-literal target → no through-table emitted."""
+        body = (
+            "migrations.AddField(model_name='Post', name='tags',"
+            " field=models.ManyToManyField(SomeVar)),"
+        )
+        root = build_django_project(tmp_path, apps={"blog": [("0001_initial", _mig(body))]})
+        changes = DjangoMigrationParser().detect_changes(root)
+        m2m_through = [c for c in changes if c.table_name == "blog_post_tags"]
+        assert m2m_through == []
+
+    def test_extract_fields_non_list_returns_empty(self, tmp_path: Path) -> None:
+        """CreateModel with fields= not a list/tuple → no fields extracted."""
+        body = "migrations.CreateModel(name='Post', fields=some_var),"
+        root = build_django_project(tmp_path, apps={"blog": [("0001_initial", _mig(body))]})
+        changes = DjangoMigrationParser().detect_changes(root)
+        added = [c for c in changes if c.change_type is SchemaChangeType.TABLE_ADDED]
+        assert len(added) == 1
+        assert added[0].detail["fields"] == []
+
+    def test_extract_fields_non_tuple_element_skipped(self, tmp_path: Path) -> None:
+        """CreateModel with a non-tuple element in fields list is skipped."""
+        body = "migrations.CreateModel(name='Post', fields=[some_val, ('id', models.AutoField())]),"
+        root = build_django_project(tmp_path, apps={"blog": [("0001_initial", _mig(body))]})
+        changes = DjangoMigrationParser().detect_changes(root)
+        added = [c for c in changes if c.change_type is SchemaChangeType.TABLE_ADDED]
+        assert len(added) == 1
+        names = [f["name"] for f in added[0].detail["fields"]]
+        assert "id" in names
+
+    def test_extract_fields_non_literal_name_skipped(self, tmp_path: Path) -> None:
+        """Fields tuple with non-string first element (e.g. variable) is skipped."""
+        body = (
+            "migrations.CreateModel(name='Post',"
+            " fields=[(some_var, models.AutoField()), ('id', models.AutoField())]),"
+        )
+        root = build_django_project(tmp_path, apps={"blog": [("0001_initial", _mig(body))]})
+        changes = DjangoMigrationParser().detect_changes(root)
+        added = [c for c in changes if c.change_type is SchemaChangeType.TABLE_ADDED]
+        assert len(added) == 1
+        names = [f["name"] for f in added[0].detail["fields"]]
+        assert names == ["id"]
+
+    def test_extract_fields_non_call_field_skipped(self, tmp_path: Path) -> None:
+        """Fields tuple where the second element is not a Call is skipped."""
+        body = (
+            "migrations.CreateModel(name='Post',"
+            " fields=[('bad', 'not_a_call'), ('id', models.AutoField())]),"
+        )
+        root = build_django_project(tmp_path, apps={"blog": [("0001_initial", _mig(body))]})
+        changes = DjangoMigrationParser().detect_changes(root)
+        added = [c for c in changes if c.change_type is SchemaChangeType.TABLE_ADDED]
+        assert len(added) == 1
+        names = [f["name"] for f in added[0].detail["fields"]]
+        assert names == ["id"]
