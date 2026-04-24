@@ -402,6 +402,36 @@ def _handle_drop_not_null(elem: Element, _ledger: _FKLedger) -> list[SchemaChang
     ]
 
 
+def _handle_add_default_value(elem: Element, _ledger: _FKLedger) -> list[SchemaChange]:
+    value = _resolve_column_default(elem)
+    if value is None:
+        logger.debug(
+            "addDefaultValue on %s.%s has no defaultValue* attribute; skipping",
+            elem.get("tableName"),
+            elem.get("columnName"),
+        )
+        return []
+    return [
+        SchemaChange(
+            change_type=SchemaChangeType.COLUMN_DEFAULT_CHANGED,
+            table_name=elem.get("tableName", ""),
+            column_name=elem.get("columnName", ""),
+            new_value=value,
+        )
+    ]
+
+
+def _handle_drop_default_value(elem: Element, _ledger: _FKLedger) -> list[SchemaChange]:
+    return [
+        SchemaChange(
+            change_type=SchemaChangeType.COLUMN_DEFAULT_CHANGED,
+            table_name=elem.get("tableName", ""),
+            column_name=elem.get("columnName", ""),
+            new_value=None,
+        )
+    ]
+
+
 _OpHandler = Callable[[Any, "_FKLedger"], "list[SchemaChange]"]
 
 _OP_HANDLERS: dict[str, _OpHandler] = {
@@ -414,6 +444,8 @@ _OP_HANDLERS: dict[str, _OpHandler] = {
     "modifyDataType": _handle_modify_data_type,
     "addNotNullConstraint": _handle_add_not_null,
     "dropNotNullConstraint": _handle_drop_not_null,
+    "addDefaultValue": _handle_add_default_value,
+    "dropDefaultValue": _handle_drop_default_value,
 }
 
 _DEBUG_SKIP_TAGS: frozenset[str] = frozenset(

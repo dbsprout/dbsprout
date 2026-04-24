@@ -326,3 +326,53 @@ class TestNullability:
         [change] = LiquibaseMigrationParser().detect_changes(project)
         assert change.change_type is SchemaChangeType.COLUMN_NULLABILITY_CHANGED
         assert change.new_value == "NULL"
+
+
+class TestDefaultValue:
+    @pytest.mark.parametrize(
+        ("attr", "value"),
+        [
+            ("defaultValue", "hello"),
+            ("defaultValueNumeric", "42"),
+            ("defaultValueBoolean", "true"),
+            ("defaultValueDate", "2026-01-01"),
+            ("defaultValueComputed", "NOW()"),
+            ("defaultValueSequenceNext", "user_seq"),
+        ],
+    )
+    def test_add_default_value_each_kind(self, tmp_path: Path, attr: str, value: str) -> None:
+        project = build_liquibase_project(
+            tmp_path,
+            changelogs={
+                "changelog.xml": _wrap(
+                    f'<addDefaultValue tableName="users" columnName="status" {attr}="{value}"/>'
+                ),
+            },
+        )
+        [change] = LiquibaseMigrationParser().detect_changes(project)
+        assert change.change_type is SchemaChangeType.COLUMN_DEFAULT_CHANGED
+        assert change.new_value == value
+
+    def test_add_default_value_precedence(self, tmp_path: Path) -> None:
+        project = build_liquibase_project(
+            tmp_path,
+            changelogs={
+                "changelog.xml": _wrap(
+                    '<addDefaultValue tableName="users" columnName="status"'
+                    ' defaultValue="x" defaultValueNumeric="1"/>'
+                ),
+            },
+        )
+        [change] = LiquibaseMigrationParser().detect_changes(project)
+        assert change.new_value == "x"
+
+    def test_drop_default_value(self, tmp_path: Path) -> None:
+        project = build_liquibase_project(
+            tmp_path,
+            changelogs={
+                "changelog.xml": _wrap('<dropDefaultValue tableName="users" columnName="status"/>'),
+            },
+        )
+        [change] = LiquibaseMigrationParser().detect_changes(project)
+        assert change.change_type is SchemaChangeType.COLUMN_DEFAULT_CHANGED
+        assert change.new_value is None
