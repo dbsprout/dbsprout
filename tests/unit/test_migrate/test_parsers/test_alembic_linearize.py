@@ -8,6 +8,7 @@ Covers:
 
 from __future__ import annotations
 
+import ast
 from pathlib import Path
 
 import pytest
@@ -17,8 +18,6 @@ from .conftest import run_upgrade_body
 
 class TestLinearize:
     def _rev(self, rid: str, down: str | None) -> object:
-        import ast  # noqa: PLC0415
-
         from dbsprout.migrate.parsers.alembic import _Revision  # noqa: PLC0415
 
         return _Revision(
@@ -68,8 +67,6 @@ class TestWalker:
         assert changes == []
 
     def test_missing_upgrade_raises(self) -> None:
-        import ast  # noqa: PLC0415
-
         from dbsprout.migrate.parsers import MigrationParseError  # noqa: PLC0415
         from dbsprout.migrate.parsers.alembic import _parse_upgrade, _Revision  # noqa: PLC0415
 

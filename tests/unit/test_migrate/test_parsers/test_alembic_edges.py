@@ -9,6 +9,7 @@ Covers:
 
 from __future__ import annotations
 
+import ast
 from pathlib import Path
 
 import pytest
@@ -20,8 +21,6 @@ class TestEdgeBranches:
     """Cover small branches not hit by main-path tests."""
 
     def test_literal_list_rejects_non_literal(self) -> None:
-        import ast  # noqa: PLC0415
-
         from dbsprout.migrate.parsers import MigrationParseError  # noqa: PLC0415
         from dbsprout.migrate.parsers.alembic import _literal_list  # noqa: PLC0415
 
@@ -30,8 +29,6 @@ class TestEdgeBranches:
             _literal_list(node)
 
     def test_literal_rejects_non_string(self) -> None:
-        import ast  # noqa: PLC0415
-
         from dbsprout.migrate.parsers import MigrationParseError  # noqa: PLC0415
         from dbsprout.migrate.parsers.alembic import _literal  # noqa: PLC0415
 
@@ -40,8 +37,6 @@ class TestEdgeBranches:
             _literal(node)
 
     def test_create_fk_too_few_args(self) -> None:
-        import ast  # noqa: PLC0415
-
         from dbsprout.migrate.parsers import MigrationParseError  # noqa: PLC0415
         from dbsprout.migrate.parsers.alembic import _parse_upgrade, _Revision  # noqa: PLC0415
 
@@ -55,8 +50,6 @@ class TestEdgeBranches:
             _parse_upgrade(rev)
 
     def test_create_index_too_few_args(self) -> None:
-        import ast  # noqa: PLC0415
-
         from dbsprout.migrate.parsers import MigrationParseError  # noqa: PLC0415
         from dbsprout.migrate.parsers.alembic import _parse_upgrade, _Revision  # noqa: PLC0415
 
@@ -70,8 +63,6 @@ class TestEdgeBranches:
             _parse_upgrade(rev)
 
     def test_drop_index_no_table(self) -> None:
-        import ast  # noqa: PLC0415
-
         from dbsprout.migrate.parsers import MigrationParseError  # noqa: PLC0415
         from dbsprout.migrate.parsers.alembic import _parse_upgrade, _Revision  # noqa: PLC0415
 
@@ -82,8 +73,6 @@ class TestEdgeBranches:
             _parse_upgrade(rev)
 
     def test_drop_constraint_no_table(self) -> None:
-        import ast  # noqa: PLC0415
-
         from dbsprout.migrate.parsers import MigrationParseError  # noqa: PLC0415
         from dbsprout.migrate.parsers.alembic import _parse_upgrade, _Revision  # noqa: PLC0415
 
@@ -97,8 +86,6 @@ class TestEdgeBranches:
             _parse_upgrade(rev)
 
     def test_add_column_with_non_column_arg(self) -> None:
-        import ast  # noqa: PLC0415
-
         from dbsprout.migrate.parsers import MigrationParseError  # noqa: PLC0415
         from dbsprout.migrate.parsers.alembic import _parse_upgrade, _Revision  # noqa: PLC0415
 
@@ -126,8 +113,6 @@ class TestEdgeBranches:
         assert revs[0].revision == "a"
 
     def test_multiple_upgrade_raises(self) -> None:
-        import ast  # noqa: PLC0415
-
         from dbsprout.migrate.parsers import MigrationParseError  # noqa: PLC0415
         from dbsprout.migrate.parsers.alembic import _parse_upgrade, _Revision  # noqa: PLC0415
 
@@ -138,8 +123,6 @@ class TestEdgeBranches:
             _parse_upgrade(rev)
 
     def test_non_constant_revision_ignored(self) -> None:
-        import ast  # noqa: PLC0415
-
         from dbsprout.migrate.parsers import MigrationParseError  # noqa: PLC0415
         from dbsprout.migrate.parsers.alembic import _extract_revision_ids  # noqa: PLC0415
 
@@ -149,8 +132,6 @@ class TestEdgeBranches:
             _extract_revision_ids(module, Path("r.py"))
 
     def test_alter_column_server_default_none_literal(self) -> None:
-        import ast  # noqa: PLC0415
-
         from dbsprout.migrate.models import SchemaChangeType  # noqa: PLC0415
         from dbsprout.migrate.parsers.alembic import _parse_upgrade, _Revision  # noqa: PLC0415
 
@@ -167,8 +148,6 @@ class TestEdgeBranches:
 
     def test_create_table_nullable_non_literal(self) -> None:
         """Covers the ValueError fallback in _extract_column_spec for nullable."""
-        import ast  # noqa: PLC0415
-
         from dbsprout.migrate.parsers.alembic import _parse_upgrade, _Revision  # noqa: PLC0415
 
         src = (
@@ -188,8 +167,6 @@ class TestEdgeBranches:
 
     def test_column_node_without_name_arg(self) -> None:
         """Covers the 'no args / non-constant name' branch of _extract_column_spec."""
-        import ast  # noqa: PLC0415
-
         from dbsprout.migrate.parsers.alembic import _parse_upgrade, _Revision  # noqa: PLC0415
 
         src = (
@@ -206,8 +183,6 @@ class TestEdgeBranches:
 
     def test_create_index_non_literal_unique(self) -> None:
         """Covers the ValueError fallback in _handle_create_index for unique."""
-        import ast  # noqa: PLC0415
-
         from dbsprout.migrate.parsers.alembic import _parse_upgrade, _Revision  # noqa: PLC0415
 
         src = (
