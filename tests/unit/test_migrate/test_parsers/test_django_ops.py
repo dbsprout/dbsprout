@@ -255,3 +255,59 @@ class TestRemoveField:
         changes = DjangoMigrationParser().detect_changes(root)
         kinds = [c.change_type for c in changes]
         assert SchemaChangeType.FOREIGN_KEY_REMOVED in kinds
+
+
+class TestAlterField:
+    def test_alter_type_only(self, tmp_path: Path) -> None:
+        create = (
+            "migrations.CreateModel(name='Post', fields=["
+            "('id', models.AutoField()), ('n', models.IntegerField())]),"
+        )
+        alter = (
+            "migrations.AlterField(model_name='Post', name='n', field=models.BigIntegerField()),"
+        )
+        root = build_django_project(
+            tmp_path,
+            apps={
+                "blog": [
+                    ("0001_initial", _mig(create)),
+                    ("0002_alter", _mig(alter)),
+                ]
+            },
+        )
+        changes = DjangoMigrationParser().detect_changes(root)
+        altered = [c for c in changes if c.change_type is SchemaChangeType.COLUMN_TYPE_CHANGED]
+        assert len(altered) == 1
+        assert "BigIntegerField" in altered[0].new_value
+
+    def test_alter_multi_dimension_emits_multiple(self, tmp_path: Path) -> None:
+        create = (
+            "migrations.CreateModel(name='Post', fields=["
+            "('id', models.AutoField()), ('n', models.IntegerField())]),"
+        )
+        alter = (
+            "migrations.AlterField(model_name='Post', name='n',"
+            " field=models.BigIntegerField(null=True, default=0)),"
+        )
+        root = build_django_project(
+            tmp_path,
+            apps={
+                "blog": [
+                    ("0001_initial", _mig(create)),
+                    ("0002_alter", _mig(alter)),
+                ]
+            },
+        )
+        kinds = [c.change_type for c in DjangoMigrationParser().detect_changes(root)]
+        assert SchemaChangeType.COLUMN_TYPE_CHANGED in kinds
+        assert SchemaChangeType.COLUMN_NULLABILITY_CHANGED in kinds
+        assert SchemaChangeType.COLUMN_DEFAULT_CHANGED in kinds
+
+    def test_alter_without_prior_state_emits_single_trigger(self, tmp_path: Path) -> None:
+        alter = (
+            "migrations.AlterField(model_name='Post', name='n', field=models.BigIntegerField()),"
+        )
+        root = build_django_project(tmp_path, apps={"blog": [("0001_alter", _mig(alter))]})
+        changes = DjangoMigrationParser().detect_changes(root)
+        assert len(changes) == 1
+        assert changes[0].change_type is SchemaChangeType.COLUMN_TYPE_CHANGED

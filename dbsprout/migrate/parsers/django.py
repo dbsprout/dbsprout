@@ -638,3 +638,89 @@ def _handle_remove_field(
 
 
 _HANDLERS["RemoveField"] = _handle_remove_field
+
+
+# ---------------------------------------------------------------------------
+# Task 10: AlterField handler with per-dimension ledger diffing
+# ---------------------------------------------------------------------------
+
+
+def _handle_alter_field(
+    op: ast.Call,
+    *,
+    mig: _ParsedMigration,
+    tables: _TableNameLedger,
+    fields: _FieldLedger,
+    out: list[SchemaChange],
+) -> None:
+    from dbsprout.migrate.models import SchemaChangeType  # noqa: PLC0415
+
+    kw = _kwargs(op)
+    model_node = kw.get("model_name")
+    name_node = kw.get("name")
+    field_node = kw.get("field")
+    if not (
+        isinstance(model_node, ast.Constant)
+        and isinstance(model_node.value, str)
+        and isinstance(name_node, ast.Constant)
+        and isinstance(name_node.value, str)
+        and isinstance(field_node, ast.Call)
+    ):
+        return
+    model_name: str = model_node.value
+    column_name: str = name_node.value
+    table_name = tables.get(
+        (mig.app_label, model_name), _default_table_name(mig.app_label, model_name)
+    )
+    new_snap = _field_snapshot(field_node, mig=mig, tables=tables)
+
+    key = (mig.app_label, model_name, column_name)
+    prev = fields.get(key)
+    fields[key] = new_snap
+
+    if prev is None:
+        out.append(
+            SchemaChange(
+                change_type=SchemaChangeType.COLUMN_TYPE_CHANGED,
+                table_name=table_name,
+                column_name=column_name,
+                new_value=new_snap.django_type,
+                detail={"django_type": new_snap.django_type},
+            ),
+        )
+        return
+
+    if new_snap.django_type != prev.django_type:
+        out.append(
+            SchemaChange(
+                change_type=SchemaChangeType.COLUMN_TYPE_CHANGED,
+                table_name=table_name,
+                column_name=column_name,
+                old_value=prev.django_type,
+                new_value=new_snap.django_type,
+                detail={"django_type": new_snap.django_type},
+            ),
+        )
+    if new_snap.nullable != prev.nullable:
+        out.append(
+            SchemaChange(
+                change_type=SchemaChangeType.COLUMN_NULLABILITY_CHANGED,
+                table_name=table_name,
+                column_name=column_name,
+                old_value=str(prev.nullable),
+                new_value=str(new_snap.nullable),
+            ),
+        )
+    if new_snap.default != prev.default:
+        out.append(
+            SchemaChange(
+                change_type=SchemaChangeType.COLUMN_DEFAULT_CHANGED,
+                table_name=table_name,
+                column_name=column_name,
+                old_value=prev.default,
+                new_value=new_snap.default,
+            ),
+        )
+
+
+_HANDLERS["AlterField"] = _handle_alter_field
