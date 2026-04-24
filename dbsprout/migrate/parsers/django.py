@@ -236,6 +236,7 @@ _FieldLedger = dict[tuple[str, str, str], "_FieldSnapshot"]  # (app, model, fiel
 
 @dataclass(frozen=True)
 class _FieldSnapshot:
+    type_name: str
     django_type: str
     nullable: bool
     default: str | None
@@ -438,6 +439,7 @@ def _field_snapshot(
         if isinstance(first, ast.Constant) and isinstance(first.value, str):
             ref_table = _resolve_ref(first.value, mig=mig, tables=tables)
     return _FieldSnapshot(
+        type_name=type_name,
         django_type=django_type,
         nullable=nullable,
         default=default,
@@ -690,7 +692,7 @@ def _handle_alter_field(
         )
         return
 
-    if new_snap.django_type != prev.django_type:
+    if new_snap.type_name != prev.type_name:
         out.append(
             SchemaChange(
                 change_type=SchemaChangeType.COLUMN_TYPE_CHANGED,
@@ -709,6 +711,7 @@ def _handle_alter_field(
                 column_name=column_name,
                 old_value=str(prev.nullable),
                 new_value=str(new_snap.nullable),
+                detail={"django_type": new_snap.django_type},
             ),
         )
     if new_snap.default != prev.default:
@@ -719,6 +722,7 @@ def _handle_alter_field(
                 column_name=column_name,
                 old_value=prev.default,
                 new_value=new_snap.default,
+                detail={"django_type": new_snap.django_type},
             ),
         )
 

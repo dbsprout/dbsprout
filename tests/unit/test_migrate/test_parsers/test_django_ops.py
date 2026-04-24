@@ -312,6 +312,45 @@ class TestAlterField:
         assert len(changes) == 1
         assert changes[0].change_type is SchemaChangeType.COLUMN_TYPE_CHANGED
 
+    def test_alter_nullability_only_does_not_emit_type_change(self, tmp_path: Path) -> None:
+        create = (
+            "migrations.CreateModel(name='Post', fields=["
+            "('id', models.AutoField()), ('n', models.IntegerField())]),"
+        )
+        alter = (
+            "migrations.AlterField(model_name='Post', name='n',"
+            " field=models.IntegerField(null=True)),"
+        )
+        root = build_django_project(
+            tmp_path,
+            apps={"blog": [("0001_initial", _mig(create)), ("0002_alter", _mig(alter))]},
+        )
+        changes = DjangoMigrationParser().detect_changes(root)
+        kinds = [c.change_type for c in changes]
+        assert SchemaChangeType.COLUMN_NULLABILITY_CHANGED in kinds
+        assert SchemaChangeType.COLUMN_TYPE_CHANGED not in kinds
+
+    def test_alter_nullability_change_carries_django_type_detail(self, tmp_path: Path) -> None:
+        create = (
+            "migrations.CreateModel(name='Post', fields=["
+            "('id', models.AutoField()), ('n', models.IntegerField())]),"
+        )
+        alter = (
+            "migrations.AlterField(model_name='Post', name='n',"
+            " field=models.IntegerField(null=True)),"
+        )
+        root = build_django_project(
+            tmp_path,
+            apps={"blog": [("0001_initial", _mig(create)), ("0002_alter", _mig(alter))]},
+        )
+        changes = DjangoMigrationParser().detect_changes(root)
+        null_changes = [
+            c for c in changes if c.change_type is SchemaChangeType.COLUMN_NULLABILITY_CHANGED
+        ]
+        assert len(null_changes) == 1
+        assert null_changes[0].detail is not None
+        assert "IntegerField" in null_changes[0].detail["django_type"]
+
 
 class TestRenames:
     def test_rename_field(self, tmp_path: Path) -> None:
