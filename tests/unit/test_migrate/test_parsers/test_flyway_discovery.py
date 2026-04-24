@@ -162,3 +162,21 @@ class TestLocationEscape:
         (outside / "V1__x.sql").write_text(EMPTY_SQL, encoding="utf-8")
         with pytest.raises(MigrationParseError, match="escapes project root"):
             _discover_migration_files(tmp_path, ("../other",))
+
+    def test_symlinked_directory_escape_skipped(
+        self,
+        tmp_path: Path,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        # Attacker-controlled tree: db/migration/escape -> /tmp/secret
+        secret = tmp_path.parent / "secret_dir"
+        secret.mkdir(exist_ok=True)
+        (secret / "V99__stolen.sql").write_text(EMPTY_SQL, encoding="utf-8")
+        root = build_flyway_project(tmp_path, {"V1__ok": EMPTY_SQL})
+        mig_dir = root / "db" / "migration"
+        (mig_dir / "escape").symlink_to(secret, target_is_directory=True)
+        with caplog.at_level("DEBUG", logger="dbsprout.migrate.parsers.flyway"):
+            files = _discover_migration_files(root, None)
+        names = [f.name for f in files]
+        assert "V99__stolen.sql" not in names
+        assert "V1__ok.sql" in names

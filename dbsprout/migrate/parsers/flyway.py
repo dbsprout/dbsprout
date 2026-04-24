@@ -41,7 +41,15 @@ _PLACEHOLDER_RE = re.compile(r"\$\{([^}]+)\}")
 
 @dataclass(frozen=True)
 class FlywayMigrationParser:
-    """Parse Flyway versioned SQL migration histories into ``SchemaChange`` lists."""
+    """Parse Flyway versioned SQL migration histories into ``SchemaChange`` lists.
+
+    ``placeholders`` values are substituted verbatim into migration SQL text
+    before parsing. The parser itself never executes SQL, but callers that
+    later replay emitted ``SchemaChange`` records against a live database are
+    responsible for ensuring placeholder values do not contain SQL
+    metacharacters (``;``, ``'``, ``--``). Pass values from a trusted source
+    (``flyway.conf``, CI secrets), not from end-user input.
+    """
 
     dialect: str = "postgres"
     locations: tuple[str, ...] | None = None
@@ -106,21 +114,26 @@ def _version_sort_key(version: tuple[int, ...]) -> tuple[int, ...]:
 # ---------------------------------------------------------------------------
 
 
+def _is_contained(candidate: Path, root: Path) -> bool:
+    """True if ``candidate`` (already resolved) is at or under ``root`` (already resolved)."""
+    return candidate == root or root in candidate.parents
+
+
 def _resolve_locations(project_path: Path, locations: tuple[str, ...] | None) -> list[Path]:
+    resolved_root = project_path.resolve()
     if locations is not None:
-        resolved_root = project_path.resolve()
         dirs: list[Path] = []
         for loc in locations:
             candidate = (project_path / loc).resolve()
-            if resolved_root not in candidate.parents and candidate != resolved_root:
+            if not _is_contained(candidate, resolved_root):
                 raise MigrationParseError(
                     f"location '{loc}' escapes project root {project_path}",
                 )
             dirs.append(candidate)
         return dirs
     for default in _DEFAULT_LOCATIONS:
-        candidate = project_path / default
-        if candidate.is_dir():
+        candidate = (project_path / default).resolve()
+        if candidate.is_dir() and _is_contained(candidate, resolved_root):
             return [candidate]
     return []
 
@@ -129,6 +142,7 @@ def _discover_migration_files(
     project_path: Path,
     locations: tuple[str, ...] | None,
 ) -> list[Path]:
+    resolved_root = project_path.resolve()
     dirs = _resolve_locations(project_path, locations)
     by_version: dict[tuple[int, ...], Path] = {}
     for d in dirs:
@@ -139,6 +153,10 @@ def _discover_migration_files(
             try:
                 if sql_file.is_symlink():
                     logger.debug("skipping symlink %s", sql_file)
+                    continue
+                resolved_file = sql_file.resolve()
+                if not _is_contained(resolved_file, resolved_root):
+                    logger.debug("skipping out-of-tree file %s", sql_file)
                     continue
                 size = sql_file.stat().st_size
             except OSError:
