@@ -260,7 +260,7 @@ class TestAddDropConstraint:
             "ALTER TABLE books DROP CONSTRAINT chk_price;",
             read="postgres",
         )
-        with caplog.at_level("DEBUG", logger="dbsprout.migrate.parsers.flyway"):
+        with caplog.at_level("DEBUG", logger="dbsprout.migrate.parsers"):
             changes = _walk_statements(stmts, ledger=_FKLedger())
         assert changes == []
         assert "chk_price" in caplog.text
@@ -374,28 +374,28 @@ class TestEdgeCases:
 
     def test_add_constraint_non_fk_skipped(self, caplog: pytest.LogCaptureFixture) -> None:
         stmts = sqlglot.parse("ALTER TABLE t ADD CONSTRAINT uq_col UNIQUE (col);", read="postgres")
-        with caplog.at_level("DEBUG", logger="dbsprout.migrate.parsers.flyway"):
+        with caplog.at_level("DEBUG", logger="dbsprout.migrate.parsers"):
             changes = _walk_statements(stmts, ledger=_FKLedger())
         assert changes == []
         assert "not a FK" in caplog.text
 
     def test_alter_table_unsupported_action_logged(self, caplog: pytest.LogCaptureFixture) -> None:
         stmts = sqlglot.parse("ALTER TABLE t SET TABLESPACE tblspc;", read="postgres")
-        with caplog.at_level("DEBUG", logger="dbsprout.migrate.parsers.flyway"):
+        with caplog.at_level("DEBUG", logger="dbsprout.migrate.parsers"):
             changes = _walk_statements(stmts, ledger=_FKLedger())
         assert changes == []
         assert "AlterSet" in caplog.text
 
     def test_alter_table_drop_index_skipped(self, caplog: pytest.LogCaptureFixture) -> None:
         stmts = sqlglot.parse("ALTER TABLE t DROP INDEX my_idx;", read="mysql")
-        with caplog.at_level("DEBUG", logger="dbsprout.migrate.parsers.flyway"):
+        with caplog.at_level("DEBUG", logger="dbsprout.migrate.parsers"):
             changes = _walk_statements(stmts, ledger=_FKLedger())
         assert changes == []
         assert "unsupported ALTER TABLE DROP action" in caplog.text
 
     def test_unsupported_statement_logged(self, caplog: pytest.LogCaptureFixture) -> None:
         stmts = sqlglot.parse("INSERT INTO t VALUES (1);", read="postgres")
-        with caplog.at_level("DEBUG", logger="dbsprout.migrate.parsers.flyway"):
+        with caplog.at_level("DEBUG", logger="dbsprout.migrate.parsers"):
             changes = _walk_statements(stmts, ledger=_FKLedger())
         assert changes == []
         assert "skipping unsupported statement" in caplog.text
@@ -436,7 +436,7 @@ class TestEdgeCases:
 
         build_flyway_project(tmp_path, {"V1__ok": "-- ok"})
         (tmp_path / "db" / "migration" / "helpers.sql").write_text("-- helper", encoding="utf-8")
-        with caplog.at_level("DEBUG", logger="dbsprout.migrate.parsers.flyway"):
+        with caplog.at_level("DEBUG", logger="dbsprout.migrate.parsers"):
             files = _discover_migration_files(tmp_path, None)
         assert len(files) == 1
         assert "helpers.sql" in caplog.text
