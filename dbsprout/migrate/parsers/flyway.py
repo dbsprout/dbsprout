@@ -10,7 +10,12 @@ from __future__ import annotations
 import logging
 import re
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
+
+import sqlglot
+from sqlglot import exp
+from sqlglot.errors import ParseError as SqlglotParseError
+from sqlglot.errors import TokenError
 
 from dbsprout.migrate.parsers import MigrationParseError
 
@@ -148,6 +153,53 @@ def _check_unresolved(text: str, file_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Identifier helpers
+# ---------------------------------------------------------------------------
+
+
+def _strip_quotes(ident: str) -> str:
+    s = ident.strip()
+    if len(s) >= 2 and s[0] == s[-1] and s[0] in ('"', "`"):
+        return s[1:-1]
+    if s.startswith("[") and s.endswith("]"):
+        return s[1:-1]
+    return s
+
+
+def _split_qualified(ident: str) -> tuple[str | None, str]:
+    parts = [_strip_quotes(p) for p in ident.split(".") if p]
+    if not parts:
+        return None, ""
+    if len(parts) == 1:
+        return None, parts[0]
+    return parts[-2], parts[-1]
+
+
+# ---------------------------------------------------------------------------
+# sqlglot file parser
+# ---------------------------------------------------------------------------
+
+
+def _parse_file(
+    file_path: Path,
+    *,
+    dialect: str,
+    placeholders: dict[str, str],
+) -> list[exp.Expression]:
+    text = file_path.read_text(encoding="utf-8")
+    text = _substitute_placeholders(text, placeholders)
+    _check_unresolved(text, file_path)
+    try:
+        raw_stmts = sqlglot.parse(text, read=dialect)
+    except (SqlglotParseError, TokenError) as exc:
+        raise MigrationParseError(
+            f"could not parse {file_path} (dialect={dialect}): {exc}",
+            file_path=file_path,
+        ) from exc
+    return cast("list[exp.Expression]", [s for s in raw_stmts if s is not None])
+
+
+# ---------------------------------------------------------------------------
 # FK ledger
 # ---------------------------------------------------------------------------
 
@@ -164,3 +216,20 @@ class _FKLedger:
 
     def resolve(self, table: str, constraint_name: str) -> SchemaChange | None:
         return self.by_key.get((table, constraint_name))
+
+
+# ---------------------------------------------------------------------------
+# Statement walker (stub — dispatch added per-task)
+# ---------------------------------------------------------------------------
+
+
+def _walk_statements(
+    stmts: list[exp.Expression],
+    *,
+    dialect: str,  # noqa: ARG001
+    ledger: _FKLedger,  # noqa: ARG001
+) -> list[SchemaChange]:
+    out: list[SchemaChange] = []
+    for stmt in stmts:
+        logger.debug("skipping unsupported statement: %s", type(stmt).__name__)
+    return out
