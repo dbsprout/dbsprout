@@ -36,5 +36,34 @@ class DjangoMigrationParser:
         raise NotImplementedError("walker lands in later tasks")
 
 
-def _discover_migration_files(project_path: Path) -> list[Path]:  # noqa: ARG001
-    return []
+def _discover_migration_files(project_path: Path) -> list[Path]:
+    """Return every migration file under ``project_path``.
+
+    Filters out ``__init__.py``, ``__pycache__`` entries, files larger than
+    1 MB, and anything that resolves outside ``project_path`` (symlink guard).
+    """
+    project_resolved = project_path.resolve()
+    found: list[Path] = []
+    for path in sorted(project_path.rglob("migrations/*.py")):
+        if path.name == "__init__.py":
+            continue
+        if "__pycache__" in path.parts:
+            continue
+        try:
+            resolved = path.resolve()
+        except OSError:
+            logger.debug("skipping unresolvable migration path %s", path)
+            continue
+        if project_resolved not in resolved.parents and resolved != project_resolved:
+            logger.debug("skipping symlink-escape migration path %s", path)
+            continue
+        try:
+            size = path.stat().st_size
+        except OSError:
+            logger.debug("skipping unreadable migration path %s", path)
+            continue
+        if size > _MAX_MIGRATION_BYTES:
+            logger.debug("skipping oversize migration file %s (%d bytes)", path, size)
+            continue
+        found.append(path)
+    return found
