@@ -11,9 +11,62 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from dbsprout.migrate.models import SchemaChange
+    from dbsprout.migrate.models import SchemaChange, SchemaChangeType
 
 FIXTURE_PROJECT_PATH = Path(__file__).parent / "fixtures" / "alembic_project"
+
+
+# ---------------------------------------------------------------------------
+# Django helpers
+# ---------------------------------------------------------------------------
+
+EMPTY_MIG = (
+    "from django.db import migrations\n\n"
+    "class Migration(migrations.Migration):\n"
+    "    dependencies = []\n"
+    "    operations = []\n"
+)
+
+
+def build_django_project(
+    tmp_path: Path,
+    apps: dict[str, list[tuple[str, str]]],
+) -> Path:
+    """Write a minimal Django project tree to ``tmp_path``.
+
+    ``apps`` maps ``app_label`` to a list of ``(migration_stem, file_body)``
+    pairs. An empty ``__init__.py`` is written next to every migrations set.
+    Returns the project root (equal to ``tmp_path``).
+    """
+    for app_label, migrations in apps.items():
+        mig_dir = tmp_path / app_label / "migrations"
+        mig_dir.mkdir(parents=True, exist_ok=True)
+        (mig_dir / "__init__.py").write_text("", encoding="utf-8")
+        for stem, body in migrations:
+            (mig_dir / f"{stem}.py").write_text(body, encoding="utf-8")
+    return tmp_path
+
+
+def assert_change(
+    change: SchemaChange,
+    *,
+    change_type: SchemaChangeType,
+    table_name: str,
+    column_name: str | None = None,
+) -> None:
+    """Assert the primary identity of a ``SchemaChange``.
+
+    Deliberately narrow — ``detail`` comparisons happen inline in tests so the
+    assertion failure points at the exact key that diverged.
+    """
+    assert change.change_type is change_type, change
+    assert change.table_name == table_name, change
+    assert change.column_name == column_name, change
+
+
+# ---------------------------------------------------------------------------
+# Alembic helpers
+# ---------------------------------------------------------------------------
 
 
 def run_upgrade_body(body: str) -> list[SchemaChange]:
