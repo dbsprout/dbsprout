@@ -93,6 +93,28 @@ def build_flyway_project(
 
 
 # ---------------------------------------------------------------------------
+# Liquibase helpers
+# ---------------------------------------------------------------------------
+
+
+def build_liquibase_project(
+    tmp_path: Path,
+    changelogs: dict[str, str],
+) -> Path:
+    """Write a minimal Liquibase project tree to ``tmp_path``.
+
+    ``changelogs`` maps project-relative paths to file bodies (raw XML text).
+    Parent directories are created as needed. Returns the project root
+    (equal to ``tmp_path``).
+    """
+    for rel_path, body in changelogs.items():
+        target = tmp_path / rel_path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(body, encoding="utf-8")
+    return tmp_path
+
+
+# ---------------------------------------------------------------------------
 # Alembic helpers
 # ---------------------------------------------------------------------------
 
