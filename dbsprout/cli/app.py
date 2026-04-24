@@ -8,11 +8,15 @@ from __future__ import annotations
 
 import typer
 
+from dbsprout.cli.commands.plugins import plugins_app
+
 app = typer.Typer(
     name="dbsprout",
     help="Generate realistic seed data from your database schema.",
     no_args_is_help=True,
 )
+
+app.add_typer(plugins_app, name="plugins")
 
 
 @app.command(name="init")
