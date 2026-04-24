@@ -109,10 +109,10 @@ class _FKLedger:
 
 def _walk_changelog(
     root: Path,
-    project_path: Path,  # noqa: ARG001
+    project_path: Path,
     ledger: _FKLedger,
     visited: set[Path],
-    seen_changesets: dict[tuple[str, str], Path],  # noqa: ARG001
+    seen_changesets: dict[tuple[str, str], Path],
 ) -> Iterable[SchemaChange]:
     resolved = root.resolve()
     if resolved in visited:
@@ -135,11 +135,67 @@ def _walk_changelog(
         if tag == "changeSet":
             yield from _handle_changeset(elem, root, ledger)
         elif tag == "include":
-            logger.debug("include placeholder — to be handled in later task")
+            target = _resolve_include(root, elem, project_path)
+            yield from _walk_changelog(target, project_path, ledger, visited, seen_changesets)
         elif tag == "includeAll":
-            logger.debug("includeAll placeholder — to be handled in later task")
+            for target in _resolve_include_all(root, elem, project_path):
+                yield from _walk_changelog(target, project_path, ledger, visited, seen_changesets)
         else:
             logger.debug("skipping unsupported Liquibase element: %s", tag)
+
+
+def _is_contained(candidate: Path, root: Path) -> bool:
+    return candidate == root or root in candidate.parents
+
+
+def _resolve_include(
+    parent: Path,
+    elem: Element,
+    project_path: Path,
+) -> Path:
+    file_attr = str(elem.get("file", ""))
+    rel_attr = elem.get("relativeToChangelogFile", "false")
+    relative = str(rel_attr or "false").lower() == "true"
+    base: Path = parent.parent if relative else project_path
+    target: Path = (base / file_attr).resolve()
+    if not target.is_file():
+        raise MigrationParseError(
+            f"<include file='{file_attr}'> from {parent} not found at {target}",
+            file_path=parent,
+        )
+    return target
+
+
+def _resolve_include_all(
+    parent: Path,
+    elem: Element,
+    project_path: Path,
+) -> list[Path]:
+    path_attr = str(elem.get("path", ""))
+    rel_attr = elem.get("relativeToChangelogFile", "false")
+    relative = str(rel_attr or "false").lower() == "true"
+    base: Path = parent.parent if relative else project_path
+    directory: Path = (base / path_attr).resolve()
+    project_root = project_path.resolve()
+    if not directory.is_dir():
+        raise MigrationParseError(
+            f"<includeAll path='{path_attr}'> from {parent} not found at {directory}",
+            file_path=parent,
+        )
+    out: list[Path] = []
+    for child in sorted(directory.rglob("*.xml")):
+        if child.is_symlink():
+            logger.debug("skipping symlink %s", child)
+            continue
+        resolved_child = child.resolve()
+        if not _is_contained(resolved_child, project_root):
+            logger.debug("skipping out-of-tree file %s", child)
+            continue
+        if child.stat().st_size > _MAX_CHANGELOG_BYTES:
+            logger.debug("%s exceeds 1 MB size cap; skipping", child)
+            continue
+        out.append(resolved_child)
+    return out
 
 
 # ---------------------------------------------------------------------------

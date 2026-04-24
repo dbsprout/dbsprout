@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from dbsprout.migrate.models import SchemaChangeType
 from dbsprout.migrate.parsers import MigrationParseError
 from dbsprout.migrate.parsers.liquibase import LiquibaseMigrationParser
 from tests.unit.test_migrate.test_parsers.conftest import build_liquibase_project
@@ -69,6 +70,119 @@ class TestDiscovery:
     def test_no_probe_match_raises(self, tmp_path: Path) -> None:
         with pytest.raises(MigrationParseError, match="no Liquibase changelog"):
             LiquibaseMigrationParser().detect_changes(tmp_path)
+
+
+class TestInclude:
+    def test_include_relative_to_changelog(self, tmp_path: Path) -> None:
+        project = build_liquibase_project(
+            tmp_path,
+            changelogs={
+                "db/changelog/db.changelog-master.xml": (
+                    '<?xml version="1.0" encoding="UTF-8"?>\n'
+                    '<databaseChangeLog xmlns="http://www.liquibase.org/xml/ns/dbchangelog">\n'
+                    '  <include file="01-init.xml" relativeToChangelogFile="true"/>\n'
+                    "</databaseChangeLog>\n"
+                ),
+                "db/changelog/01-init.xml": (
+                    '<?xml version="1.0" encoding="UTF-8"?>\n'
+                    '<databaseChangeLog xmlns="http://www.liquibase.org/xml/ns/dbchangelog">\n'
+                    '  <changeSet id="c1" author="alice">\n'
+                    '    <createTable tableName="users"/>\n'
+                    "  </changeSet>\n"
+                    "</databaseChangeLog>\n"
+                ),
+            },
+        )
+        [change] = LiquibaseMigrationParser().detect_changes(project)
+        assert change.change_type is SchemaChangeType.TABLE_ADDED
+        assert change.table_name == "users"
+
+    def test_include_relative_to_project(self, tmp_path: Path) -> None:
+        project = build_liquibase_project(
+            tmp_path,
+            changelogs={
+                "db/changelog/db.changelog-master.xml": (
+                    '<?xml version="1.0" encoding="UTF-8"?>\n'
+                    '<databaseChangeLog xmlns="http://www.liquibase.org/xml/ns/dbchangelog">\n'
+                    '  <include file="db/changelog/01-init.xml"/>\n'
+                    "</databaseChangeLog>\n"
+                ),
+                "db/changelog/01-init.xml": (
+                    '<?xml version="1.0" encoding="UTF-8"?>\n'
+                    '<databaseChangeLog xmlns="http://www.liquibase.org/xml/ns/dbchangelog">\n'
+                    '  <changeSet id="c1" author="alice">\n'
+                    '    <createTable tableName="users"/>\n'
+                    "  </changeSet>\n"
+                    "</databaseChangeLog>\n"
+                ),
+            },
+        )
+        [change] = LiquibaseMigrationParser().detect_changes(project)
+        assert change.table_name == "users"
+
+    def test_include_missing_raises(self, tmp_path: Path) -> None:
+        project = build_liquibase_project(
+            tmp_path,
+            changelogs={
+                "changelog.xml": (
+                    '<?xml version="1.0" encoding="UTF-8"?>\n'
+                    '<databaseChangeLog xmlns="http://www.liquibase.org/xml/ns/dbchangelog">\n'
+                    '  <include file="missing.xml" relativeToChangelogFile="true"/>\n'
+                    "</databaseChangeLog>\n"
+                ),
+            },
+        )
+        with pytest.raises(MigrationParseError, match="not found"):
+            LiquibaseMigrationParser().detect_changes(project)
+
+    def test_include_cycle_detected(self, tmp_path: Path) -> None:
+        project = build_liquibase_project(
+            tmp_path,
+            changelogs={
+                "changelog.xml": (
+                    '<?xml version="1.0" encoding="UTF-8"?>\n'
+                    '<databaseChangeLog xmlns="http://www.liquibase.org/xml/ns/dbchangelog">\n'
+                    '  <include file="b.xml" relativeToChangelogFile="true"/>\n'
+                    "</databaseChangeLog>\n"
+                ),
+                "b.xml": (
+                    '<?xml version="1.0" encoding="UTF-8"?>\n'
+                    '<databaseChangeLog xmlns="http://www.liquibase.org/xml/ns/dbchangelog">\n'
+                    '  <include file="changelog.xml" relativeToChangelogFile="true"/>\n'
+                    "</databaseChangeLog>\n"
+                ),
+            },
+        )
+        with pytest.raises(MigrationParseError, match="cycle"):
+            LiquibaseMigrationParser().detect_changes(project)
+
+    def test_include_all_alphabetical(self, tmp_path: Path) -> None:
+        project = build_liquibase_project(
+            tmp_path,
+            changelogs={
+                "db/changelog/db.changelog-master.xml": (
+                    '<?xml version="1.0" encoding="UTF-8"?>\n'
+                    '<databaseChangeLog xmlns="http://www.liquibase.org/xml/ns/dbchangelog">\n'
+                    '  <includeAll path="changes" relativeToChangelogFile="true"/>\n'
+                    "</databaseChangeLog>\n"
+                ),
+                "db/changelog/changes/02-second.xml": _wrap_ct("second"),
+                "db/changelog/changes/01-first.xml": _wrap_ct("first"),
+            },
+        )
+        changes = LiquibaseMigrationParser().detect_changes(project)
+        assert [c.table_name for c in changes] == ["first", "second"]
+
+
+def _wrap_ct(table_name: str) -> str:
+    return (
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        '<databaseChangeLog xmlns="http://www.liquibase.org/xml/ns/dbchangelog">\n'
+        f'  <changeSet id="c_{table_name}" author="alice">\n'
+        f'    <createTable tableName="{table_name}"/>\n'
+        "  </changeSet>\n"
+        "</databaseChangeLog>\n"
+    )
 
 
 _EMPTY_CHANGELOG = (
