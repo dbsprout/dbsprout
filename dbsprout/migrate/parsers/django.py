@@ -451,3 +451,138 @@ def _resolve_ref(raw: str, *, mig: _ParsedMigration, tables: _TableNameLedger) -
         app, model = raw.split(".", 1)
         return tables.get((app, model), _default_table_name(app, model))
     return tables.get((mig.app_label, raw), _default_table_name(mig.app_label, raw))
+
+
+# ---------------------------------------------------------------------------
+# Task 8: AddField handler (plain, FK, M2M)
+# ---------------------------------------------------------------------------
+
+
+def _handle_add_field(
+    op: ast.Call,
+    *,
+    mig: _ParsedMigration,
+    tables: _TableNameLedger,
+    fields: _FieldLedger,
+    out: list[SchemaChange],
+) -> None:
+    from dbsprout.migrate.models import SchemaChangeType  # noqa: PLC0415
+
+    kw = _kwargs(op)
+    model_node = kw.get("model_name")
+    name_node = kw.get("name")
+    field_node = kw.get("field")
+    if not (
+        isinstance(model_node, ast.Constant)
+        and isinstance(model_node.value, str)
+        and isinstance(name_node, ast.Constant)
+        and isinstance(name_node.value, str)
+        and isinstance(field_node, ast.Call)
+    ):
+        logger.debug("AddField with non-literal args in %s", mig.path)
+        return
+    model_name: str = model_node.value
+    column_name: str = name_node.value
+
+    if _op_name(field_node) == "ManyToManyField":
+        _emit_m2m_through(field_node, mig, (model_name, column_name), tables, out)
+        return
+
+    snap = _field_snapshot(field_node, mig=mig, tables=tables)
+    fields[(mig.app_label, model_name, column_name)] = snap
+    table_name = tables.get(
+        (mig.app_label, model_name), _default_table_name(mig.app_label, model_name)
+    )
+    out.append(
+        SchemaChange(
+            change_type=SchemaChangeType.COLUMN_ADDED,
+            table_name=table_name,
+            column_name=column_name,
+            detail={
+                "django_type": snap.django_type,
+                "nullable": snap.nullable,
+                "default": snap.default,
+            },
+        ),
+    )
+    if snap.is_fk and snap.ref_table:
+        out.append(
+            SchemaChange(
+                change_type=SchemaChangeType.FOREIGN_KEY_ADDED,
+                table_name=table_name,
+                column_name=column_name,
+                detail={
+                    "ref_table": snap.ref_table,
+                    "local_cols": [column_name],
+                    "remote_cols": ["id"],
+                },
+            ),
+        )
+
+
+def _emit_m2m_through(
+    field_node: ast.Call,
+    mig: _ParsedMigration,
+    model_col_pair: tuple[str, str],
+    tables: _TableNameLedger,
+    out: list[SchemaChange],
+) -> None:
+    """Emit implicit through-table TABLE_ADDED for a ManyToManyField."""
+    from dbsprout.migrate.models import SchemaChangeType  # noqa: PLC0415
+
+    model, column = model_col_pair
+    # Skip explicit through=... — user's own CreateModel covers it.
+    if any(kw.arg == "through" for kw in field_node.keywords):
+        return
+    this_table = tables.get((mig.app_label, model), _default_table_name(mig.app_label, model))
+    # Resolve target model from first positional arg.
+    target_raw: str | None = None
+    if (
+        field_node.args
+        and isinstance(field_node.args[0], ast.Constant)
+        and isinstance(field_node.args[0].value, str)
+    ):
+        target_raw = field_node.args[0].value
+    if target_raw is None:
+        logger.debug("M2M without literal target in %s", mig.path)
+        return
+    target_table = _resolve_ref(target_raw, mig=mig, tables=tables)
+    through_name = f"{mig.app_label}_{model.lower()}_{column}"
+    model_col = f"{model.lower()}_id"
+    target_col = f"{column}_id"
+    out.append(
+        SchemaChange(
+            change_type=SchemaChangeType.TABLE_ADDED,
+            table_name=through_name,
+            detail={
+                "fields": [
+                    {
+                        "name": "id",
+                        "django_type": "models.AutoField(primary_key=True)",
+                        "nullable": False,
+                        "default": None,
+                    },
+                    {
+                        "name": model_col,
+                        "django_type": "models.ForeignKey",
+                        "nullable": False,
+                        "default": None,
+                    },
+                    {
+                        "name": target_col,
+                        "django_type": "models.ForeignKey",
+                        "nullable": False,
+                        "default": None,
+                    },
+                ],
+                "foreign_keys": [
+                    {"column": model_col, "ref_table": this_table, "ref_columns": ["id"]},
+                    {"column": target_col, "ref_table": target_table, "ref_columns": ["id"]},
+                ],
+                "db_table": None,
+            },
+        ),
+    )
+
+
+_HANDLERS["AddField"] = _handle_add_field

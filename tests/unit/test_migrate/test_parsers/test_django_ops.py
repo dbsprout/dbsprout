@@ -97,3 +97,102 @@ class TestDeleteModel:
         changes = DjangoMigrationParser().detect_changes(root)
         assert changes[-1].change_type is SchemaChangeType.TABLE_REMOVED
         assert changes[-1].table_name == "blog_post"
+
+
+class TestAddField:
+    def test_add_plain_column(self, tmp_path: Path) -> None:
+        create = "migrations.CreateModel(name='Post', fields=[('id', models.AutoField())]),"
+        add = (
+            "migrations.AddField(model_name='Post', name='title',"
+            " field=models.CharField(max_length=200)),"
+        )
+        root = build_django_project(
+            tmp_path,
+            apps={
+                "blog": [
+                    ("0001_initial", _mig(create)),
+                    ("0002_add_title", _mig(add)),
+                ]
+            },
+        )
+        changes = DjangoMigrationParser().detect_changes(root)
+        added = [c for c in changes if c.change_type is SchemaChangeType.COLUMN_ADDED]
+        assert len(added) == 1
+        assert added[0].table_name == "blog_post"
+        assert added[0].column_name == "title"
+        assert "CharField" in added[0].detail["django_type"]
+        assert added[0].detail["nullable"] is False
+
+    def test_add_foreign_key_emits_both_changes(self, tmp_path: Path) -> None:
+        create_user = "migrations.CreateModel(name='User', fields=[('id', models.AutoField())]),"
+        create_post = "migrations.CreateModel(name='Post', fields=[('id', models.AutoField())]),"
+        add_fk = (
+            "migrations.AddField("
+            "model_name='Post', name='author', "
+            "field=models.ForeignKey('accounts.User', on_delete=models.CASCADE)"
+            "),"
+        )
+        root = build_django_project(
+            tmp_path,
+            apps={
+                "accounts": [("0001_initial", _mig(create_user))],
+                "blog": [
+                    (
+                        "0001_initial",
+                        _mig(create_post).replace(
+                            "dependencies = []",
+                            "dependencies = [('accounts', '0001_initial')]",
+                        ),
+                    ),
+                    (
+                        "0002_add_author",
+                        _mig(add_fk).replace(
+                            "dependencies = []",
+                            "dependencies = [('blog', '0001_initial'),"
+                            " ('accounts', '0001_initial')]",
+                        ),
+                    ),
+                ],
+            },
+        )
+        changes = DjangoMigrationParser().detect_changes(root)
+        kinds = [c.change_type for c in changes]
+        assert SchemaChangeType.COLUMN_ADDED in kinds
+        assert SchemaChangeType.FOREIGN_KEY_ADDED in kinds
+        fk = next(c for c in changes if c.change_type is SchemaChangeType.FOREIGN_KEY_ADDED)
+        assert fk.detail["ref_table"] == "accounts_user"
+
+    def test_add_m2m_emits_through_table(self, tmp_path: Path) -> None:
+        create_tag = "migrations.CreateModel(name='Tag', fields=[('id', models.AutoField())]),"
+        create_post = "migrations.CreateModel(name='Post', fields=[('id', models.AutoField())]),"
+        add_m2m = (
+            "migrations.AddField("
+            "model_name='Post', name='tags', "
+            "field=models.ManyToManyField('Tag')"
+            "),"
+        )
+        root = build_django_project(
+            tmp_path,
+            apps={
+                "blog": [
+                    ("0001_initial", _mig(create_tag + "\n" + create_post)),
+                    (
+                        "0002_tags",
+                        _mig(add_m2m).replace(
+                            "dependencies = []",
+                            "dependencies = [('blog', '0001_initial')]",
+                        ),
+                    ),
+                ]
+            },
+        )
+        changes = DjangoMigrationParser().detect_changes(root)
+        through = [
+            c
+            for c in changes
+            if c.change_type is SchemaChangeType.TABLE_ADDED and c.table_name == "blog_post_tags"
+        ]
+        assert len(through) == 1
+        fks = through[0].detail["foreign_keys"]
+        ref_tables = sorted(fk["ref_table"] for fk in fks)
+        assert ref_tables == ["blog_post", "blog_tag"]
