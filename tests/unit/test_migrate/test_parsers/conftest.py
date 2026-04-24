@@ -93,6 +93,42 @@ def build_flyway_project(
 
 
 # ---------------------------------------------------------------------------
+# Prisma helpers
+# ---------------------------------------------------------------------------
+
+
+def build_prisma_project(
+    tmp_path: Path,
+    migrations: dict[str, str],
+    *,
+    provider: str | None = "postgresql",
+    migrations_dir: str = "prisma/migrations",
+) -> Path:
+    """Write a minimal Prisma project tree to ``tmp_path``.
+
+    ``migrations`` maps migration subdirectory stem (e.g. ``"20240101000000_init"``)
+    to the SQL body. Each entry writes ``{migrations_dir}/{stem}/migration.sql``.
+
+    When ``provider`` is non-None a ``{migrations_dir}/migration_lock.toml``
+    is written with ``provider = "<value>"``. Pass ``provider=None`` to exercise
+    the missing-lock-file code path. Returns the project root (equal to
+    ``tmp_path``).
+    """
+    mig_root = tmp_path / migrations_dir
+    mig_root.mkdir(parents=True, exist_ok=True)
+    for stem, body in migrations.items():
+        sub = mig_root / stem
+        sub.mkdir(parents=True, exist_ok=True)
+        (sub / "migration.sql").write_text(body, encoding="utf-8")
+    if provider is not None:
+        (mig_root / "migration_lock.toml").write_text(
+            f'provider = "{provider}"\n',
+            encoding="utf-8",
+        )
+    return tmp_path
+
+
+# ---------------------------------------------------------------------------
 # Liquibase helpers
 # ---------------------------------------------------------------------------
 
