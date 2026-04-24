@@ -69,6 +69,34 @@ def assert_change(
 # ---------------------------------------------------------------------------
 
 
+# ---------------------------------------------------------------------------
+# Flyway helpers
+# ---------------------------------------------------------------------------
+
+
+def build_flyway_project(
+    tmp_path: Path,
+    migrations: dict[str, str],
+    location: str = "db/migration",
+) -> Path:
+    """Write a minimal Flyway project tree to ``tmp_path``.
+
+    ``migrations`` maps ``file_stem`` (e.g. ``"V1__initial"``) to the SQL body.
+    ``location`` is the path (relative to ``tmp_path``) where files are placed.
+    Returns the project root (equal to ``tmp_path``).
+    """
+    mig_dir = tmp_path / location
+    mig_dir.mkdir(parents=True, exist_ok=True)
+    for stem, body in migrations.items():
+        (mig_dir / f"{stem}.sql").write_text(body, encoding="utf-8")
+    return tmp_path
+
+
+# ---------------------------------------------------------------------------
+# Alembic helpers
+# ---------------------------------------------------------------------------
+
+
 def run_upgrade_body(body: str) -> list[SchemaChange]:
     """Parse a synthetic Alembic upgrade body, returning the SchemaChange list.
 
