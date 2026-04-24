@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog xmlns="http://www.liquibase.org/xml/ns/dbchangelog">
+  <changeSet id="c1" author="alice">
+    <createTable tableName="users">
+      <column name="id" type="BIGINT">
+        <constraints primaryKey="true" nullable="false"/>
+      </column>
+      <column name="email" type="VARCHAR(255)">
+        <constraints nullable="false"/>
+      </column>
+    </createTable>
+  </changeSet>
+  <changeSet id="c2" author="alice">
+    <createTable tableName="orders">
+      <column name="id" type="BIGINT">
+        <constraints primaryKey="true"/>
+      </column>
+      <column name="user_id" type="BIGINT"/>
+    </createTable>
+    <addForeignKeyConstraint
+      baseTableName="orders" baseColumnNames="user_id"
+      referencedTableName="users" referencedColumnNames="id"
+      constraintName="fk_orders_user"/>
+    <createIndex tableName="orders" indexName="ix_orders_user">
+      <column name="user_id"/>
+    </createIndex>
+  </changeSet>
+</databaseChangeLog>
