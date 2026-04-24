@@ -327,6 +327,21 @@ def _handle_create_model(
             },
         ),
     )
+    # Emit standalone FOREIGN_KEY_ADDED for each FK defined in the initial fields.
+    for fk in fk_dicts:
+        col = fk["column"]
+        out.append(
+            SchemaChange(
+                change_type=SchemaChangeType.FOREIGN_KEY_ADDED,
+                table_name=table_name,
+                column_name=str(col),
+                detail={
+                    "ref_table": fk["ref_table"],
+                    "local_cols": [col],
+                    "remote_cols": fk["ref_columns"],
+                },
+            ),
+        )
 
 
 def _handle_delete_model(
