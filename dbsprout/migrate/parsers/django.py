@@ -586,3 +586,55 @@ def _emit_m2m_through(
 
 
 _HANDLERS["AddField"] = _handle_add_field
+
+
+# ---------------------------------------------------------------------------
+# Task 9: RemoveField handler
+# ---------------------------------------------------------------------------
+
+
+def _handle_remove_field(
+    op: ast.Call,
+    *,
+    mig: _ParsedMigration,
+    tables: _TableNameLedger,
+    fields: _FieldLedger,
+    out: list[SchemaChange],
+) -> None:
+    from dbsprout.migrate.models import SchemaChangeType  # noqa: PLC0415
+
+    kw = _kwargs(op)
+    model_node = kw.get("model_name")
+    name_node = kw.get("name")
+    if not (
+        isinstance(model_node, ast.Constant)
+        and isinstance(model_node.value, str)
+        and isinstance(name_node, ast.Constant)
+        and isinstance(name_node.value, str)
+    ):
+        return
+    model_name: str = model_node.value
+    column_name: str = name_node.value
+    table_name = tables.get(
+        (mig.app_label, model_name), _default_table_name(mig.app_label, model_name)
+    )
+    prev = fields.pop((mig.app_label, model_name, column_name), None)
+    out.append(
+        SchemaChange(
+            change_type=SchemaChangeType.COLUMN_REMOVED,
+            table_name=table_name,
+            column_name=column_name,
+        ),
+    )
+    if prev is not None and prev.is_fk:
+        out.append(
+            SchemaChange(
+                change_type=SchemaChangeType.FOREIGN_KEY_REMOVED,
+                table_name=table_name,
+                column_name=column_name,
+                detail={"ref_table": prev.ref_table},
+            ),
+        )
+
+
+_HANDLERS["RemoveField"] = _handle_remove_field

@@ -196,3 +196,62 @@ class TestAddField:
         fks = through[0].detail["foreign_keys"]
         ref_tables = sorted(fk["ref_table"] for fk in fks)
         assert ref_tables == ["blog_post", "blog_tag"]
+
+
+class TestRemoveField:
+    def test_remove_plain_column(self, tmp_path: Path) -> None:
+        create = (
+            "migrations.CreateModel(name='Post', fields=["
+            "('id', models.AutoField()), ('subtitle', models.CharField(max_length=100))"
+            "]),"
+        )
+        remove = "migrations.RemoveField(model_name='Post', name='subtitle'),"
+        root = build_django_project(
+            tmp_path,
+            apps={
+                "blog": [
+                    ("0001_initial", _mig(create)),
+                    ("0002_drop", _mig(remove)),
+                ]
+            },
+        )
+        changes = DjangoMigrationParser().detect_changes(root)
+        removed = [c for c in changes if c.change_type is SchemaChangeType.COLUMN_REMOVED]
+        assert len(removed) == 1
+        assert removed[0].table_name == "blog_post"
+        assert removed[0].column_name == "subtitle"
+
+    def test_remove_fk_emits_fk_removed(self, tmp_path: Path) -> None:
+        create_user = "migrations.CreateModel(name='User', fields=[('id', models.AutoField())]),"
+        create_post = (
+            "migrations.CreateModel(name='Post', fields=["
+            "('id', models.AutoField()),"
+            "('author', models.ForeignKey('accounts.User', on_delete=models.CASCADE))"
+            "]),"
+        )
+        remove = "migrations.RemoveField(model_name='Post', name='author'),"
+        root = build_django_project(
+            tmp_path,
+            apps={
+                "accounts": [("0001_initial", _mig(create_user))],
+                "blog": [
+                    (
+                        "0001_initial",
+                        _mig(create_post).replace(
+                            "dependencies = []",
+                            "dependencies = [('accounts', '0001_initial')]",
+                        ),
+                    ),
+                    (
+                        "0002_drop",
+                        _mig(remove).replace(
+                            "dependencies = []",
+                            "dependencies = [('blog', '0001_initial')]",
+                        ),
+                    ),
+                ],
+            },
+        )
+        changes = DjangoMigrationParser().detect_changes(root)
+        kinds = [c.change_type for c in changes]
+        assert SchemaChangeType.FOREIGN_KEY_REMOVED in kinds
