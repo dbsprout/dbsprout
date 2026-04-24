@@ -415,3 +415,30 @@ class TestIncludeAllSecurity:
         )
         result = LiquibaseMigrationParser().detect_changes(project_root)
         assert result == []
+
+
+class TestIncludePathEscape:
+    def test_include_escaping_project_root_raises(self, tmp_path: Path) -> None:
+        outside_dir = tmp_path / "outside_project"
+        outside_dir.mkdir()
+        external_file = outside_dir / "secret.xml"
+        external_file.write_text(
+            '<?xml version="1.0" encoding="UTF-8"?>\n'
+            '<databaseChangeLog xmlns="http://www.liquibase.org/xml/ns/dbchangelog">\n'
+            '  <changeSet id="c_ext" author="alice">\n'
+            '    <createTable tableName="should_not_appear"/>\n'
+            "  </changeSet>\n"
+            "</databaseChangeLog>\n",
+            encoding="utf-8",
+        )
+        project_root = tmp_path / "project"
+        project_root.mkdir()
+        master_body = (
+            '<?xml version="1.0" encoding="UTF-8"?>\n'
+            '<databaseChangeLog xmlns="http://www.liquibase.org/xml/ns/dbchangelog">\n'
+            '  <include file="../outside_project/secret.xml" relativeToChangelogFile="true"/>\n'
+            "</databaseChangeLog>\n"
+        )
+        (project_root / "changelog.xml").write_text(master_body, encoding="utf-8")
+        with pytest.raises(MigrationParseError, match="escapes project root"):
+            LiquibaseMigrationParser().detect_changes(project_root)

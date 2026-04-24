@@ -174,6 +174,12 @@ def _resolve_include(
     relative = str(rel_attr or "false").lower() == "true"
     base: Path = parent.parent if relative else project_path
     target: Path = (base / file_attr).resolve()
+    project_root = project_path.resolve()
+    if not _is_contained(target, project_root):
+        raise MigrationParseError(
+            f"<include file='{file_attr}'> from {parent} escapes project root {project_root}",
+            file_path=parent,
+        )
     if not target.is_file():
         raise MigrationParseError(
             f"<include file='{file_attr}'> from {parent} not found at {target}",
