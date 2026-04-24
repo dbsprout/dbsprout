@@ -484,9 +484,81 @@ def _handle_alter_column(
     return out
 
 
+def _handle_add_constraint(
+    table_name: str,
+    action: exp.AddConstraint,
+    ledger: _FKLedger,
+) -> list[SchemaChange]:
+    # In sqlglot >=25, AddConstraint.expressions holds the Constraint node(s).
+    fk: exp.ForeignKey | None = None
+    constraint_name: str | None = None
+    for expr in action.expressions:
+        if isinstance(expr, exp.Constraint):
+            constraint_name = _strip_quotes(expr.name) if expr.name else None
+            for inner in expr.expressions:
+                if isinstance(inner, exp.ForeignKey):
+                    fk = inner
+                    break
+        elif isinstance(expr, exp.ForeignKey):
+            fk = expr
+    if fk is None:
+        logger.debug("ADD CONSTRAINT on %s is not a FK; skipping", table_name)
+        return []
+    local_cols = [_strip_quotes(e.name) for e in (fk.args.get("expressions") or [])]
+    ref = fk.args.get("reference")
+    ref_table = ""
+    remote_cols: list[str] = []
+    if isinstance(ref, exp.Reference):
+        ref_this = ref.this
+        if isinstance(ref_this, exp.Schema):
+            # Schema wraps Table
+            tbl = ref_this.this
+            ref_table = _split_qualified(tbl.name)[1] if isinstance(tbl, exp.Table) else ""
+            remote_cols = [_strip_quotes(e.name) for e in (ref_this.args.get("expressions") or [])]
+        elif isinstance(ref_this, exp.Table):
+            ref_table = _split_qualified(ref_this.name)[1]
+            remote_cols = [_strip_quotes(e.name) for e in (ref.args.get("expressions") or [])]
+    change = SchemaChange(
+        change_type=SchemaChangeType.FOREIGN_KEY_ADDED,
+        table_name=table_name,
+        detail={
+            "constraint_name": constraint_name,
+            "local_cols": local_cols,
+            "ref_table": ref_table,
+            "remote_cols": remote_cols,
+        },
+    )
+    ledger.record(change)
+    return [change]
+
+
+def _handle_drop_constraint(
+    table_name: str,
+    action: exp.Drop,
+    ledger: _FKLedger,
+) -> list[SchemaChange]:
+    name_node = action.this
+    name = _strip_quotes(name_node.name) if name_node else ""
+    existing = ledger.resolve(table_name, name)
+    if existing is None:
+        logger.debug(
+            "DROP CONSTRAINT %s on %s not in FK ledger; skipping (likely CHECK/UNIQUE)",
+            name,
+            table_name,
+        )
+        return []
+    return [
+        SchemaChange(
+            change_type=SchemaChangeType.FOREIGN_KEY_REMOVED,
+            table_name=table_name,
+            detail={"constraint_name": name},
+        )
+    ]
+
+
 def _handle_alter_table(
     node: exp.Alter,
-    ledger: _FKLedger,  # noqa: ARG001 — used in later tasks (add constraint)
+    ledger: _FKLedger,
 ) -> list[SchemaChange]:
     out: list[SchemaChange] = []
     table_expr = node.this
@@ -499,10 +571,14 @@ def _handle_alter_table(
             out.extend(_handle_add_column(table_name, schema_name, action))
         elif isinstance(action, exp.AlterColumn):
             out.extend(_handle_alter_column(table_name, action))
+        elif isinstance(action, exp.AddConstraint):
+            out.extend(_handle_add_constraint(table_name, action, ledger))
         elif isinstance(action, exp.Drop):
             drop_kind = action.args.get("kind") or ""
             if isinstance(drop_kind, str) and drop_kind.upper() == "COLUMN":
                 out.extend(_handle_drop_column(table_name, action))
+            elif isinstance(drop_kind, str) and drop_kind.upper() == "CONSTRAINT":
+                out.extend(_handle_drop_constraint(table_name, action, ledger))
             else:
                 logger.debug("skipping unsupported ALTER TABLE DROP action: kind=%s", drop_kind)
         else:

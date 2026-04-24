@@ -209,3 +209,51 @@ class TestAlterColumn:
         changes = _walk_statements(stmts, dialect="postgres", ledger=_FKLedger())
         assert changes[0].change_type is SchemaChangeType.COLUMN_DEFAULT_CHANGED
         assert changes[0].new_value is None
+
+
+class TestAddDropConstraint:
+    def test_add_fk_constraint(self) -> None:
+        fk_add_sql = (
+            "ALTER TABLE books ADD CONSTRAINT fk_author"
+            " FOREIGN KEY (author_id) REFERENCES authors(id);"
+        )
+        stmts = sqlglot.parse(fk_add_sql, read="postgres")
+        ledger = _FKLedger()
+        changes = _walk_statements(stmts, dialect="postgres", ledger=ledger)
+        assert len(changes) == 1
+        c = changes[0]
+        assert c.change_type is SchemaChangeType.FOREIGN_KEY_ADDED
+        assert c.table_name == "books"
+        assert c.detail["constraint_name"] == "fk_author"
+        assert c.detail["ref_table"] == "authors"
+        assert ledger.resolve("books", "fk_author") is not None
+
+    def test_drop_fk_resolved_by_ledger(self) -> None:
+        fk_add_sql = (
+            "ALTER TABLE books ADD CONSTRAINT fk_author"
+            " FOREIGN KEY (author_id) REFERENCES authors(id);"
+        )
+        add = sqlglot.parse(fk_add_sql, read="postgres")
+        drop = sqlglot.parse(
+            "ALTER TABLE books DROP CONSTRAINT fk_author;",
+            read="postgres",
+        )
+        ledger = _FKLedger()
+        _walk_statements(add, dialect="postgres", ledger=ledger)
+        changes = _walk_statements(drop, dialect="postgres", ledger=ledger)
+        assert len(changes) == 1
+        assert changes[0].change_type is SchemaChangeType.FOREIGN_KEY_REMOVED
+        assert changes[0].detail["constraint_name"] == "fk_author"
+
+    def test_drop_unknown_constraint_skipped(
+        self,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        stmts = sqlglot.parse(
+            "ALTER TABLE books DROP CONSTRAINT chk_price;",
+            read="postgres",
+        )
+        with caplog.at_level("DEBUG", logger="dbsprout.migrate.parsers.flyway"):
+            changes = _walk_statements(stmts, dialect="postgres", ledger=_FKLedger())
+        assert changes == []
+        assert "chk_price" in caplog.text
