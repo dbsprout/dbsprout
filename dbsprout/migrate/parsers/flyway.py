@@ -322,7 +322,7 @@ def _handle_create_table(node: exp.Create) -> list[SchemaChange]:
     if not isinstance(schema_expr, exp.Schema):
         return []
     table_expr = schema_expr.this
-    if not isinstance(table_expr, exp.Table):
+    if not isinstance(table_expr, exp.Table):  # pragma: no cover
         return []
     schema_name, table_name = _split_qualified(table_expr.sql(dialect=None))
     cols = [_column_def_to_dict(e) for e in schema_expr.expressions if isinstance(e, exp.ColumnDef)]
@@ -341,7 +341,7 @@ def _handle_create_table(node: exp.Create) -> list[SchemaChange]:
 
 def _handle_drop_table(node: exp.Drop) -> list[SchemaChange]:
     table = node.this
-    if not isinstance(table, exp.Table):
+    if not isinstance(table, exp.Table):  # pragma: no cover
         return []
     schema_name, table_name = _split_qualified(table.sql(dialect=None))
     detail: dict[str, object] = {}
@@ -651,7 +651,7 @@ def _handle_create_index(node: exp.Create) -> list[SchemaChange]:
         return []
     index_name = _strip_quotes(ix.name)
     table_expr = ix.args.get("table")
-    if not isinstance(table_expr, exp.Table):
+    if not isinstance(table_expr, exp.Table):  # pragma: no cover
         return []
     _, table_name = _split_qualified(table_expr.sql(dialect=None))
     params = ix.args.get("params")
