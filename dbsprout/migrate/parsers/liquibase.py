@@ -11,6 +11,7 @@ from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
+from defusedxml import DefusedXmlException  # type: ignore[import-untyped]
 from defusedxml.ElementTree import (  # type: ignore[import-untyped]
     ParseError as DefusedXMLParseError,
 )
@@ -24,14 +25,17 @@ from dbsprout.migrate.parsers import MigrationParseError
 if TYPE_CHECKING:
     from pathlib import Path
 
-    # Avoid ``from xml.etree...`` literal in source — the S-059 security test
-    # checks for that substring. Liquibase handlers only use duck-typed element
-    # interfaces (``.tag``, ``.get``, iteration) so ``Any`` is adequate here.
+    # Use ``Any`` for the element type — the stdlib etree module is never
+    # imported here (the S-059 security test enforces that). Handlers only
+    # use duck-typed element interfaces (``.tag``, ``.get``, iteration).
     Element = Any
 
 logger = logging.getLogger(__name__)
 
 _MAX_CHANGELOG_BYTES = 1024 * 1024  # 1 MB per-file cap
+
+_V1_SUPPORTED_SUFFIX = ".xml"
+_V1_UNSUPPORTED_SUFFIXES = frozenset({".yaml", ".yml", ".json", ".sql"})
 
 _DEFAULT_CHANGELOG_PATHS: tuple[str, ...] = (
     "db/changelog/db.changelog-master.xml",
@@ -68,6 +72,18 @@ class LiquibaseMigrationParser:
             )
             raise MigrationParseError(
                 f"no Liquibase changelog found under {project_path}; searched: {searched}",
+            )
+        suffix = root.suffix.lower()
+        if suffix in _V1_UNSUPPORTED_SUFFIXES:
+            raise MigrationParseError(
+                f"Liquibase changelog format '{suffix}' not supported in v1;"
+                f" only {_V1_SUPPORTED_SUFFIX} is supported (see docs/stories/S-059.md)",
+                file_path=root,
+            )
+        if suffix != _V1_SUPPORTED_SUFFIX:
+            raise MigrationParseError(
+                f"unknown Liquibase changelog extension '{suffix}'; expected .xml",
+                file_path=root,
             )
         ledger = _FKLedger()
         seen_changesets: dict[tuple[str, str], Path] = {}
@@ -125,7 +141,7 @@ def _walk_changelog(
     visited.add(resolved)
     try:
         tree = defused_parse(str(root))
-    except DefusedXMLParseError as exc:
+    except (DefusedXMLParseError, DefusedXmlException) as exc:
         raise MigrationParseError(
             f"could not parse {root}: {exc}",
             file_path=root,
