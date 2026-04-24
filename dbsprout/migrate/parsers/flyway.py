@@ -420,9 +420,73 @@ def _handle_drop_column(table_name: str, drop: exp.Drop) -> list[SchemaChange]:
     ]
 
 
+def _handle_alter_column(
+    table_name: str,
+    action: exp.AlterColumn,
+) -> list[SchemaChange]:
+    col_name = _strip_quotes(action.this.name) if action.this else ""
+    out: list[SchemaChange] = []
+    dtype = action.args.get("dtype")
+    if isinstance(dtype, exp.DataType):
+        out.append(
+            SchemaChange(
+                change_type=SchemaChangeType.COLUMN_TYPE_CHANGED,
+                table_name=table_name,
+                column_name=col_name,
+                new_value=dtype.sql(dialect=None),
+            )
+        )
+    allow_null = action.args.get("allow_null")
+    if allow_null is False:
+        out.append(
+            SchemaChange(
+                change_type=SchemaChangeType.COLUMN_NULLABILITY_CHANGED,
+                table_name=table_name,
+                column_name=col_name,
+                new_value="NOT NULL",
+            )
+        )
+    elif allow_null is True:
+        out.append(
+            SchemaChange(
+                change_type=SchemaChangeType.COLUMN_NULLABILITY_CHANGED,
+                table_name=table_name,
+                column_name=col_name,
+                new_value="NULL",
+            )
+        )
+    # SET DEFAULT or DROP DEFAULT
+    if "default" in action.args:
+        default_expr = action.args.get("default")
+        new_value = (
+            default_expr.sql(dialect=None) if isinstance(default_expr, exp.Expression) else None
+        )
+        out.append(
+            SchemaChange(
+                change_type=SchemaChangeType.COLUMN_DEFAULT_CHANGED,
+                table_name=table_name,
+                column_name=col_name,
+                new_value=new_value,
+            )
+        )
+    elif action.args.get("drop") is True and dtype is None and allow_null is None:
+        # DROP DEFAULT (no "default" key, but drop=True and no other dimension)
+        out.append(
+            SchemaChange(
+                change_type=SchemaChangeType.COLUMN_DEFAULT_CHANGED,
+                table_name=table_name,
+                column_name=col_name,
+                new_value=None,
+            )
+        )
+    if not out:
+        logger.debug("ALTER COLUMN %s on %s produced no recognised dimension", col_name, table_name)
+    return out
+
+
 def _handle_alter_table(
     node: exp.Alter,
-    ledger: _FKLedger,  # noqa: ARG001 — used in later tasks (add constraint, alter column)
+    ledger: _FKLedger,  # noqa: ARG001 — used in later tasks (add constraint)
 ) -> list[SchemaChange]:
     out: list[SchemaChange] = []
     table_expr = node.this
@@ -433,6 +497,8 @@ def _handle_alter_table(
     for action in actions:
         if isinstance(action, exp.ColumnDef):
             out.extend(_handle_add_column(table_name, schema_name, action))
+        elif isinstance(action, exp.AlterColumn):
+            out.extend(_handle_alter_column(table_name, action))
         elif isinstance(action, exp.Drop):
             drop_kind = action.args.get("kind") or ""
             if isinstance(drop_kind, str) and drop_kind.upper() == "COLUMN":

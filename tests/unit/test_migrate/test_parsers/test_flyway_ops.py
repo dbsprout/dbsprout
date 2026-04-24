@@ -167,3 +167,45 @@ class TestAddDropColumn:
         assert c.change_type is SchemaChangeType.COLUMN_REMOVED
         assert c.table_name == "users"
         assert c.column_name == "legacy_flag"
+
+
+class TestAlterColumn:
+    def test_alter_type(self) -> None:
+        stmts = sqlglot.parse("ALTER TABLE t ALTER COLUMN c TYPE BIGINT;", read="postgres")
+        changes = _walk_statements(stmts, dialect="postgres", ledger=_FKLedger())
+        assert len(changes) == 1
+        c = changes[0]
+        assert c.change_type is SchemaChangeType.COLUMN_TYPE_CHANGED
+        assert c.column_name == "c"
+        assert c.new_value is not None
+        assert c.new_value.upper() == "BIGINT"
+
+    def test_alter_set_not_null(self) -> None:
+        stmts = sqlglot.parse("ALTER TABLE t ALTER COLUMN c SET NOT NULL;", read="postgres")
+        changes = _walk_statements(stmts, dialect="postgres", ledger=_FKLedger())
+        assert changes[0].change_type is SchemaChangeType.COLUMN_NULLABILITY_CHANGED
+        assert changes[0].new_value == "NOT NULL"
+
+    def test_alter_drop_not_null(self) -> None:
+        stmts = sqlglot.parse("ALTER TABLE t ALTER COLUMN c DROP NOT NULL;", read="postgres")
+        changes = _walk_statements(stmts, dialect="postgres", ledger=_FKLedger())
+        assert changes[0].change_type is SchemaChangeType.COLUMN_NULLABILITY_CHANGED
+        assert changes[0].new_value == "NULL"
+
+    def test_alter_set_default(self) -> None:
+        stmts = sqlglot.parse(
+            "ALTER TABLE t ALTER COLUMN c SET DEFAULT 42;",
+            read="postgres",
+        )
+        changes = _walk_statements(stmts, dialect="postgres", ledger=_FKLedger())
+        assert changes[0].change_type is SchemaChangeType.COLUMN_DEFAULT_CHANGED
+        assert changes[0].new_value == "42"
+
+    def test_alter_drop_default(self) -> None:
+        stmts = sqlglot.parse(
+            "ALTER TABLE t ALTER COLUMN c DROP DEFAULT;",
+            read="postgres",
+        )
+        changes = _walk_statements(stmts, dialect="postgres", ledger=_FKLedger())
+        assert changes[0].change_type is SchemaChangeType.COLUMN_DEFAULT_CHANGED
+        assert changes[0].new_value is None
