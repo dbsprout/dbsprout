@@ -127,3 +127,43 @@ class TestCreateDropTable:
         assert len(changes) == 1
         assert changes[0].change_type is SchemaChangeType.TABLE_REMOVED
         assert changes[0].table_name == "authors"
+
+
+class TestAddDropColumn:
+    def test_add_column(self) -> None:
+        stmts = sqlglot.parse(
+            "ALTER TABLE users ADD COLUMN email VARCHAR(254) NOT NULL DEFAULT '';",
+            read="postgres",
+        )
+        changes = _walk_statements(stmts, dialect="postgres", ledger=_FKLedger())
+        assert len(changes) == 1
+        c = changes[0]
+        assert c.change_type is SchemaChangeType.COLUMN_ADDED
+        assert c.table_name == "users"
+        assert c.column_name == "email"
+        assert c.detail["sql_type"].upper().startswith("VARCHAR")
+        assert c.detail["nullable"] is False
+        assert c.detail["default"] is not None
+
+    def test_add_column_with_inline_fk(self) -> None:
+        stmts = sqlglot.parse(
+            "ALTER TABLE books ADD COLUMN author_id INT REFERENCES authors(id);",
+            read="postgres",
+        )
+        changes = _walk_statements(stmts, dialect="postgres", ledger=_FKLedger())
+        # Two changes: COLUMN_ADDED + FOREIGN_KEY_ADDED
+        kinds = [c.change_type for c in changes]
+        assert SchemaChangeType.COLUMN_ADDED in kinds
+        assert SchemaChangeType.FOREIGN_KEY_ADDED in kinds
+        fk = next(c for c in changes if c.change_type is SchemaChangeType.FOREIGN_KEY_ADDED)
+        assert fk.detail["ref_table"] == "authors"
+        assert fk.detail["local_cols"] == ["author_id"]
+
+    def test_drop_column(self) -> None:
+        stmts = sqlglot.parse("ALTER TABLE users DROP COLUMN legacy_flag;", read="postgres")
+        changes = _walk_statements(stmts, dialect="postgres", ledger=_FKLedger())
+        assert len(changes) == 1
+        c = changes[0]
+        assert c.change_type is SchemaChangeType.COLUMN_REMOVED
+        assert c.table_name == "users"
+        assert c.column_name == "legacy_flag"

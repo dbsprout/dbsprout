@@ -355,6 +355,98 @@ def _handle_drop_table(node: exp.Drop) -> list[SchemaChange]:
 # ---------------------------------------------------------------------------
 
 
+def _handle_add_column(
+    table_name: str,
+    schema_name: str | None,
+    col: exp.ColumnDef,
+) -> list[SchemaChange]:
+    col_dict = _column_def_to_dict(col)
+    detail: dict[str, object] = {k: v for k, v in col_dict.items() if k != "name"}
+    if schema_name:
+        detail["schema"] = schema_name
+    changes: list[SchemaChange] = [
+        SchemaChange(
+            change_type=SchemaChangeType.COLUMN_ADDED,
+            table_name=table_name,
+            column_name=str(col_dict["name"]),
+            detail=detail,
+        )
+    ]
+    # Inline REFERENCES → emit additional FOREIGN_KEY_ADDED
+    for c in col.args.get("constraints") or []:
+        kind = c.args.get("kind")
+        if isinstance(kind, exp.Reference):
+            ref = kind.args["this"]
+            if isinstance(ref, exp.Schema):
+                ref_table_node = ref.this
+                ref_table = (
+                    _split_qualified(ref_table_node.name)[1]
+                    if isinstance(ref_table_node, exp.Table)
+                    else ""
+                )
+                remote_cols = [
+                    _strip_quotes(rc.name) for rc in (ref.args.get("expressions") or [])
+                ] or ["id"]
+            else:
+                ref_name = ref.name if hasattr(ref, "name") else str(ref)
+                _, ref_table = _split_qualified(ref_name)
+                remote_cols = [
+                    _strip_quotes(rc.name) for rc in (ref.args.get("expressions") or [])
+                ] or ["id"]
+            changes.append(
+                SchemaChange(
+                    change_type=SchemaChangeType.FOREIGN_KEY_ADDED,
+                    table_name=table_name,
+                    detail={
+                        "constraint_name": None,
+                        "local_cols": [col_dict["name"]],
+                        "ref_table": ref_table,
+                        "remote_cols": remote_cols,
+                    },
+                )
+            )
+    return changes
+
+
+def _handle_drop_column(table_name: str, drop: exp.Drop) -> list[SchemaChange]:
+    col_expr = drop.this
+    col_name = _strip_quotes(col_expr.name) if col_expr else ""
+    return [
+        SchemaChange(
+            change_type=SchemaChangeType.COLUMN_REMOVED,
+            table_name=table_name,
+            column_name=col_name,
+        )
+    ]
+
+
+def _handle_alter_table(
+    node: exp.Alter,
+    ledger: _FKLedger,  # noqa: ARG001 — used in later tasks (add constraint, alter column)
+) -> list[SchemaChange]:
+    out: list[SchemaChange] = []
+    table_expr = node.this
+    schema_name, table_name = _split_qualified(
+        table_expr.sql(dialect=None) if isinstance(table_expr, exp.Table) else ""
+    )
+    actions = node.args.get("actions") or []
+    for action in actions:
+        if isinstance(action, exp.ColumnDef):
+            out.extend(_handle_add_column(table_name, schema_name, action))
+        elif isinstance(action, exp.Drop):
+            drop_kind = action.args.get("kind") or ""
+            if isinstance(drop_kind, str) and drop_kind.upper() == "COLUMN":
+                out.extend(_handle_drop_column(table_name, action))
+            else:
+                logger.debug("skipping unsupported ALTER TABLE DROP action: kind=%s", drop_kind)
+        else:
+            logger.debug(
+                "skipping unsupported ALTER TABLE action: %s",
+                type(action).__name__,
+            )
+    return out
+
+
 def _walk_statements(
     stmts: list[exp.Expression],
     *,
@@ -368,12 +460,13 @@ def _walk_statements(
             out.extend(_handle_create_table(stmt))
         elif isinstance(stmt, exp.Drop) and kind == "TABLE":
             out.extend(_handle_drop_table(stmt))
+        elif isinstance(stmt, exp.Alter) and kind == "TABLE":
+            out.extend(_handle_alter_table(stmt, ledger))
         else:
             logger.debug(
                 "skipping unsupported statement: %s kind=%s",
                 type(stmt).__name__,
                 kind or "N/A",
             )
-    _ = ledger  # used in later tasks
     _ = dialect  # used in later tasks
     return out
