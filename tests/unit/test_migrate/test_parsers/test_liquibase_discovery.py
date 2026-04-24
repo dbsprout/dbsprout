@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from pathlib import Path
 
 import pytest
 
@@ -10,9 +10,6 @@ from dbsprout.migrate.models import SchemaChangeType
 from dbsprout.migrate.parsers import MigrationParseError
 from dbsprout.migrate.parsers.liquibase import LiquibaseMigrationParser
 from tests.unit.test_migrate.test_parsers.conftest import build_liquibase_project
-
-if TYPE_CHECKING:
-    from pathlib import Path
 
 
 class TestFixtureHelper:
@@ -250,7 +247,109 @@ def _wrap_ct_with_identity(author: str, cs_id: str, table: str) -> str:
     )
 
 
+class TestFormatRejection:
+    @pytest.mark.parametrize(
+        "name",
+        ["db/changelog/master.yaml", "db/changelog/master.yml", "master.json", "master.sql"],
+    )
+    def test_non_xml_changelog_raises(self, tmp_path: Path, name: str) -> None:
+        project = build_liquibase_project(tmp_path, changelogs={name: "irrelevant"})
+        with pytest.raises(MigrationParseError, match="not supported in v1"):
+            LiquibaseMigrationParser(changelog_file=name).detect_changes(project)
+
+
+class TestSecurity:
+    def test_xxe_payload_rejected(self, tmp_path: Path) -> None:
+        project = build_liquibase_project(
+            tmp_path,
+            changelogs={
+                "changelog.xml": (
+                    '<?xml version="1.0" encoding="UTF-8"?>\n'
+                    '<!DOCTYPE foo [ <!ENTITY xxe SYSTEM "file:///etc/passwd"> ]>\n'
+                    '<databaseChangeLog xmlns="http://www.liquibase.org/xml/ns/dbchangelog">\n'
+                    '  <changeSet id="c1" author="alice">\n'
+                    '    <createTable tableName="&xxe;"/>\n'
+                    "  </changeSet>\n"
+                    "</databaseChangeLog>\n"
+                ),
+            },
+        )
+        with pytest.raises(MigrationParseError):
+            LiquibaseMigrationParser().detect_changes(project)
+
+    def test_oversize_file_skipped(self, tmp_path: Path) -> None:
+        body = (
+            '<?xml version="1.0" encoding="UTF-8"?>\n'
+            '<databaseChangeLog xmlns="http://www.liquibase.org/xml/ns/dbchangelog">\n'
+            + ("<!-- padding -->\n" * 70_000)
+            + "</databaseChangeLog>\n"
+        )
+        project = build_liquibase_project(
+            tmp_path,
+            changelogs={"changelog.xml": body},
+        )
+        assert (project / "changelog.xml").stat().st_size > 1024 * 1024
+        result = LiquibaseMigrationParser().detect_changes(project)
+        assert result == []
+
+    def test_parser_never_imports_stdlib_etree(self) -> None:
+        src = Path("dbsprout/migrate/parsers/liquibase.py").read_text()
+        assert "from xml.etree" not in src
+        assert "import xml.etree" not in src
+
+
 _EMPTY_CHANGELOG = (
     '<?xml version="1.0" encoding="UTF-8"?>\n'
     '<databaseChangeLog xmlns="http://www.liquibase.org/xml/ns/dbchangelog"/>\n'
 )
+
+
+class TestExtraEdgeCases:
+    def test_unknown_extension_raises(self, tmp_path: Path) -> None:
+        project = build_liquibase_project(
+            tmp_path,
+            changelogs={"changelog.txt": "irrelevant"},
+        )
+        with pytest.raises(
+            MigrationParseError,
+            match="unknown Liquibase changelog extension",
+        ):
+            LiquibaseMigrationParser(changelog_file="changelog.txt").detect_changes(project)
+
+    def test_include_all_missing_path_raises(self, tmp_path: Path) -> None:
+        body = (
+            '<?xml version="1.0" encoding="UTF-8"?>\n'
+            '<databaseChangeLog xmlns="http://www.liquibase.org/xml/ns/dbchangelog">\n'
+            '  <includeAll path="missing_dir" relativeToChangelogFile="true"/>\n'
+            "</databaseChangeLog>\n"
+        )
+        project = build_liquibase_project(
+            tmp_path,
+            changelogs={"db/changelog/db.changelog-master.xml": body},
+        )
+        with pytest.raises(MigrationParseError, match="not found at"):
+            LiquibaseMigrationParser().detect_changes(project)
+
+    def test_include_all_skips_oversize_child(self, tmp_path: Path) -> None:
+        master_body = (
+            '<?xml version="1.0" encoding="UTF-8"?>\n'
+            '<databaseChangeLog xmlns="http://www.liquibase.org/xml/ns/dbchangelog">\n'
+            '  <includeAll path="children" relativeToChangelogFile="true"/>\n'
+            "</databaseChangeLog>\n"
+        )
+        child_body = (
+            '<?xml version="1.0" encoding="UTF-8"?>\n'
+            '<databaseChangeLog xmlns="http://www.liquibase.org/xml/ns/dbchangelog">\n'
+            "<!-- " + ("x" * (1024 * 1024 + 1000)) + " -->\n"
+            "</databaseChangeLog>\n"
+        )
+        project = build_liquibase_project(
+            tmp_path,
+            changelogs={
+                "db/changelog/db.changelog-master.xml": master_body,
+                "db/changelog/children/big.xml": child_body,
+            },
+        )
+        assert (project / "db/changelog/children/big.xml").stat().st_size > 1024 * 1024
+        result = LiquibaseMigrationParser().detect_changes(project)
+        assert result == []

@@ -487,3 +487,83 @@ class TestIndex:
         assert change.change_type is SchemaChangeType.INDEX_REMOVED
         assert change.table_name == "users"
         assert (change.detail or {})["index_name"] == "ix_users_email"
+
+
+class TestEdgeCases:
+    def test_drop_table_with_schema_name(self, tmp_path: Path) -> None:
+        project = build_liquibase_project(
+            tmp_path,
+            changelogs={"changelog.xml": _wrap('<dropTable schemaName="app" tableName="orders"/>')},
+        )
+        [change] = LiquibaseMigrationParser().detect_changes(project)
+        assert change.change_type is SchemaChangeType.TABLE_REMOVED
+        assert change.detail == {"schema": "app"}
+
+    def test_create_table_ignores_non_column_children(self, tmp_path: Path) -> None:
+        body = _wrap(
+            '<createTable tableName="users">'
+            "<preConditions/>"
+            '<column name="id" type="BIGINT"/>'
+            "</createTable>"
+        )
+        project = build_liquibase_project(tmp_path, changelogs={"changelog.xml": body})
+        [change] = LiquibaseMigrationParser().detect_changes(project)
+        cols = (change.detail or {})["columns"]
+        assert [c["name"] for c in cols] == ["id"]
+
+    def test_column_ignores_non_constraints_child(self, tmp_path: Path) -> None:
+        body = _wrap(
+            '<createTable tableName="users">'
+            '<column name="id" type="BIGINT"><unknownChild/></column>'
+            "</createTable>"
+        )
+        project = build_liquibase_project(tmp_path, changelogs={"changelog.xml": body})
+        [change] = LiquibaseMigrationParser().detect_changes(project)
+        cols = (change.detail or {})["columns"]
+        assert cols[0]["nullable"] is True
+        assert cols[0]["primary_key"] is False
+
+    def test_add_column_ignores_non_column_children(self, tmp_path: Path) -> None:
+        body = _wrap(
+            '<addColumn tableName="users">'
+            "<comment>note</comment>"
+            '<column name="age" type="INTEGER"/>'
+            "</addColumn>"
+        )
+        project = build_liquibase_project(tmp_path, changelogs={"changelog.xml": body})
+        [change] = LiquibaseMigrationParser().detect_changes(project)
+        assert change.column_name == "age"
+
+    def test_drop_column_nested_ignores_non_column_children(self, tmp_path: Path) -> None:
+        body = _wrap(
+            '<dropColumn tableName="users"><comment>note</comment><column name="age"/></dropColumn>'
+        )
+        project = build_liquibase_project(tmp_path, changelogs={"changelog.xml": body})
+        [change] = LiquibaseMigrationParser().detect_changes(project)
+        assert change.column_name == "age"
+
+    def test_add_default_value_no_attr_is_skipped(self, tmp_path: Path) -> None:
+        project = build_liquibase_project(
+            tmp_path,
+            changelogs={
+                "changelog.xml": _wrap('<addDefaultValue tableName="users" columnName="status"/>'),
+            },
+        )
+        result = LiquibaseMigrationParser().detect_changes(project)
+        assert result == []
+
+    def test_changeset_skips_debug_and_unknown_children(self, tmp_path: Path) -> None:
+        body = (
+            '<?xml version="1.0" encoding="UTF-8"?>\n'
+            f"<databaseChangeLog {_NS}>\n"
+            '  <changeSet id="c1" author="alice">\n'
+            "    <preConditions/>\n"
+            "    <comment>note</comment>\n"
+            "    <unknownChangeType/>\n"
+            '    <createTable tableName="users"/>\n'
+            "  </changeSet>\n"
+            "</databaseChangeLog>\n"
+        )
+        project = build_liquibase_project(tmp_path, changelogs={"changelog.xml": body})
+        changes = LiquibaseMigrationParser().detect_changes(project)
+        assert [c.change_type for c in changes] == [SchemaChangeType.TABLE_ADDED]
