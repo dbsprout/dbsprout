@@ -154,3 +154,44 @@ class TestDropTable:
         [change] = LiquibaseMigrationParser().detect_changes(project)
         assert change.change_type is SchemaChangeType.TABLE_REMOVED
         assert change.table_name == "old_users"
+
+
+class TestRename:
+    def test_rename_table(self, tmp_path: Path) -> None:
+        project = build_liquibase_project(
+            tmp_path,
+            changelogs={
+                "changelog.xml": _wrap(
+                    '<renameTable oldTableName="users" newTableName="accounts"/>'
+                ),
+            },
+        )
+        changes = LiquibaseMigrationParser().detect_changes(project)
+        assert [c.change_type for c in changes] == [
+            SchemaChangeType.TABLE_REMOVED,
+            SchemaChangeType.TABLE_ADDED,
+        ]
+        assert changes[0].table_name == "users"
+        assert (changes[0].detail or {})["rename_of"] == "accounts"
+        assert changes[1].table_name == "accounts"
+        assert (changes[1].detail or {})["rename_of"] == "users"
+
+    def test_rename_column(self, tmp_path: Path) -> None:
+        project = build_liquibase_project(
+            tmp_path,
+            changelogs={
+                "changelog.xml": _wrap(
+                    '<renameColumn tableName="users"'
+                    ' oldColumnName="fullname" newColumnName="display_name"/>'
+                ),
+            },
+        )
+        changes = LiquibaseMigrationParser().detect_changes(project)
+        assert [c.change_type for c in changes] == [
+            SchemaChangeType.COLUMN_REMOVED,
+            SchemaChangeType.COLUMN_ADDED,
+        ]
+        assert changes[0].column_name == "fullname"
+        assert (changes[0].detail or {})["rename_of"] == "display_name"
+        assert changes[1].column_name == "display_name"
+        assert (changes[1].detail or {})["rename_of"] == "fullname"

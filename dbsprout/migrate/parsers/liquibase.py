@@ -279,11 +279,50 @@ def _resolve_column_default(col: Element) -> str | None:
     return None
 
 
+def _handle_rename_table(elem: Element, _ledger: _FKLedger) -> list[SchemaChange]:
+    old = elem.get("oldTableName", "")
+    new = elem.get("newTableName", "")
+    return [
+        SchemaChange(
+            change_type=SchemaChangeType.TABLE_REMOVED,
+            table_name=old,
+            detail={"rename_of": new},
+        ),
+        SchemaChange(
+            change_type=SchemaChangeType.TABLE_ADDED,
+            table_name=new,
+            detail={"rename_of": old},
+        ),
+    ]
+
+
+def _handle_rename_column(elem: Element, _ledger: _FKLedger) -> list[SchemaChange]:
+    table = elem.get("tableName", "")
+    old = elem.get("oldColumnName", "")
+    new = elem.get("newColumnName", "")
+    return [
+        SchemaChange(
+            change_type=SchemaChangeType.COLUMN_REMOVED,
+            table_name=table,
+            column_name=old,
+            detail={"rename_of": new},
+        ),
+        SchemaChange(
+            change_type=SchemaChangeType.COLUMN_ADDED,
+            table_name=table,
+            column_name=new,
+            detail={"rename_of": old},
+        ),
+    ]
+
+
 _OpHandler = Callable[[Any, "_FKLedger"], "list[SchemaChange]"]
 
 _OP_HANDLERS: dict[str, _OpHandler] = {
     "createTable": _handle_create_table,
     "dropTable": _handle_drop_table,
+    "renameTable": _handle_rename_table,
+    "renameColumn": _handle_rename_column,
 }
 
 _DEBUG_SKIP_TAGS: frozenset[str] = frozenset(
