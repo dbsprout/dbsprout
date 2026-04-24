@@ -353,3 +353,65 @@ class TestExtraEdgeCases:
         assert (project / "db/changelog/children/big.xml").stat().st_size > 1024 * 1024
         result = LiquibaseMigrationParser().detect_changes(project)
         assert result == []
+
+
+class TestIncludeAllSecurity:
+    def test_include_all_skips_symlinks(self, tmp_path: Path) -> None:
+        master_body = (
+            '<?xml version="1.0" encoding="UTF-8"?>\n'
+            '<databaseChangeLog xmlns="http://www.liquibase.org/xml/ns/dbchangelog">\n'
+            '  <includeAll path="children" relativeToChangelogFile="true"/>\n'
+            "</databaseChangeLog>\n"
+        )
+        target_body = (
+            '<?xml version="1.0" encoding="UTF-8"?>\n'
+            '<databaseChangeLog xmlns="http://www.liquibase.org/xml/ns/dbchangelog">\n'
+            '  <changeSet id="c_sym" author="alice">\n'
+            '    <createTable tableName="should_not_appear"/>\n'
+            "  </changeSet>\n"
+            "</databaseChangeLog>\n"
+        )
+        project = build_liquibase_project(
+            tmp_path,
+            changelogs={
+                "db/changelog/db.changelog-master.xml": master_body,
+                "outside/symtarget.xml": target_body,
+            },
+        )
+        children_dir = project / "db/changelog/children"
+        children_dir.mkdir(parents=True, exist_ok=True)
+        symlink_path = children_dir / "link.xml"
+        symlink_path.symlink_to(project / "outside/symtarget.xml")
+        result = LiquibaseMigrationParser().detect_changes(project)
+        assert result == []
+
+    def test_include_all_skips_out_of_tree(self, tmp_path: Path) -> None:
+        outside_dir = tmp_path / "outside_project"
+        outside_dir.mkdir()
+        external_child = outside_dir / "external.xml"
+        external_child.write_text(
+            '<?xml version="1.0" encoding="UTF-8"?>\n'
+            '<databaseChangeLog xmlns="http://www.liquibase.org/xml/ns/dbchangelog">\n'
+            '  <changeSet id="c_ext" author="alice">\n'
+            '    <createTable tableName="should_not_appear"/>\n'
+            "  </changeSet>\n"
+            "</databaseChangeLog>\n",
+            encoding="utf-8",
+        )
+        project_root = tmp_path / "project"
+        project_root.mkdir()
+        children_dir = project_root / "db/changelog/children"
+        children_dir.mkdir(parents=True, exist_ok=True)
+        (children_dir / "escape.xml").symlink_to(external_child)
+        master_body = (
+            '<?xml version="1.0" encoding="UTF-8"?>\n'
+            '<databaseChangeLog xmlns="http://www.liquibase.org/xml/ns/dbchangelog">\n'
+            '  <includeAll path="children" relativeToChangelogFile="true"/>\n'
+            "</databaseChangeLog>\n"
+        )
+        (project_root / "db/changelog/db.changelog-master.xml").write_text(
+            master_body,
+            encoding="utf-8",
+        )
+        result = LiquibaseMigrationParser().detect_changes(project_root)
+        assert result == []
