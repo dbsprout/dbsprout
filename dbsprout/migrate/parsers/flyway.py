@@ -17,12 +17,11 @@ from sqlglot import exp
 from sqlglot.errors import ParseError as SqlglotParseError
 from sqlglot.errors import TokenError
 
+from dbsprout.migrate.models import SchemaChange, SchemaChangeType
 from dbsprout.migrate.parsers import MigrationParseError
 
 if TYPE_CHECKING:
     from pathlib import Path
-
-    from dbsprout.migrate.models import SchemaChange
 
 logger = logging.getLogger(__name__)
 
@@ -219,17 +218,162 @@ class _FKLedger:
 
 
 # ---------------------------------------------------------------------------
-# Statement walker (stub — dispatch added per-task)
+# Column definition helper
+# ---------------------------------------------------------------------------
+
+
+def _column_def_to_dict(col: exp.ColumnDef) -> dict[str, object]:
+    constraints = col.args.get("constraints") or []
+    nullable = True
+    default: str | None = None
+    pk = False
+    for c in constraints:
+        kind = c.args.get("kind")
+        if isinstance(kind, exp.NotNullColumnConstraint):
+            nullable = False
+        elif isinstance(kind, exp.PrimaryKeyColumnConstraint):
+            pk = True
+            nullable = False
+        elif isinstance(kind, exp.DefaultColumnConstraint):
+            default = kind.args["this"].sql(dialect=None) if kind.args.get("this") else None
+    dtype = col.args.get("kind")
+    sql_type = dtype.sql(dialect=None) if isinstance(dtype, exp.DataType) else ""
+    return {
+        "name": _strip_quotes(col.name),
+        "sql_type": sql_type,
+        "nullable": nullable,
+        "default": default,
+        "primary_key": pk,
+    }
+
+
+def _extract_inline_fks(create: exp.Create) -> list[dict[str, object]]:
+    fks: list[dict[str, object]] = []
+    schema = create.this  # exp.Schema
+    if not isinstance(schema, exp.Schema):
+        return fks
+    for expr in schema.expressions:
+        # Column-level REFERENCES
+        if isinstance(expr, exp.ColumnDef):
+            for c in expr.args.get("constraints") or []:
+                kind = c.args.get("kind")
+                if isinstance(kind, exp.Reference):
+                    ref = kind.args["this"]
+                    # sqlglot wraps REFERENCES target as exp.Schema with .this = exp.Table
+                    if isinstance(ref, exp.Schema):
+                        ref_table_node = ref.this
+                        ref_table = (
+                            _split_qualified(ref_table_node.name)[1]
+                            if isinstance(ref_table_node, exp.Table)
+                            else ""
+                        )
+                        remote_cols = [
+                            _strip_quotes(rc.name) for rc in (ref.args.get("expressions") or [])
+                        ] or ["id"]
+                    else:
+                        ref_name = ref.name if hasattr(ref, "name") else str(ref)
+                        _ref_schema, ref_table = _split_qualified(ref_name)
+                        remote_cols = [
+                            _strip_quotes(rc.name) for rc in (ref.args.get("expressions") or [])
+                        ] or ["id"]
+                    fks.append(
+                        {
+                            "constraint_name": None,
+                            "local_cols": [_strip_quotes(expr.name)],
+                            "ref_table": ref_table,
+                            "remote_cols": remote_cols,
+                        }
+                    )
+        # Table-level FOREIGN KEY constraint
+        elif isinstance(expr, exp.ForeignKey):
+            fk_local = [_strip_quotes(e.name) for e in (expr.args.get("expressions") or [])]
+            fk_ref = expr.args.get("reference")
+            fk_ref_table = ""
+            fk_remote: list[str] = []
+            if isinstance(fk_ref, exp.Reference):
+                fk_ref_this = fk_ref.this
+                if isinstance(fk_ref_this, exp.Table):
+                    fk_ref_table = _split_qualified(fk_ref_this.name)[1]
+                fk_remote = [_strip_quotes(e.name) for e in (fk_ref.args.get("expressions") or [])]
+            fks.append(
+                {
+                    "constraint_name": None,
+                    "local_cols": fk_local,
+                    "ref_table": fk_ref_table,
+                    "remote_cols": fk_remote,
+                }
+            )
+    return fks
+
+
+# ---------------------------------------------------------------------------
+# CREATE/DROP TABLE handlers
+# ---------------------------------------------------------------------------
+
+
+def _handle_create_table(node: exp.Create) -> list[SchemaChange]:
+    schema_expr = node.this
+    if not isinstance(schema_expr, exp.Schema):
+        return []
+    table_expr = schema_expr.this
+    if not isinstance(table_expr, exp.Table):
+        return []
+    schema_name, table_name = _split_qualified(table_expr.sql(dialect=None))
+    cols = [_column_def_to_dict(e) for e in schema_expr.expressions if isinstance(e, exp.ColumnDef)]
+    fks = _extract_inline_fks(node)
+    detail: dict[str, object] = {"columns": cols, "foreign_keys": fks}
+    if schema_name:
+        detail["schema"] = schema_name
+    return [
+        SchemaChange(
+            change_type=SchemaChangeType.TABLE_ADDED,
+            table_name=table_name,
+            detail=detail,
+        )
+    ]
+
+
+def _handle_drop_table(node: exp.Drop) -> list[SchemaChange]:
+    table = node.this
+    if not isinstance(table, exp.Table):
+        return []
+    schema_name, table_name = _split_qualified(table.sql(dialect=None))
+    detail: dict[str, object] = {}
+    if schema_name:
+        detail["schema"] = schema_name
+    return [
+        SchemaChange(
+            change_type=SchemaChangeType.TABLE_REMOVED,
+            table_name=table_name,
+            detail=detail or None,
+        )
+    ]
+
+
+# ---------------------------------------------------------------------------
+# Statement walker
 # ---------------------------------------------------------------------------
 
 
 def _walk_statements(
     stmts: list[exp.Expression],
     *,
-    dialect: str,  # noqa: ARG001
-    ledger: _FKLedger,  # noqa: ARG001
+    dialect: str,
+    ledger: _FKLedger,
 ) -> list[SchemaChange]:
     out: list[SchemaChange] = []
     for stmt in stmts:
-        logger.debug("skipping unsupported statement: %s", type(stmt).__name__)
+        kind = (stmt.args.get("kind") or "").upper()
+        if isinstance(stmt, exp.Create) and kind == "TABLE":
+            out.extend(_handle_create_table(stmt))
+        elif isinstance(stmt, exp.Drop) and kind == "TABLE":
+            out.extend(_handle_drop_table(stmt))
+        else:
+            logger.debug(
+                "skipping unsupported statement: %s kind=%s",
+                type(stmt).__name__,
+                kind or "N/A",
+            )
+    _ = ledger  # used in later tasks
+    _ = dialect  # used in later tasks
     return out

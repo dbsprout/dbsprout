@@ -5,13 +5,17 @@ import dataclasses
 from typing import TYPE_CHECKING
 
 import pytest
+import sqlglot
 
+from dbsprout.migrate.models import SchemaChangeType
 from dbsprout.migrate.parsers import MigrationParseError, MigrationParser
 from dbsprout.migrate.parsers.flyway import (
     FlywayMigrationParser,
+    _FKLedger,
     _parse_file,
     _split_qualified,
     _strip_quotes,
+    _walk_statements,
 )
 
 if TYPE_CHECKING:
@@ -78,3 +82,48 @@ class TestParseFile:
         file_path.write_text("CREATE TABLE ${schema}.users (id INT);", encoding="utf-8")
         with pytest.raises(MigrationParseError, match="unresolved placeholder"):
             _parse_file(file_path, dialect="postgres", placeholders={})
+
+
+class TestCreateDropTable:
+    def test_create_table(self) -> None:
+        stmts = sqlglot.parse(
+            "CREATE TABLE authors (id INT PRIMARY KEY, name VARCHAR(120) NOT NULL);",
+            read="postgres",
+        )
+        changes = _walk_statements(stmts, dialect="postgres", ledger=_FKLedger())
+        assert len(changes) == 1
+        c = changes[0]
+        assert c.change_type is SchemaChangeType.TABLE_ADDED
+        assert c.table_name == "authors"
+        assert c.detail is not None
+        cols = c.detail["columns"]
+        assert cols[0]["name"] == "id"
+        assert cols[0]["primary_key"] is True
+        assert cols[1]["name"] == "name"
+        assert cols[1]["sql_type"].upper().startswith("VARCHAR")
+        assert cols[1]["nullable"] is False
+
+    def test_create_table_with_inline_fk(self) -> None:
+        stmts = sqlglot.parse(
+            "CREATE TABLE books (id INT, author_id INT REFERENCES authors(id));",
+            read="postgres",
+        )
+        changes = _walk_statements(stmts, dialect="postgres", ledger=_FKLedger())
+        assert changes[0].change_type is SchemaChangeType.TABLE_ADDED
+        fks = changes[0].detail["foreign_keys"]
+        assert fks[0]["ref_table"] == "authors"
+        assert fks[0]["local_cols"] == ["author_id"]
+        assert fks[0]["remote_cols"] == ["id"]
+
+    def test_create_table_with_schema_prefix(self) -> None:
+        stmts = sqlglot.parse("CREATE TABLE app.orders (id INT);", read="postgres")
+        changes = _walk_statements(stmts, dialect="postgres", ledger=_FKLedger())
+        assert changes[0].table_name == "orders"
+        assert changes[0].detail["schema"] == "app"
+
+    def test_drop_table(self) -> None:
+        stmts = sqlglot.parse("DROP TABLE authors;", read="postgres")
+        changes = _walk_statements(stmts, dialect="postgres", ledger=_FKLedger())
+        assert len(changes) == 1
+        assert changes[0].change_type is SchemaChangeType.TABLE_REMOVED
+        assert changes[0].table_name == "authors"
