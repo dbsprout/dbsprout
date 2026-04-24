@@ -7,7 +7,7 @@ Converts a Liquibase XML changelog tree into a ``list[SchemaChange]`` via
 from __future__ import annotations
 
 import logging
-from collections.abc import Iterable  # noqa: TC003 — returned by later-task yields
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
@@ -18,9 +18,7 @@ from defusedxml.ElementTree import (
     parse as defused_parse,
 )
 
-# Kept at runtime scope: ``_FKLedger`` will invoke ``SchemaChange`` directly in
-# later tasks (``record(change)`` + ``resolve(...) -> SchemaChange | None``).
-from dbsprout.migrate.models import SchemaChange  # noqa: TC001
+from dbsprout.migrate.models import SchemaChange, SchemaChangeType
 from dbsprout.migrate.parsers import MigrationParseError
 
 if TYPE_CHECKING:
@@ -112,7 +110,7 @@ class _FKLedger:
 def _walk_changelog(
     root: Path,
     project_path: Path,  # noqa: ARG001
-    ledger: _FKLedger,  # noqa: ARG001
+    ledger: _FKLedger,
     visited: set[Path],
     seen_changesets: dict[tuple[str, str], Path],  # noqa: ARG001
 ) -> Iterable[SchemaChange]:
@@ -135,15 +133,193 @@ def _walk_changelog(
     for elem in tree.getroot():
         tag = _strip_ns(elem.tag)
         if tag == "changeSet":
-            logger.debug("changeSet placeholder — to be handled in later task")
+            yield from _handle_changeset(elem, root, ledger)
         elif tag == "include":
             logger.debug("include placeholder — to be handled in later task")
         elif tag == "includeAll":
             logger.debug("includeAll placeholder — to be handled in later task")
         else:
             logger.debug("skipping unsupported Liquibase element: %s", tag)
-    # Marks the function as a generator so the early ``return`` above emits an
-    # empty iterator instead of ``None``. Later tasks will replace the
-    # placeholder ``logger.debug`` calls above with ``yield`` statements.
-    if False:  # pragma: no cover
-        yield
+
+
+# ---------------------------------------------------------------------------
+# changeSet + per-operation handlers
+# ---------------------------------------------------------------------------
+
+
+def _handle_changeset(
+    changeset: Element,
+    source: Path,
+    ledger: _FKLedger,
+) -> Iterable[SchemaChange]:
+    for child in changeset:
+        tag = _strip_ns(child.tag)
+        handler = _OP_HANDLERS.get(tag)
+        if handler is None:
+            if tag in _DEBUG_SKIP_TAGS:
+                logger.debug("skipping %s in %s (out of scope)", tag, source)
+            else:
+                logger.debug("skipping unsupported change %s in %s", tag, source)
+            continue
+        yield from handler(child, ledger)
+
+
+def _handle_create_table(elem: Element, _ledger: _FKLedger) -> list[SchemaChange]:
+    table_name = elem.get("tableName", "")
+    schema = elem.get("schemaName")
+    cols: list[dict[str, object]] = []
+    fks: list[dict[str, object]] = []
+    for child in elem:
+        if _strip_ns(child.tag) != "column":
+            continue
+        col, inline_fk = _parse_column(child)
+        cols.append(col)
+        if inline_fk is not None:
+            fks.append(inline_fk)
+    detail: dict[str, object] = {"columns": cols, "foreign_keys": fks}
+    if schema:
+        detail["schema"] = schema
+    changes: list[SchemaChange] = [
+        SchemaChange(
+            change_type=SchemaChangeType.TABLE_ADDED,
+            table_name=table_name,
+            detail=detail,
+        )
+    ]
+    for fk in fks:
+        fk_change = SchemaChange(
+            change_type=SchemaChangeType.FOREIGN_KEY_ADDED,
+            table_name=table_name,
+            detail=fk,
+        )
+        changes.append(fk_change)
+    return changes
+
+
+def _handle_drop_table(elem: Element, _ledger: _FKLedger) -> list[SchemaChange]:
+    table_name = elem.get("tableName", "")
+    schema = elem.get("schemaName")
+    detail: dict[str, object] = {}
+    if schema:
+        detail["schema"] = schema
+    return [
+        SchemaChange(
+            change_type=SchemaChangeType.TABLE_REMOVED,
+            table_name=table_name,
+            detail=detail or None,
+        )
+    ]
+
+
+def _parse_column(col: Element) -> tuple[dict[str, object], dict[str, object] | None]:
+    name = col.get("name", "")
+    sql_type = col.get("type", "")
+    default = _resolve_column_default(col)
+    nullable = True
+    primary_key = False
+    fk: dict[str, object] | None = None
+    for c in col:
+        if _strip_ns(c.tag) != "constraints":
+            continue
+        if c.get("nullable") == "false":
+            nullable = False
+        if c.get("primaryKey") == "true":
+            primary_key = True
+            nullable = False
+        fk_name = c.get("foreignKeyName")
+        references = c.get("references")
+        if fk_name and references:
+            fk = _parse_inline_fk(name, fk_name, references)
+    return (
+        {
+            "name": name,
+            "sql_type": sql_type,
+            "nullable": nullable,
+            "default": default,
+            "primary_key": primary_key,
+        },
+        fk,
+    )
+
+
+def _parse_inline_fk(
+    local_col: str,
+    fk_name: str,
+    references: str,
+) -> dict[str, object]:
+    """Parse a ``references="table(col[, col, ...])"`` attribute."""
+    ref_table = references
+    remote_cols: list[str] = []
+    if "(" in references and references.endswith(")"):
+        ref_table, _, inner = references[:-1].partition("(")
+        remote_cols = [c.strip() for c in inner.split(",") if c.strip()]
+    return {
+        "constraint_name": fk_name,
+        "local_cols": [local_col],
+        "ref_table": ref_table.strip(),
+        "remote_cols": remote_cols or ["id"],
+    }
+
+
+_DEFAULT_ATTRS: tuple[str, ...] = (
+    "defaultValue",
+    "defaultValueNumeric",
+    "defaultValueBoolean",
+    "defaultValueDate",
+    "defaultValueComputed",
+    "defaultValueSequenceNext",
+)
+
+
+def _resolve_column_default(col: Element) -> str | None:
+    for attr in _DEFAULT_ATTRS:
+        value = col.get(attr)
+        if value is not None:
+            return str(value)
+    return None
+
+
+_OpHandler = Callable[[Any, "_FKLedger"], "list[SchemaChange]"]
+
+_OP_HANDLERS: dict[str, _OpHandler] = {
+    "createTable": _handle_create_table,
+    "dropTable": _handle_drop_table,
+}
+
+_DEBUG_SKIP_TAGS: frozenset[str] = frozenset(
+    {
+        "preConditions",
+        "rollback",
+        "validCheckSum",
+        "modifySql",
+        "comment",
+        "empty",
+        "sql",
+        "sqlFile",
+        "customChange",
+        "executeCommand",
+        "stop",
+        "tagDatabase",
+        "insert",
+        "update",
+        "delete",
+        "loadData",
+        "loadUpdateData",
+        "addLookupTable",
+        "addPrimaryKey",
+        "dropPrimaryKey",
+        "addUniqueConstraint",
+        "dropUniqueConstraint",
+        "addCheckConstraint",
+        "dropCheckConstraint",
+        "addAutoIncrement",
+        "mergeColumns",
+        "createView",
+        "dropView",
+        "createProcedure",
+        "dropProcedure",
+        "createSequence",
+        "dropSequence",
+        "alterSequence",
+    }
+)
