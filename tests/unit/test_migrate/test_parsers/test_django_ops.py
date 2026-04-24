@@ -8,18 +8,14 @@ import pytest
 from dbsprout.migrate.models import SchemaChangeType
 from dbsprout.migrate.parsers import MigrationParser
 from dbsprout.migrate.parsers.django import DjangoMigrationParser
-from tests.unit.test_migrate.test_parsers.conftest import assert_change, build_django_project
+from tests.unit.test_migrate.test_parsers.conftest import (
+    EMPTY_MIG,
+    assert_change,
+    build_django_project,
+)
 
 if TYPE_CHECKING:
     from pathlib import Path
-
-
-EMPTY_MIG = (
-    "from django.db import migrations\n\n"
-    "class Migration(migrations.Migration):\n"
-    "    dependencies = []\n"
-    "    operations = []\n"
-)
 
 
 def _mig(body: str) -> str:
@@ -330,6 +326,31 @@ class TestAlterField:
         assert SchemaChangeType.COLUMN_NULLABILITY_CHANGED in kinds
         assert SchemaChangeType.COLUMN_TYPE_CHANGED not in kinds
 
+    def test_case_insensitive_model_name_lookup(self, tmp_path: Path) -> None:
+        """Ledger must resolve model_name='post' after CreateModel(name='Post')."""
+        create = "migrations.CreateModel(name='Post', fields=[('id', models.AutoField())]),"
+        add = "migrations.AddField(model_name='post', name='body', field=models.TextField()),"
+        root = build_django_project(
+            tmp_path,
+            apps={
+                "blog": [
+                    ("0001_initial", _mig(create)),
+                    (
+                        "0002_add_body",
+                        _mig(add).replace(
+                            "dependencies = []",
+                            "dependencies = [('blog', '0001_initial')]",
+                        ),
+                    ),
+                ]
+            },
+        )
+        changes = DjangoMigrationParser().detect_changes(root)
+        added = [c for c in changes if c.change_type is SchemaChangeType.COLUMN_ADDED]
+        assert len(added) == 1
+        assert added[0].column_name == "body"
+        assert added[0].table_name == "blog_post"
+
     def test_alter_same_type_different_params_emits_type_change(self, tmp_path: Path) -> None:
         """CharField(max_length=200) → CharField(max_length=300) must emit COLUMN_TYPE_CHANGED."""
         create = (
@@ -543,6 +564,17 @@ class TestNonLiteralArgSkips:
     def test_unknown_op_is_skipped(self, tmp_path: Path) -> None:
         """Unsupported op names are silently skipped (logged as debug)."""
         body = "migrations.SomeNewOp(model_name='Post'),"
+        root = build_django_project(tmp_path, apps={"blog": [("0001_initial", _mig(body))]})
+        changes = DjangoMigrationParser().detect_changes(root)
+        assert changes == []
+
+    def test_runpython_is_skipped(self, tmp_path: Path) -> None:
+        """RunPython is not a schema-change op and must be silently skipped."""
+
+        def forwards_func() -> None:
+            pass
+
+        body = "migrations.RunPython(forwards_func),"
         root = build_django_project(tmp_path, apps={"blog": [("0001_initial", _mig(body))]})
         changes = DjangoMigrationParser().detect_changes(root)
         assert changes == []

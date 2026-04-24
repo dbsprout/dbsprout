@@ -20,6 +20,13 @@ FIXTURE_PROJECT_PATH = Path(__file__).parent / "fixtures" / "alembic_project"
 # Django helpers
 # ---------------------------------------------------------------------------
 
+EMPTY_MIG = (
+    "from django.db import migrations\n\n"
+    "class Migration(migrations.Migration):\n"
+    "    dependencies = []\n"
+    "    operations = []\n"
+)
+
 
 def build_django_project(
     tmp_path: Path,

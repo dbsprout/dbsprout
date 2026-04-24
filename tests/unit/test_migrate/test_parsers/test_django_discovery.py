@@ -19,18 +19,13 @@ from dbsprout.migrate.parsers.django import (
     _parse_migration_file,
     _ParsedMigration,
 )
-from tests.unit.test_migrate.test_parsers.conftest import build_django_project
+from tests.unit.test_migrate.test_parsers.conftest import EMPTY_MIG, build_django_project
 
 if TYPE_CHECKING:
     from pathlib import Path
 
-
-EMPTY_MIG = (
-    "from django.db import migrations\n\n"
-    "class Migration(migrations.Migration):\n"
-    "    dependencies = []\n"
-    "    operations = []\n"
-)
+# Extra bytes added on top of _MAX_MIGRATION_BYTES to produce a clearly oversize file.
+_OVERSIZE_PADDING = 100_000
 
 
 def test_build_django_project_creates_structure(tmp_path: Path) -> None:
@@ -69,7 +64,7 @@ class TestDiscovery:
         assert found[0].name == "0001_initial.py"
 
     def test_skips_oversize(self, tmp_path: Path) -> None:
-        oversize = "x = '" + "a" * (_MAX_MIGRATION_BYTES + 100_000) + "'\n"
+        oversize = "x = '" + "a" * (_MAX_MIGRATION_BYTES + _OVERSIZE_PADDING) + "'\n"
         root = build_django_project(
             tmp_path,
             apps={"blog": [("0001_big", oversize)]},
