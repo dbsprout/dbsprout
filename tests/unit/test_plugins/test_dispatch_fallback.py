@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import ClassVar
+
 import pytest
 
 from dbsprout.plugins.registry import get_registry
@@ -48,3 +50,38 @@ def test_registry_empty_falls_back_to_hardwired(tmp_path, patched_eps):
         sql_file.write_text("CREATE TABLE users (id INTEGER PRIMARY KEY);")
         schema = parse_schema_file(sql_file)
     assert any(t.name == "users" for t in schema.tables)
+
+
+def test_registry_writer_is_used(make_ep, patched_eps):
+    from dbsprout.cli.commands.generate import _resolve_writer  # noqa: PLC0415
+
+    class FakeWriter:
+        format = "fake"
+        written: ClassVar[dict] = {}
+
+        def write(self, rows, *, schema, output_dir, dialect):
+            FakeWriter.written = {"rows": rows, "dialect": dialect}
+
+    with patched_eps(
+        {"dbsprout.outputs": [make_ep(name="fake", group="dbsprout.outputs", obj=FakeWriter())]}
+    ):
+        writer = _resolve_writer("fake")
+    assert writer.__class__.__name__ == "FakeWriter"
+
+
+def test_registry_engine_is_used(make_ep, patched_eps):
+    from dbsprout.cli.commands.generate import _resolve_engine  # noqa: PLC0415
+
+    class FakeEngine:
+        def generate_table(self, table, *, rows, spec=None):
+            return []
+
+    with patched_eps(
+        {
+            "dbsprout.generators": [
+                make_ep(name="fake", group="dbsprout.generators", obj=FakeEngine())
+            ]
+        }
+    ):
+        engine = _resolve_engine("fake", seed=42)
+    assert engine.__class__.__name__ == "FakeEngine"

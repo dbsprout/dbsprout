@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import time
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import typer
 from rich.console import Console
@@ -22,6 +22,72 @@ if TYPE_CHECKING:
     from dbsprout.quality.integrity import IntegrityReport
 
 console = Console()
+
+
+def _resolve_writer(output_format: str) -> Any:
+    """Return a writer instance for *output_format*.
+
+    Consults the plugin registry first; falls back to the hard-wired
+    mapping so editable installs without refreshed entry-point metadata
+    keep working.
+
+    Entry points may register a class or a pre-built instance.  When a
+    class is returned (the common case from ``pyproject.toml`` entry
+    points) it is instantiated with no arguments.
+    """
+    import inspect  # noqa: PLC0415
+
+    from dbsprout.plugins.registry import get_registry  # noqa: PLC0415
+
+    obj = get_registry().get("dbsprout.outputs", output_format)
+    if obj is not None:
+        return obj() if inspect.isclass(obj) else obj
+    if output_format == "sql":
+        from dbsprout.output.sql_writer import SQLWriter  # noqa: PLC0415
+
+        return SQLWriter()
+    if output_format == "csv":
+        from dbsprout.output.csv_writer import CSVWriter  # noqa: PLC0415
+
+        return CSVWriter()
+    if output_format in ("json", "jsonl"):
+        from dbsprout.output.json_writer import JSONWriter  # noqa: PLC0415
+
+        return JSONWriter()
+    if output_format == "parquet":
+        from dbsprout.output.parquet_writer import ParquetWriter  # noqa: PLC0415
+
+        return ParquetWriter()
+    return None
+
+
+def _resolve_engine(engine: str, *, seed: int) -> Any:
+    """Return an engine instance for *engine*.
+
+    Consults the plugin registry first; falls back to the hard-wired
+    mapping so editable installs without refreshed entry-point metadata
+    keep working.
+
+    Entry points may register a class or a pre-built instance.  When a
+    class is returned it is instantiated with ``seed=seed``.
+    """
+    import inspect  # noqa: PLC0415
+
+    from dbsprout.plugins.registry import get_registry  # noqa: PLC0415
+
+    obj = get_registry().get("dbsprout.generators", engine)
+    if obj is not None:
+        return obj(seed=seed) if inspect.isclass(obj) else obj
+    if engine == "heuristic":
+        from dbsprout.generate.engines.heuristic import HeuristicEngine  # noqa: PLC0415
+
+        return HeuristicEngine(seed=seed)
+    if engine == "spec_driven":
+        from dbsprout.generate.engines.spec_driven import SpecDrivenEngine  # noqa: PLC0415
+
+        return SpecDrivenEngine(seed=seed)
+    return None
+
 
 # Snapshot directory — always project-root-relative so ``init``, ``diff`` and
 # ``generate --incremental`` agree on where snapshots live, regardless of
@@ -176,9 +242,8 @@ def _write_output(  # noqa: PLR0913
 ) -> None:
     """Write generated data using the selected output writer."""
     if output_format == "sql":
-        from dbsprout.output.sql_writer import SQLWriter  # noqa: PLC0415
-
-        SQLWriter().write(
+        writer = _resolve_writer("sql")
+        writer.write(
             result.tables_data,
             schema,
             insertion_order,
@@ -187,23 +252,20 @@ def _write_output(  # noqa: PLR0913
             upsert=upsert,
         )
     elif output_format == "csv":
-        from dbsprout.output.csv_writer import CSVWriter  # noqa: PLC0415
-
-        CSVWriter().write(result.tables_data, schema, insertion_order, output_dir)
+        writer = _resolve_writer("csv")
+        writer.write(result.tables_data, schema, insertion_order, output_dir)
     elif output_format in ("json", "jsonl"):
-        from dbsprout.output.json_writer import JSONWriter  # noqa: PLC0415
-
-        JSONWriter().write(
+        writer = _resolve_writer(output_format)
+        writer.write(
             result.tables_data,
             schema,
             insertion_order,
             output_dir,
-            fmt=output_format,  # type: ignore[arg-type]
+            fmt=output_format,
         )
     elif output_format == "parquet":
-        from dbsprout.output.parquet_writer import ParquetWriter  # noqa: PLC0415
-
-        ParquetWriter().write(result.tables_data, schema, insertion_order, output_dir)
+        writer = _resolve_writer("parquet")
+        writer.write(result.tables_data, schema, insertion_order, output_dir)
     elif output_format == "direct":
         if not target_db:
             console.print("[red]Error:[/red] --db is required when using --output-format direct")
