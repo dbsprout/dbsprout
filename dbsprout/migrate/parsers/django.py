@@ -19,11 +19,13 @@ from collections import defaultdict
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol
 
-from dbsprout.migrate.models import SchemaChange, SchemaChangeType
 from dbsprout.migrate.parsers import MigrationParseError
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+    from dbsprout.migrate.models import SchemaChange
+    from dbsprout.migrate.parsers._django_handlers import _FieldSnapshot
 
 logger = logging.getLogger(__name__)
 
@@ -48,18 +50,7 @@ class _ParsedMigration:
     operations: tuple[ast.Call, ...]
 
 
-@dataclass(frozen=True)
-class _FieldSnapshot:
-    type_name: str
-    django_type: str
-    base_type: str  # django_type with null= and default= kwargs stripped
-    nullable: bool
-    default: str | None
-    is_fk: bool
-    ref_table: str | None
-
-
-_FieldLedger = dict[tuple[str, str, str], _FieldSnapshot]  # (app, model, field) → snapshot
+_FieldLedger = dict[tuple[str, str, str], "_FieldSnapshot"]  # (app, model, field) → snapshot
 
 
 # ---------------------------------------------------------------------------
@@ -317,7 +308,3 @@ def _linearize_migrations(parsed: list[_ParsedMigration]) -> list[_ParsedMigrati
         raise MigrationParseError(f"cycle in migration dependencies: {cycle}") from exc
 
     return [known[k] for k in ordered_keys]
-
-
-# Suppress unused-import: SchemaChangeType is imported for use by _django_handlers.
-_ = SchemaChangeType

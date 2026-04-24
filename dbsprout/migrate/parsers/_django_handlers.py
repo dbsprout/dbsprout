@@ -11,20 +11,35 @@ from __future__ import annotations
 
 import ast
 import logging
-from typing import TYPE_CHECKING
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, TypeGuard
 
-from dbsprout.migrate.models import SchemaChangeType
+from dbsprout.migrate.models import SchemaChange, SchemaChangeType
 
 if TYPE_CHECKING:
-    from dbsprout.migrate.models import SchemaChange
     from dbsprout.migrate.parsers.django import (
         _FieldLedger,
-        _FieldSnapshot,
         _ParsedMigration,
         _TableNameLedger,
     )
 
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Field snapshot dataclass (lives here; django.py imports it under TYPE_CHECKING)
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class _FieldSnapshot:
+    type_name: str
+    django_type: str
+    base_type: str  # django_type with null= and default= kwargs stripped
+    nullable: bool
+    default: str | None
+    is_fk: bool
+    ref_table: str | None
 
 
 # ---------------------------------------------------------------------------
@@ -51,8 +66,8 @@ def _kwargs_dict(node: ast.AST | None) -> dict[str, str | None]:
     return result
 
 
-def _is_str(node: ast.AST | None) -> bool:
-    """Return ``True`` if *node* is a string ``ast.Constant``."""
+def _is_str(node: ast.AST | None) -> TypeGuard[ast.Constant]:
+    """Return ``True`` (narrowing to ``ast.Constant``) when *node* is a string constant."""
     return isinstance(node, ast.Constant) and isinstance(node.value, str)
 
 
@@ -119,8 +134,6 @@ def _extract_fields(
 def _field_snapshot(
     field_call: ast.Call, *, mig: _ParsedMigration, tables: _TableNameLedger
 ) -> _FieldSnapshot:
-    from dbsprout.migrate.parsers.django import _FieldSnapshot  # noqa: PLC0415
-
     type_name = _op_name_from_call(field_call)
     kw = _kwargs(field_call)
     django_type = ast.unparse(field_call)
@@ -165,14 +178,12 @@ def _handle_create_model(
     fields: _FieldLedger,
     out: list[SchemaChange],
 ) -> None:
-    from dbsprout.migrate.models import SchemaChange  # noqa: PLC0415
-
     kw = _kwargs(op)
     name_node = kw.get("name")
-    if not _is_str(name_node):
+    if not _is_str(name_node) or not isinstance(name_node.value, str):
         logger.debug("CreateModel with non-literal name in %s", mig.path)
         return
-    model_name: str = name_node.value  # type: ignore[union-attr]
+    model_name: str = name_node.value
 
     options = _kwargs_dict(kw.get("options"))
     db_table = options.get("db_table") if options else None
@@ -220,13 +231,11 @@ def _handle_delete_model(
     fields: _FieldLedger,
     out: list[SchemaChange],
 ) -> None:
-    from dbsprout.migrate.models import SchemaChange  # noqa: PLC0415
-
     kw = _kwargs(op)
     name_node = kw.get("name")
-    if not _is_str(name_node):
+    if not _is_str(name_node) or not isinstance(name_node.value, str):
         return
-    model_name: str = name_node.value.lower()  # type: ignore[union-attr]
+    model_name: str = name_node.value.lower()
     table_name = tables.pop(
         (mig.app_label, model_name), _default_table_name(mig.app_label, model_name)
     )
@@ -250,8 +259,6 @@ def _emit_m2m_through(
     out: list[SchemaChange],
 ) -> None:
     """Emit implicit through-table TABLE_ADDED for a ManyToManyField."""
-    from dbsprout.migrate.models import SchemaChange  # noqa: PLC0415
-
     model, column = model_col_pair
     # Skip explicit through=... — user's own CreateModel covers it.
     if any(kw.arg == "through" for kw in field_node.keywords):
@@ -325,8 +332,6 @@ def _handle_add_field(
     fields: _FieldLedger,
     out: list[SchemaChange],
 ) -> None:
-    from dbsprout.migrate.models import SchemaChange  # noqa: PLC0415
-
     kw = _kwargs(op)
     model_node = kw.get("model_name")
     name_node = kw.get("name")
@@ -398,8 +403,6 @@ def _handle_remove_field(
     fields: _FieldLedger,
     out: list[SchemaChange],
 ) -> None:
-    from dbsprout.migrate.models import SchemaChange  # noqa: PLC0415
-
     kw = _kwargs(op)
     model_node = kw.get("model_name")
     name_node = kw.get("name")
@@ -447,8 +450,6 @@ def _handle_alter_field(
     fields: _FieldLedger,
     out: list[SchemaChange],
 ) -> None:
-    from dbsprout.migrate.models import SchemaChange  # noqa: PLC0415
-
     kw = _kwargs(op)
     model_node = kw.get("model_name")
     name_node = kw.get("name")
@@ -532,8 +533,6 @@ def _handle_rename_field(
     fields: _FieldLedger,
     out: list[SchemaChange],
 ) -> None:
-    from dbsprout.migrate.models import SchemaChange  # noqa: PLC0415
-
     kw = _kwargs(op)
     model_node = kw.get("model_name")
     old_node = kw.get("old_name")
@@ -583,8 +582,6 @@ def _handle_rename_model(
     fields: _FieldLedger,
     out: list[SchemaChange],
 ) -> None:
-    from dbsprout.migrate.models import SchemaChange  # noqa: PLC0415
-
     kw = _kwargs(op)
     old_node = kw.get("old_name")
     new_node = kw.get("new_name")
@@ -637,8 +634,6 @@ def _handle_add_index(
     fields: _FieldLedger,  # noqa: ARG001
     out: list[SchemaChange],
 ) -> None:
-    from dbsprout.migrate.models import SchemaChange  # noqa: PLC0415
-
     kw = _kwargs(op)
     model_node = kw.get("model_name")
     index_node = kw.get("index")
@@ -682,8 +677,6 @@ def _handle_remove_index(
     fields: _FieldLedger,  # noqa: ARG001
     out: list[SchemaChange],
 ) -> None:
-    from dbsprout.migrate.models import SchemaChange  # noqa: PLC0415
-
     kw = _kwargs(op)
     model_node = kw.get("model_name")
     name_node = kw.get("name")
@@ -709,7 +702,7 @@ def _handle_remove_index(
 
 
 # ---------------------------------------------------------------------------
-# Register handlers — must remain at the bottom after all handler definitions.
+# Register handlers — must remain at bottom after all handler definitions.
 # ---------------------------------------------------------------------------
 
 from dbsprout.migrate.parsers.django import _HANDLERS  # noqa: E402
