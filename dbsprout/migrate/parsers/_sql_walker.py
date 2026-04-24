@@ -616,30 +616,12 @@ def walk_statements(
     return out
 
 
+# Intentional public surface for this *private* module — only the primitives
+# other parsers in this package are meant to call. Everything else (handler
+# helpers, identifier helpers, ledger) remains importable by explicit path but
+# is not advertised as part of the shared API.
 __all__ = [
     "MAX_MIGRATION_BYTES",
-    "_FKLedger",
-    "_alter_column_default_change",
-    "_alter_column_nullability_change",
-    "_alter_column_type_change",
-    "_column_def_to_dict",
-    "_column_ref_to_fk",
-    "_extract_inline_fks",
-    "_handle_add_column",
-    "_handle_add_constraint",
-    "_handle_alter_column",
-    "_handle_alter_table",
-    "_handle_create_index",
-    "_handle_create_table",
-    "_handle_drop_column",
-    "_handle_drop_constraint",
-    "_handle_drop_index",
-    "_handle_drop_table",
-    "_handle_rename_column",
-    "_handle_rename_table",
-    "_split_qualified",
-    "_strip_quotes",
-    "_table_fk_to_detail",
     "is_contained",
     "parse_sql_text",
     "walk_statements",

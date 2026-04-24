@@ -16,7 +16,10 @@ import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-import tomllib  # type: ignore[import-not-found]
+try:  # Python 3.11+ stdlib
+    import tomllib  # type: ignore[import-not-found]
+except ImportError:  # pragma: no cover - 3.10 fallback
+    import tomli as tomllib  # type: ignore[import-not-found]
 
 from dbsprout.migrate.parsers import MigrationParseError
 from dbsprout.migrate.parsers._sql_walker import (
@@ -67,6 +70,10 @@ class PrismaMigrationParser:
         """
         project_root = project_path.resolve()
         mig_root = (project_path / self.migrations_dir).resolve()
+        if not is_contained(mig_root, project_root):
+            raise MigrationParseError(
+                f"migrations_dir '{self.migrations_dir}' escapes project root {project_path}",
+            )
         if not mig_root.is_dir():
             raise MigrationParseError(
                 f"no {self.migrations_dir}/ under {project_path}",
@@ -149,6 +156,8 @@ def _discover_migrations(mig_root: Path, project_root: Path) -> list[Path]:
     files: list[Path] = []
     subdirs = sorted(p for p in mig_root.iterdir() if p.is_dir())
     for sub in subdirs:
+        size = 0
+        mig: Path | None = None
         try:
             if sub.is_symlink():
                 resolved_sub = sub.resolve()
@@ -172,12 +181,16 @@ def _discover_migrations(mig_root: Path, project_root: Path) -> list[Path]:
             if not is_contained(resolved, project_root):
                 logger.debug("skipping out-of-tree migration %s", mig)
                 continue
-            size = mig.stat().st_size
+            size = resolved.stat().st_size
         except OSError:
             logger.debug("cannot stat %s; skipping", sub)
+            continue
+        if mig is None:  # pragma: no cover - defensive: only reached if try body short-circuits
             continue
         if size > MAX_MIGRATION_BYTES:
             logger.debug("%s exceeds 1 MB size cap; skipping", mig)
             continue
-        files.append(mig)
+        # Append the already-validated resolved path so a later TOCTOU swap of
+        # ``sub/migration.sql`` to an out-of-tree symlink can't redirect the read.
+        files.append(resolved)
     return files

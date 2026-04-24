@@ -18,7 +18,13 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from dbsprout.migrate.parsers import MigrationParseError
-from dbsprout.migrate.parsers._sql_walker import (
+
+# Production use needs only these two shared primitives plus the size cap and
+# path-containment helper. The remaining re-imports below exist so tests and
+# any external consumers that relied on the pre-refactor private API surface
+# keep resolving; ruff F401 is suppressed on the block because the symbols are
+# intentional re-exports.
+from dbsprout.migrate.parsers._sql_walker import (  # noqa: F401  (re-export for back-compat)
     MAX_MIGRATION_BYTES,
     _alter_column_default_change,
     _alter_column_nullability_change,
@@ -256,36 +262,4 @@ def _parse_file(
     return parse_sql_text(text, dialect=dialect, file_path=file_path)
 
 
-__all__ = [
-    "_MAX_MIGRATION_BYTES",
-    "FlywayMigrationParser",
-    "_FKLedger",
-    "_alter_column_default_change",
-    "_alter_column_nullability_change",
-    "_alter_column_type_change",
-    "_check_unresolved",
-    "_column_def_to_dict",
-    "_column_ref_to_fk",
-    "_discover_migration_files",
-    "_extract_inline_fks",
-    "_handle_add_column",
-    "_handle_add_constraint",
-    "_handle_alter_column",
-    "_handle_alter_table",
-    "_handle_create_index",
-    "_handle_create_table",
-    "_handle_drop_column",
-    "_handle_drop_constraint",
-    "_handle_drop_index",
-    "_handle_drop_table",
-    "_handle_rename_column",
-    "_handle_rename_table",
-    "_parse_file",
-    "_parse_version",
-    "_split_qualified",
-    "_strip_quotes",
-    "_substitute_placeholders",
-    "_table_fk_to_detail",
-    "_version_sort_key",
-    "_walk_statements",
-]
+__all__ = ["FlywayMigrationParser"]

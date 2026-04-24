@@ -26,6 +26,13 @@ class TestScaffold:
         with pytest.raises(MigrationParseError, match=r"no prisma/migrations/"):
             PrismaMigrationParser().detect_changes(tmp_path)
 
+    def test_migrations_dir_escaping_project_root_rejected(self, tmp_path: Path) -> None:
+        outside = tmp_path.parent / "outside_mig_root"
+        outside.mkdir(exist_ok=True)
+        parser = PrismaMigrationParser(migrations_dir="../outside_mig_root")
+        with pytest.raises(MigrationParseError, match=r"escapes project root"):
+            parser.detect_changes(tmp_path)
+
 
 class TestDiscovery:
     def test_discovers_single_migration(self, tmp_path: Path) -> None:
