@@ -257,3 +257,26 @@ class TestAddDropConstraint:
             changes = _walk_statements(stmts, dialect="postgres", ledger=_FKLedger())
         assert changes == []
         assert "chk_price" in caplog.text
+
+
+class TestCreateDropIndex:
+    def test_create_index(self) -> None:
+        stmts = sqlglot.parse(
+            "CREATE INDEX idx_users_email ON users (email);",
+            read="postgres",
+        )
+        changes = _walk_statements(stmts, dialect="postgres", ledger=_FKLedger())
+        assert len(changes) == 1
+        c = changes[0]
+        assert c.change_type is SchemaChangeType.INDEX_ADDED
+        assert c.table_name == "users"
+        assert c.detail["index_name"] == "idx_users_email"
+        assert c.detail["cols"] == ["email"]
+
+    def test_drop_index(self) -> None:
+        stmts = sqlglot.parse("DROP INDEX idx_users_email;", read="postgres")
+        changes = _walk_statements(stmts, dialect="postgres", ledger=_FKLedger())
+        assert len(changes) == 1
+        c = changes[0]
+        assert c.change_type is SchemaChangeType.INDEX_REMOVED
+        assert c.detail["index_name"] == "idx_users_email"

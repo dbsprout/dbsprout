@@ -589,6 +589,46 @@ def _handle_alter_table(
     return out
 
 
+def _handle_create_index(node: exp.Create) -> list[SchemaChange]:
+    ix = node.this
+    if not isinstance(ix, exp.Index):
+        return []
+    index_name = _strip_quotes(ix.name)
+    table_expr = ix.args.get("table")
+    if not isinstance(table_expr, exp.Table):
+        return []
+    _, table_name = _split_qualified(table_expr.sql(dialect=None))
+    params = ix.args.get("params")
+    cols: list[str] = []
+    if isinstance(params, exp.IndexParameters):
+        for col_node in params.args.get("columns") or []:
+            # Columns are wrapped in Ordered nodes
+            inner = col_node.this if isinstance(col_node, exp.Ordered) else col_node
+            if isinstance(inner, exp.Column):
+                cols.append(_strip_quotes(inner.name))
+            else:
+                cols.append(_strip_quotes(inner.sql(dialect=None)))
+    return [
+        SchemaChange(
+            change_type=SchemaChangeType.INDEX_ADDED,
+            table_name=table_name,
+            detail={"index_name": index_name, "cols": cols},
+        )
+    ]
+
+
+def _handle_drop_index(node: exp.Drop) -> list[SchemaChange]:
+    target = node.this
+    name = _strip_quotes(target.name) if target else ""
+    return [
+        SchemaChange(
+            change_type=SchemaChangeType.INDEX_REMOVED,
+            table_name="",
+            detail={"index_name": name},
+        )
+    ]
+
+
 def _walk_statements(
     stmts: list[exp.Expression],
     *,
@@ -602,6 +642,10 @@ def _walk_statements(
             out.extend(_handle_create_table(stmt))
         elif isinstance(stmt, exp.Drop) and kind == "TABLE":
             out.extend(_handle_drop_table(stmt))
+        elif isinstance(stmt, exp.Create) and kind == "INDEX":
+            out.extend(_handle_create_index(stmt))
+        elif isinstance(stmt, exp.Drop) and kind == "INDEX":
+            out.extend(_handle_drop_index(stmt))
         elif isinstance(stmt, exp.Alter) and kind == "TABLE":
             out.extend(_handle_alter_table(stmt, ledger))
         else:
@@ -610,5 +654,5 @@ def _walk_statements(
                 type(stmt).__name__,
                 kind or "N/A",
             )
-    _ = dialect  # used in later tasks
+    _ = dialect  # available for future dialect-specific handling
     return out
