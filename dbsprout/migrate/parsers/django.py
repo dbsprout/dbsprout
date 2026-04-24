@@ -13,15 +13,15 @@ import itertools
 import logging
 import re
 from collections import defaultdict
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from dbsprout.migrate.models import SchemaChange  # noqa: TC001
 from dbsprout.migrate.parsers import MigrationParseError
 
 if TYPE_CHECKING:
     from pathlib import Path
-
-    from dbsprout.migrate.models import SchemaChange
 
 logger = logging.getLogger(__name__)
 
@@ -50,7 +50,15 @@ class DjangoMigrationParser:
             raise MigrationParseError(
                 f"no */migrations/*.py found under {project_path}",
             )
-        raise NotImplementedError("walker lands in later tasks")
+        parsed: list[_ParsedMigration] = []
+        for path in files:
+            app_label = path.parent.parent.name
+            logger.debug("using directory name %s as app_label for %s", app_label, path)
+            mig = _parse_migration_file(path, app_label=app_label)
+            if mig is not None:
+                parsed.append(mig)
+        ordered = _linearize_migrations(parsed)
+        return _translate_operations(ordered)
 
 
 def _discover_migration_files(project_path: Path) -> list[Path]:
@@ -216,3 +224,60 @@ def _linearize_migrations(parsed: list[_ParsedMigration]) -> list[_ParsedMigrati
         raise MigrationParseError(f"cycle in migration dependencies: {cycle}") from exc
 
     return [known[k] for k in ordered_keys]
+
+
+# ---------------------------------------------------------------------------
+# Op → SchemaChange translation
+# ---------------------------------------------------------------------------
+
+_TableNameLedger = dict[tuple[str, str], str]  # (app, model) → table_name
+_FieldLedger = dict[tuple[str, str, str], "_FieldSnapshot"]  # (app, model, field) → snapshot
+
+
+@dataclass(frozen=True)
+class _FieldSnapshot:
+    django_type: str
+    nullable: bool
+    default: str | None
+    is_fk: bool
+    ref_table: str | None
+
+
+def _translate_operations(ordered: list[_ParsedMigration]) -> list[SchemaChange]:
+    """Walk ordered migrations, emit SchemaChange list."""
+    table_names: _TableNameLedger = {}
+    field_state: _FieldLedger = {}
+    changes: list[SchemaChange] = []
+    for mig in ordered:
+        for op in mig.operations:
+            _dispatch_op(op, mig=mig, tables=table_names, fields=field_state, out=changes)
+    return changes
+
+
+def _dispatch_op(
+    op: ast.Call,
+    *,
+    mig: _ParsedMigration,
+    tables: _TableNameLedger,
+    fields: _FieldLedger,
+    out: list[SchemaChange],
+) -> None:
+    op_name = _op_name(op)
+    handler = _HANDLERS.get(op_name)
+    if handler is None:
+        logger.debug("skipping unsupported op %s in %s", op_name, mig.path)
+        return
+    handler(op, mig=mig, tables=tables, fields=fields, out=out)
+
+
+def _op_name(op: ast.Call) -> str:
+    func = op.func
+    if isinstance(func, ast.Attribute):
+        return func.attr
+    if isinstance(func, ast.Name):
+        return func.id
+    return "<unknown>"
+
+
+_OpHandler = Callable[..., None]  # runtime alias used in _HANDLERS below
+_HANDLERS: dict[str, _OpHandler] = {}  # populated in subsequent tasks
