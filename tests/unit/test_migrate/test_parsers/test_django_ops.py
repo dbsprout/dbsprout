@@ -311,3 +311,50 @@ class TestAlterField:
         changes = DjangoMigrationParser().detect_changes(root)
         assert len(changes) == 1
         assert changes[0].change_type is SchemaChangeType.COLUMN_TYPE_CHANGED
+
+
+class TestRenames:
+    def test_rename_field(self, tmp_path: Path) -> None:
+        create = (
+            "migrations.CreateModel(name='Post', fields=["
+            "('id', models.AutoField()), ('old', models.CharField())]),"
+        )
+        rename = "migrations.RenameField(model_name='Post', old_name='old', new_name='new'),"
+        root = build_django_project(
+            tmp_path,
+            apps={
+                "blog": [
+                    ("0001_initial", _mig(create)),
+                    ("0002_rename", _mig(rename)),
+                ]
+            },
+        )
+        changes = DjangoMigrationParser().detect_changes(root)
+        pair = [c for c in changes if c.detail and c.detail.get("rename_of")]
+        assert len(pair) == 2
+        assert {c.change_type for c in pair} == {
+            SchemaChangeType.COLUMN_REMOVED,
+            SchemaChangeType.COLUMN_ADDED,
+        }
+        assert pair[0].detail["rename_of"] == {"old": "old", "new": "new"}
+
+    def test_rename_model(self, tmp_path: Path) -> None:
+        create = "migrations.CreateModel(name='OldPost', fields=[('id', models.AutoField())]),"
+        rename = "migrations.RenameModel(old_name='OldPost', new_name='Post'),"
+        root = build_django_project(
+            tmp_path,
+            apps={
+                "blog": [
+                    ("0001_initial", _mig(create)),
+                    ("0002_rename", _mig(rename)),
+                ]
+            },
+        )
+        changes = DjangoMigrationParser().detect_changes(root)
+        pair = [c for c in changes if c.detail and c.detail.get("rename_of")]
+        assert len(pair) == 2
+        assert {c.change_type for c in pair} == {
+            SchemaChangeType.TABLE_REMOVED,
+            SchemaChangeType.TABLE_ADDED,
+        }
+        assert {c.table_name for c in pair} == {"blog_oldpost", "blog_post"}

@@ -724,3 +724,108 @@ def _handle_alter_field(
 
 
 _HANDLERS["AlterField"] = _handle_alter_field
+
+
+# ---------------------------------------------------------------------------
+# Task 11: RenameField + RenameModel handlers
+# ---------------------------------------------------------------------------
+
+
+def _handle_rename_field(
+    op: ast.Call,
+    *,
+    mig: _ParsedMigration,
+    tables: _TableNameLedger,
+    fields: _FieldLedger,
+    out: list[SchemaChange],
+) -> None:
+    from dbsprout.migrate.models import SchemaChangeType  # noqa: PLC0415
+
+    kw = _kwargs(op)
+    model_node = kw.get("model_name")
+    old_node = kw.get("old_name")
+    new_node = kw.get("new_name")
+    if not (
+        isinstance(model_node, ast.Constant)
+        and isinstance(model_node.value, str)
+        and isinstance(old_node, ast.Constant)
+        and isinstance(old_node.value, str)
+        and isinstance(new_node, ast.Constant)
+        and isinstance(new_node.value, str)
+    ):
+        return
+    model_name: str = model_node.value
+    old: str = old_node.value
+    new: str = new_node.value
+    table_name = tables.get(
+        (mig.app_label, model_name), _default_table_name(mig.app_label, model_name)
+    )
+    rename_detail: dict[str, object] = {"rename_of": {"old": old, "new": new}}
+    snap = fields.pop((mig.app_label, model_name, old), None)
+    if snap is not None:
+        fields[(mig.app_label, model_name, new)] = snap
+    out.append(
+        SchemaChange(
+            change_type=SchemaChangeType.COLUMN_REMOVED,
+            table_name=table_name,
+            column_name=old,
+            detail=rename_detail,
+        ),
+    )
+    out.append(
+        SchemaChange(
+            change_type=SchemaChangeType.COLUMN_ADDED,
+            table_name=table_name,
+            column_name=new,
+            detail=rename_detail,
+        ),
+    )
+
+
+def _handle_rename_model(
+    op: ast.Call,
+    *,
+    mig: _ParsedMigration,
+    tables: _TableNameLedger,
+    fields: _FieldLedger,
+    out: list[SchemaChange],
+) -> None:
+    from dbsprout.migrate.models import SchemaChangeType  # noqa: PLC0415
+
+    kw = _kwargs(op)
+    old_node = kw.get("old_name")
+    new_node = kw.get("new_name")
+    if not (
+        isinstance(old_node, ast.Constant)
+        and isinstance(old_node.value, str)
+        and isinstance(new_node, ast.Constant)
+        and isinstance(new_node.value, str)
+    ):
+        return
+    old: str = old_node.value
+    new: str = new_node.value
+    old_table = tables.pop((mig.app_label, old), _default_table_name(mig.app_label, old))
+    new_table = _default_table_name(mig.app_label, new)
+    tables[(mig.app_label, new)] = new_table
+    # Move field-ledger entries to the new model name.
+    for key in [k for k in fields if k[0] == mig.app_label and k[1] == old]:
+        fields[(mig.app_label, new, key[2])] = fields.pop(key)
+    rename_detail: dict[str, object] = {"rename_of": {"old": old_table, "new": new_table}}
+    out.append(
+        SchemaChange(
+            change_type=SchemaChangeType.TABLE_REMOVED,
+            table_name=old_table,
+            detail=rename_detail,
+        )
+    )
+    out.append(
+        SchemaChange(
+            change_type=SchemaChangeType.TABLE_ADDED,
+            table_name=new_table,
+            detail=rename_detail,
+        )
+    )
+
+
+_HANDLERS["RenameField"] = _handle_rename_field
+_HANDLERS["RenameModel"] = _handle_rename_model
