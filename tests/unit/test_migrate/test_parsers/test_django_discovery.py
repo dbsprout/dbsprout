@@ -6,6 +6,7 @@ import pytest
 
 from dbsprout.migrate.parsers import MigrationParseError
 from dbsprout.migrate.parsers.django import (
+    _MAX_MIGRATION_BYTES,
     DjangoMigrationParser,
     _discover_migration_files,
     _linearize_migrations,
@@ -62,9 +63,10 @@ class TestDiscovery:
         assert found[0].name == "0001_initial.py"
 
     def test_skips_oversize(self, tmp_path: Path) -> None:
+        oversize = "x = '" + "a" * (_MAX_MIGRATION_BYTES + 100_000) + "'\n"
         root = build_django_project(
             tmp_path,
-            apps={"blog": [("0001_big", "x = '" + "a" * (1_100_000) + "'\n")]},
+            apps={"blog": [("0001_big", oversize)]},
         )
         found = _discover_migration_files(root)
         assert found == []
@@ -120,6 +122,20 @@ class TestWalker:
         path = root / "blog" / "migrations" / "initial_setup.py"
         with pytest.raises(MigrationParseError, match="numeric prefix"):
             _parse_migration_file(path, app_label="blog")
+
+    def test_extracts_ann_assign_dependencies(self, tmp_path: Path) -> None:
+        body = (
+            "from django.db import migrations\n\n"
+            "class Migration(migrations.Migration):\n"
+            "    dependencies: list[tuple[str, str]] = [('accounts', '0001_initial')]\n"
+            "    operations: list = []\n"
+        )
+        root = build_django_project(tmp_path, apps={"blog": [("0001_initial", body)]})
+        path = root / "blog" / "migrations" / "0001_initial.py"
+        parsed = _parse_migration_file(path, app_label="blog")
+        assert parsed is not None
+        assert parsed.dependencies == (("accounts", "0001_initial"),)
+        assert parsed.operations == ()
 
 
 def _parsed(

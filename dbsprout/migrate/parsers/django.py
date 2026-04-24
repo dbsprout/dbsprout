@@ -129,11 +129,11 @@ def _parse_migration_file(path: Path, *, app_label: str) -> _ParsedMigration | N
 
 
 def _extract_dependencies(cls_node: ast.ClassDef) -> tuple[tuple[str, str], ...]:
-    assign = _find_class_assign(cls_node, "dependencies")
-    if assign is None or not isinstance(assign.value, (ast.List, ast.Tuple)):
+    value = _find_class_assign_value(cls_node, "dependencies")
+    if not isinstance(value, (ast.List, ast.Tuple)):
         return ()
     result: list[tuple[str, str]] = []
-    for elt in assign.value.elts:
+    for elt in value.elts:
         if not isinstance(elt, ast.Tuple) or len(elt.elts) != 2:
             logger.debug("non-tuple dependency element; skipping")
             continue
@@ -148,29 +148,42 @@ def _extract_dependencies(cls_node: ast.ClassDef) -> tuple[tuple[str, str], ...]
 
 
 def _extract_operations(cls_node: ast.ClassDef) -> tuple[ast.Call, ...]:
-    assign = _find_class_assign(cls_node, "operations")
-    if assign is None or not isinstance(assign.value, (ast.List, ast.Tuple)):
+    value = _find_class_assign_value(cls_node, "operations")
+    if not isinstance(value, (ast.List, ast.Tuple)):
         return ()
-    return tuple(elt for elt in assign.value.elts if isinstance(elt, ast.Call))
+    return tuple(elt for elt in value.elts if isinstance(elt, ast.Call))
 
 
-def _find_class_assign(cls_node: ast.ClassDef, target_name: str) -> ast.Assign | None:
+def _find_class_assign_value(cls_node: ast.ClassDef, target_name: str) -> ast.expr | None:
+    """Return the RHS expression of ``target_name = ...`` inside ``cls_node``.
+
+    Handles both plain ``ast.Assign`` and annotated ``ast.AnnAssign`` forms.
+    Forward-declaration ``AnnAssign`` (``name: type`` with no value) returns ``None``.
+    """
     for stmt in cls_node.body:
         if isinstance(stmt, ast.Assign):
             for target in stmt.targets:
                 if isinstance(target, ast.Name) and target.id == target_name:
-                    return stmt
+                    return stmt.value
+        elif isinstance(stmt, ast.AnnAssign):
+            target = stmt.target
+            if isinstance(target, ast.Name) and target.id == target_name and stmt.value is not None:
+                return stmt.value
     return None
 
 
 def _linearize_migrations(parsed: list[_ParsedMigration]) -> list[_ParsedMigration]:
     """Topologically sort migrations across apps, with in-app prefix order."""
-    # In-app sort + duplicate-prefix detection.
-    by_app: dict[str, list[_ParsedMigration]] = defaultdict(list)
+    # Bucket by app, sort each bucket by numeric prefix (non-mutating rebind).
+    buckets: dict[str, list[_ParsedMigration]] = defaultdict(list)
     for mig in parsed:
-        by_app[mig.app_label].append(mig)
+        buckets[mig.app_label].append(mig)
+    by_app: dict[str, list[_ParsedMigration]] = {
+        app: sorted(migs, key=lambda m: m.prefix) for app, migs in buckets.items()
+    }
+
+    # Duplicate-prefix detection on sorted buckets.
     for app, migs in by_app.items():
-        migs.sort(key=lambda m: m.prefix)
         for prev, curr in itertools.pairwise(migs):
             if prev.prefix == curr.prefix:
                 raise MigrationParseError(
@@ -181,15 +194,18 @@ def _linearize_migrations(parsed: list[_ParsedMigration]) -> list[_ParsedMigrati
 
     known: dict[tuple[str, str], _ParsedMigration] = {(m.app_label, m.name): m for m in parsed}
 
+    # Pre-compute position within sorted siblings to avoid O(n) list.index scans.
+    position: dict[tuple[str, str], int] = {
+        (mig.app_label, mig.name): idx for migs in by_app.values() for idx, mig in enumerate(migs)
+    }
+
     # Deterministic insertion order: (app_label, prefix).
     sorter: graphlib.TopologicalSorter[tuple[str, str]] = graphlib.TopologicalSorter()
     for key in sorted(known, key=lambda k: (k[0], known[k].prefix)):
         mig = known[key]
-        # Intra-app chain: depend on previous numeric prefix in same app.
         siblings = by_app[mig.app_label]
-        idx = siblings.index(mig)
+        idx = position[(mig.app_label, mig.name)]
         intra = [(mig.app_label, siblings[idx - 1].name)] if idx > 0 else []
-        # Cross-app deps, filtered to known nodes (dangling deps = no-op edges).
         cross = [dep for dep in mig.dependencies if dep in known]
         sorter.add(key, *intra, *cross)
 
