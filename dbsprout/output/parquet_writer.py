@@ -103,6 +103,8 @@ def _sanitize_rows(
 class ParquetWriter:
     """Write generated data as Parquet files via Polars."""
 
+    format: str = "parquet"
+
     def write(
         self,
         tables_data: dict[str, list[dict[str, Any]]],

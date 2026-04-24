@@ -262,6 +262,8 @@ def _build_merge(
 class SQLWriter:
     """Write generated data as SQL INSERT files."""
 
+    format: str = "sql"
+
     def write(  # noqa: PLR0913
         self,
         tables_data: dict[str, list[dict[str, Any]]],

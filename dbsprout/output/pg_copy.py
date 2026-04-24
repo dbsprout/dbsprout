@@ -105,6 +105,8 @@ __all__ = [
 class PgCopyWriter:
     """Write generated data directly to PostgreSQL via COPY FROM STDIN."""
 
+    format: str = "pg_copy"
+
     def write(
         self,
         tables_data: dict[str, list[dict[str, Any]]],

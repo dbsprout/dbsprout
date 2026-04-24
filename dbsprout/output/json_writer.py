@@ -53,6 +53,8 @@ def _order_row(row: dict[str, Any], columns: list[str]) -> dict[str, Any]:
 class JSONWriter:
     """Write generated data as JSON or JSONL files."""
 
+    format: str = "json"
+
     def write(
         self,
         tables_data: dict[str, list[dict[str, Any]]],
