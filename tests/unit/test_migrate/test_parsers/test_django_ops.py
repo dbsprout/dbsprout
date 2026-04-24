@@ -330,6 +330,25 @@ class TestAlterField:
         assert SchemaChangeType.COLUMN_NULLABILITY_CHANGED in kinds
         assert SchemaChangeType.COLUMN_TYPE_CHANGED not in kinds
 
+    def test_alter_same_type_different_params_emits_type_change(self, tmp_path: Path) -> None:
+        """CharField(max_length=200) → CharField(max_length=300) must emit COLUMN_TYPE_CHANGED."""
+        create = (
+            "migrations.CreateModel(name='Post', fields=["
+            "('id', models.AutoField()), ('title', models.CharField(max_length=200))]),"
+        )
+        alter = (
+            "migrations.AlterField(model_name='Post', name='title',"
+            " field=models.CharField(max_length=300)),"
+        )
+        root = build_django_project(
+            tmp_path,
+            apps={"blog": [("0001_initial", _mig(create)), ("0002_alter", _mig(alter))]},
+        )
+        changes = DjangoMigrationParser().detect_changes(root)
+        altered = [c for c in changes if c.change_type is SchemaChangeType.COLUMN_TYPE_CHANGED]
+        assert len(altered) == 1
+        assert "max_length=300" in altered[0].new_value
+
     def test_alter_nullability_change_carries_django_type_detail(self, tmp_path: Path) -> None:
         create = (
             "migrations.CreateModel(name='Post', fields=["

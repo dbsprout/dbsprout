@@ -29,6 +29,12 @@ def test_golden_integration() -> None:
         and c.detail["ref_table"] == "accounts_user"
         for c in changes
     )
+    # AlterField changes title from CharField(max_length=200) → CharField(max_length=300).
+    # This is a param-only change and must emit COLUMN_TYPE_CHANGED.
+    assert any(
+        c.change_type is SchemaChangeType.COLUMN_TYPE_CHANGED and c.column_name == "title"
+        for c in changes
+    )
 
 
 def test_cycle_raises_with_both_nodes() -> None:

@@ -238,6 +238,7 @@ _FieldLedger = dict[tuple[str, str, str], "_FieldSnapshot"]  # (app, model, fiel
 class _FieldSnapshot:
     type_name: str
     django_type: str
+    base_type: str  # django_type with null= and default= kwargs stripped
     nullable: bool
     default: str | None
     is_fk: bool
@@ -337,8 +338,8 @@ def _handle_create_model(
                 column_name=str(col),
                 detail={
                     "ref_table": fk["ref_table"],
-                    "local_cols": [col],
-                    "remote_cols": fk["ref_columns"],
+                    "local_cols": fk["local_cols"],
+                    "remote_cols": fk["remote_cols"],
                 },
             ),
         )
@@ -431,7 +432,8 @@ def _extract_fields(
                 {
                     "column": col_name,
                     "ref_table": snapshot.ref_table,
-                    "ref_columns": ["id"],
+                    "local_cols": [col_name],
+                    "remote_cols": ["id"],
                 },
             )
     return field_dicts, fk_dicts
@@ -443,6 +445,13 @@ def _field_snapshot(
     type_name = _op_name(field_call)
     kw = _kwargs(field_call)
     django_type = ast.unparse(field_call)
+    # base_type: rebuild the call with null= and default= stripped so that
+    # param-only changes (e.g. max_length=200 → max_length=300) are detectable.
+    stripped_keywords = [
+        kw_node for kw_node in field_call.keywords if kw_node.arg not in {"null", "default"}
+    ]
+    stripped_call = ast.Call(func=field_call.func, args=field_call.args, keywords=stripped_keywords)
+    base_type = ast.unparse(stripped_call)
     nullable_node = kw.get("null")
     nullable = isinstance(nullable_node, ast.Constant) and nullable_node.value is True
     default_node = kw.get("default")
@@ -456,6 +465,7 @@ def _field_snapshot(
     return _FieldSnapshot(
         type_name=type_name,
         django_type=django_type,
+        base_type=base_type,
         nullable=nullable,
         default=default,
         is_fk=is_fk,
@@ -593,8 +603,18 @@ def _emit_m2m_through(
                     },
                 ],
                 "foreign_keys": [
-                    {"column": model_col, "ref_table": this_table, "ref_columns": ["id"]},
-                    {"column": target_col, "ref_table": target_table, "ref_columns": ["id"]},
+                    {
+                        "column": model_col,
+                        "ref_table": this_table,
+                        "local_cols": [model_col],
+                        "remote_cols": ["id"],
+                    },
+                    {
+                        "column": target_col,
+                        "ref_table": target_table,
+                        "local_cols": [target_col],
+                        "remote_cols": ["id"],
+                    },
                 ],
                 "db_table": None,
             },
@@ -707,7 +727,7 @@ def _handle_alter_field(
         )
         return
 
-    if new_snap.type_name != prev.type_name:
+    if new_snap.base_type != prev.base_type:
         out.append(
             SchemaChange(
                 change_type=SchemaChangeType.COLUMN_TYPE_CHANGED,
