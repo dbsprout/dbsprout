@@ -7,7 +7,7 @@ Converts a Liquibase XML changelog tree into a ``list[SchemaChange]`` via
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
@@ -102,7 +102,7 @@ def _resolve_root(project_path: Path, changelog_file: str | None) -> Path | None
     return None
 
 
-@dataclass
+@dataclass  # mutable by design: accumulates FK additions during the walk.
 class _FKLedger:
     """In-walk lookup of recorded foreign-key additions.
 
@@ -129,7 +129,7 @@ def _walk_changelog(
     ledger: _FKLedger,
     visited: set[Path],
     seen_changesets: dict[tuple[str, str], Path],
-) -> Iterable[SchemaChange]:
+) -> Iterator[SchemaChange]:
     resolved = root.resolve()
     if resolved in visited:
         raise MigrationParseError(f"include cycle detected at {resolved}")
@@ -235,7 +235,7 @@ def _handle_changeset(
     source: Path,
     ledger: _FKLedger,
     seen: dict[tuple[str, str], Path] | None = None,
-) -> Iterable[SchemaChange]:
+) -> Iterator[SchemaChange]:
     cs_id = changeset.get("id") or ""
     author = changeset.get("author") or ""
     if not cs_id:
