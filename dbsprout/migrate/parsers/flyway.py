@@ -48,6 +48,14 @@ class FlywayMigrationParser:
     placeholders: tuple[tuple[str, str], ...] = ()
 
     def detect_changes(self, project_path: Path) -> list[SchemaChange]:
+        """Return the ordered forward history of schema changes under ``project_path``.
+
+        Walks Flyway versioned SQL migrations in the configured ``locations`` (or
+        default probes), substitutes ``placeholders``, and dispatches each SQL
+        statement to the parser's sqlglot-based handler. Raises ``MigrationParseError``
+        when no migrations are discovered, versions collide, placeholders are
+        unresolved, or sqlglot fails to parse a file.
+        """
         files = _discover_migration_files(project_path, self.locations)
         if not files:
             searched = ", ".join(self.locations or _DEFAULT_LOCATIONS)
@@ -76,9 +84,21 @@ def _parse_version(raw: str) -> tuple[int, ...]:
         raise MigrationParseError(f"invalid Flyway version '{raw}'") from exc
 
 
+_VERSION_PAD_LEN = 16
+
+
 def _version_sort_key(version: tuple[int, ...]) -> tuple[int, ...]:
-    """Right-pad to length 8 so shorter versions sort before longer ones with same prefix."""
-    return version + (0,) * (8 - len(version))
+    """Right-pad the version tuple so shorter versions sort before longer ones with same prefix.
+
+    Pads to _VERSION_PAD_LEN segments; oversize versions raise MigrationParseError
+    rather than silently sorting incorrectly.
+    """
+    if len(version) > _VERSION_PAD_LEN:
+        raise MigrationParseError(
+            f"Flyway version has {len(version)} segments; "
+            f"max supported is {_VERSION_PAD_LEN}: {version}",
+        )
+    return version + (0,) * (_VERSION_PAD_LEN - len(version))
 
 
 # ---------------------------------------------------------------------------
@@ -256,62 +276,60 @@ def _column_def_to_dict(col: exp.ColumnDef) -> dict[str, object]:
     }
 
 
+def _column_ref_to_fk(col: exp.ColumnDef, ref_kind: exp.Reference) -> dict[str, object]:
+    """Translate a column-level `REFERENCES` clause into the parser's FK detail shape."""
+    ref = ref_kind.args["this"]
+    if isinstance(ref, exp.Schema):
+        ref_table_node = ref.this
+        ref_table = (
+            _split_qualified(ref_table_node.name)[1]
+            if isinstance(ref_table_node, exp.Table)
+            else ""
+        )
+    else:
+        ref_name = ref.name if hasattr(ref, "name") else str(ref)
+        _, ref_table = _split_qualified(ref_name)
+    remote_cols = [_strip_quotes(rc.name) for rc in (ref.args.get("expressions") or [])] or ["id"]
+    return {
+        "constraint_name": None,
+        "local_cols": [_strip_quotes(col.name)],
+        "ref_table": ref_table,
+        "remote_cols": remote_cols,
+    }
+
+
+def _table_fk_to_detail(fk: exp.ForeignKey) -> dict[str, object]:
+    """Translate a table-level `FOREIGN KEY` constraint into the parser's FK detail shape."""
+    local = [_strip_quotes(e.name) for e in (fk.args.get("expressions") or [])]
+    fk_ref = fk.args.get("reference")
+    ref_table = ""
+    remote: list[str] = []
+    if isinstance(fk_ref, exp.Reference):
+        fk_ref_this = fk_ref.this
+        if isinstance(fk_ref_this, exp.Table):
+            ref_table = _split_qualified(fk_ref_this.name)[1]
+        remote = [_strip_quotes(e.name) for e in (fk_ref.args.get("expressions") or [])]
+    return {
+        "constraint_name": None,
+        "local_cols": local,
+        "ref_table": ref_table,
+        "remote_cols": remote,
+    }
+
+
 def _extract_inline_fks(create: exp.Create) -> list[dict[str, object]]:
     fks: list[dict[str, object]] = []
-    schema = create.this  # exp.Schema
+    schema = create.this
     if not isinstance(schema, exp.Schema):
         return fks
     for expr in schema.expressions:
-        # Column-level REFERENCES
         if isinstance(expr, exp.ColumnDef):
             for c in expr.args.get("constraints") or []:
                 kind = c.args.get("kind")
                 if isinstance(kind, exp.Reference):
-                    ref = kind.args["this"]
-                    # sqlglot wraps REFERENCES target as exp.Schema with .this = exp.Table
-                    if isinstance(ref, exp.Schema):
-                        ref_table_node = ref.this
-                        ref_table = (
-                            _split_qualified(ref_table_node.name)[1]
-                            if isinstance(ref_table_node, exp.Table)
-                            else ""
-                        )
-                        remote_cols = [
-                            _strip_quotes(rc.name) for rc in (ref.args.get("expressions") or [])
-                        ] or ["id"]
-                    else:
-                        ref_name = ref.name if hasattr(ref, "name") else str(ref)
-                        _ref_schema, ref_table = _split_qualified(ref_name)
-                        remote_cols = [
-                            _strip_quotes(rc.name) for rc in (ref.args.get("expressions") or [])
-                        ] or ["id"]
-                    fks.append(
-                        {
-                            "constraint_name": None,
-                            "local_cols": [_strip_quotes(expr.name)],
-                            "ref_table": ref_table,
-                            "remote_cols": remote_cols,
-                        }
-                    )
-        # Table-level FOREIGN KEY constraint
+                    fks.append(_column_ref_to_fk(expr, kind))
         elif isinstance(expr, exp.ForeignKey):
-            fk_local = [_strip_quotes(e.name) for e in (expr.args.get("expressions") or [])]
-            fk_ref = expr.args.get("reference")
-            fk_ref_table = ""
-            fk_remote: list[str] = []
-            if isinstance(fk_ref, exp.Reference):
-                fk_ref_this = fk_ref.this
-                if isinstance(fk_ref_this, exp.Table):
-                    fk_ref_table = _split_qualified(fk_ref_this.name)[1]
-                fk_remote = [_strip_quotes(e.name) for e in (fk_ref.args.get("expressions") or [])]
-            fks.append(
-                {
-                    "constraint_name": None,
-                    "local_cols": fk_local,
-                    "ref_table": fk_ref_table,
-                    "remote_cols": fk_remote,
-                }
-            )
+            fks.append(_table_fk_to_detail(expr))
     return fks
 
 
@@ -429,6 +447,47 @@ def _handle_drop_column(table_name: str, drop: exp.Drop) -> list[SchemaChange]:
     ]
 
 
+def _alter_column_type_change(
+    table_name: str,
+    col_name: str,
+    dtype: exp.DataType,
+) -> SchemaChange:
+    return SchemaChange(
+        change_type=SchemaChangeType.COLUMN_TYPE_CHANGED,
+        table_name=table_name,
+        column_name=col_name,
+        new_value=dtype.sql(dialect=None),
+    )
+
+
+def _alter_column_nullability_change(
+    table_name: str,
+    col_name: str,
+    *,
+    allow_null: bool,
+) -> SchemaChange:
+    return SchemaChange(
+        change_type=SchemaChangeType.COLUMN_NULLABILITY_CHANGED,
+        table_name=table_name,
+        column_name=col_name,
+        new_value="NULL" if allow_null else "NOT NULL",
+    )
+
+
+def _alter_column_default_change(
+    table_name: str,
+    col_name: str,
+    default_expr: object,
+) -> SchemaChange:
+    new_value = default_expr.sql(dialect=None) if isinstance(default_expr, exp.Expression) else None
+    return SchemaChange(
+        change_type=SchemaChangeType.COLUMN_DEFAULT_CHANGED,
+        table_name=table_name,
+        column_name=col_name,
+        new_value=new_value,
+    )
+
+
 def _handle_alter_column(
     table_name: str,
     action: exp.AlterColumn,
@@ -437,57 +496,18 @@ def _handle_alter_column(
     out: list[SchemaChange] = []
     dtype = action.args.get("dtype")
     if isinstance(dtype, exp.DataType):
-        out.append(
-            SchemaChange(
-                change_type=SchemaChangeType.COLUMN_TYPE_CHANGED,
-                table_name=table_name,
-                column_name=col_name,
-                new_value=dtype.sql(dialect=None),
-            )
-        )
+        out.append(_alter_column_type_change(table_name, col_name, dtype))
     allow_null = action.args.get("allow_null")
-    if allow_null is False:
+    if allow_null is not None:
         out.append(
-            SchemaChange(
-                change_type=SchemaChangeType.COLUMN_NULLABILITY_CHANGED,
-                table_name=table_name,
-                column_name=col_name,
-                new_value="NOT NULL",
-            )
+            _alter_column_nullability_change(table_name, col_name, allow_null=bool(allow_null)),
         )
-    elif allow_null is True:
-        out.append(
-            SchemaChange(
-                change_type=SchemaChangeType.COLUMN_NULLABILITY_CHANGED,
-                table_name=table_name,
-                column_name=col_name,
-                new_value="NULL",
-            )
-        )
-    # SET DEFAULT or DROP DEFAULT
     if "default" in action.args:
-        default_expr = action.args.get("default")
-        new_value = (
-            default_expr.sql(dialect=None) if isinstance(default_expr, exp.Expression) else None
-        )
         out.append(
-            SchemaChange(
-                change_type=SchemaChangeType.COLUMN_DEFAULT_CHANGED,
-                table_name=table_name,
-                column_name=col_name,
-                new_value=new_value,
-            )
+            _alter_column_default_change(table_name, col_name, action.args.get("default")),
         )
     elif action.args.get("drop") is True and dtype is None and allow_null is None:
-        # DROP DEFAULT (no "default" key, but drop=True and no other dimension)
-        out.append(
-            SchemaChange(
-                change_type=SchemaChangeType.COLUMN_DEFAULT_CHANGED,
-                table_name=table_name,
-                column_name=col_name,
-                new_value=None,
-            )
-        )
+        out.append(_alter_column_default_change(table_name, col_name, None))
     if not out:
         logger.debug("ALTER COLUMN %s on %s produced no recognised dimension", col_name, table_name)
     return out
