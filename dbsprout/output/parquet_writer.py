@@ -21,9 +21,9 @@ if TYPE_CHECKING:
     from dbsprout.schema.models import DatabaseSchema, TableSchema
 
 try:
-    import polars as pl  # type: ignore[import-not-found,unused-ignore]
+    import polars as pl
 except ImportError:
-    pl = None  # type: ignore[assignment,unused-ignore]
+    pl = None
 
 _COMPRESSION: Literal["lz4", "uncompressed", "snappy", "gzip", "brotli", "zstd"] = "snappy"
 _SAFE_TABLE_NAME = re.compile(r"^[A-Za-z0-9_.\- ]+$")

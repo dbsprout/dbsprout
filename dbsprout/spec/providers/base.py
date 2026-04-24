@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
     from dbsprout.schema.models import DatabaseSchema
     from dbsprout.spec.models import DataSpec
 
 
+@runtime_checkable
 class SpecProvider(Protocol):  # pragma: no cover
     """Protocol for spec generation providers (embedded, cloud, etc.)."""
 

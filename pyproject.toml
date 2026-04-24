@@ -44,6 +44,39 @@ Repository = "https://github.com/dbsprout/dbsprout"
 [project.scripts]
 dbsprout = "dbsprout.cli.app:app"
 
+[project.entry-points."dbsprout.parsers"]
+ddl = "dbsprout.plugins.adapters:ddl_parser"
+dbml = "dbsprout.plugins.adapters:dbml_parser"
+mermaid = "dbsprout.plugins.adapters:mermaid_parser"
+plantuml = "dbsprout.plugins.adapters:plantuml_parser"
+prisma = "dbsprout.plugins.adapters:prisma_parser"
+
+[project.entry-points."dbsprout.generators"]
+heuristic = "dbsprout.generate.engines.heuristic:HeuristicEngine"
+spec_driven = "dbsprout.generate.engines.spec_driven:SpecDrivenEngine"
+
+[project.entry-points."dbsprout.outputs"]
+sql = "dbsprout.output.sql_writer:SQLWriter"
+csv = "dbsprout.output.csv_writer:CSVWriter"
+json = "dbsprout.output.json_writer:JSONWriter"
+jsonl = "dbsprout.output.json_writer:JSONWriter"
+parquet = "dbsprout.output.parquet_writer:ParquetWriter"
+pg_copy = "dbsprout.output.pg_copy:PgCopyWriter"
+mysql_load_data = "dbsprout.output.mysql_load_data:MysqlLoadDataWriter"
+sa_batch = "dbsprout.output.sa_batch:SaBatchWriter"
+
+[project.entry-points."dbsprout.llm_providers"]
+embedded = "dbsprout.spec.providers.embedded:EmbeddedProvider"
+ollama = "dbsprout.spec.providers.ollama:OllamaProvider"
+cloud = "dbsprout.spec.providers.cloud:CloudProvider"
+
+[project.entry-points."dbsprout.migration_frameworks"]
+alembic = "dbsprout.migrate.parsers.alembic:AlembicParser"
+django = "dbsprout.migrate.parsers.django:DjangoMigrationParser"
+flyway = "dbsprout.migrate.parsers.flyway:FlywayMigrationParser"
+liquibase = "dbsprout.migrate.parsers.liquibase:LiquibaseMigrationParser"
+prisma = "dbsprout.migrate.parsers.prisma:PrismaMigrationParser"
+
 [project.optional-dependencies]
 dev = [
     "pytest>=8.0",
@@ -184,6 +217,10 @@ plugins = ["pydantic.mypy"]
 [[tool.mypy.overrides]]
 module = "tests.*"
 disallow_untyped_defs = false
+
+[[tool.mypy.overrides]]
+module = ["polars", "polars.*", "alembic", "alembic.*", "psycopg", "psycopg.*"]
+ignore_missing_imports = true
 
 # ─── Bandit ────────────────────────────────────────────────────────────
 [tool.bandit]

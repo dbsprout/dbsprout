@@ -293,7 +293,7 @@ def _run_direct_insert(
 
     elif insert_method == "copy" or (insert_method == "auto" and dialect == "postgresql"):
         try:
-            import psycopg  # type: ignore[import-not-found,unused-ignore]  # noqa: F401, PLC0415
+            import psycopg  # noqa: F401, PLC0415
 
             from dbsprout.output.pg_copy import PgCopyWriter  # noqa: PLC0415
 
