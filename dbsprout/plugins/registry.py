@@ -1,0 +1,124 @@
+"""Plugin registry — lazy singleton populated from ``entry_points``."""
+
+from __future__ import annotations
+
+import functools
+import logging
+from dataclasses import dataclass
+from typing import Any, Literal
+
+from dbsprout.plugins.discovery import discover
+from dbsprout.plugins.errors import PluginValidationError
+from dbsprout.plugins.protocols import (
+    GenerationEngine,
+    MigrationParser,
+    OutputWriter,
+    SchemaParser,
+    SpecProvider,
+)
+
+logger = logging.getLogger(__name__)
+
+GROUPS: dict[str, type] = {
+    "dbsprout.parsers": SchemaParser,
+    "dbsprout.generators": GenerationEngine,
+    "dbsprout.outputs": OutputWriter,
+    "dbsprout.llm_providers": SpecProvider,
+    "dbsprout.migration_frameworks": MigrationParser,
+}
+
+
+@dataclass(frozen=True)
+class PluginInfo:
+    group: str
+    name: str
+    module: str
+    status: Literal["loaded", "error"]
+    error: str | None
+    obj: Any | None
+
+
+def _module_path(obj: Any) -> str:
+    mod: str | None = getattr(obj, "__module__", None)
+    if mod:
+        return mod
+    cls = getattr(obj, "__class__", None)
+    result: str = getattr(cls, "__module__", "<unknown>")
+    return result
+
+
+def _passes_protocol(obj: Any, protocol: type) -> bool:
+    return isinstance(obj, protocol)
+
+
+class PluginRegistry:
+    """Holds discovered plugins, keyed by ``(group, name)``."""
+
+    def __init__(self) -> None:
+        self._by_key: dict[tuple[str, str], PluginInfo] = {}
+        self._build()
+
+    def _build(self) -> None:
+        for group, protocol in GROUPS.items():
+            for name, obj in discover(group):
+                key = (group, name)
+                if key in self._by_key:
+                    logger.warning(
+                        "duplicate plugin name %r in group %s — keeping first",
+                        name,
+                        group,
+                    )
+                    self._by_key[(group, f"{name}#dup")] = PluginInfo(
+                        group=group,
+                        name=name,
+                        module=_module_path(obj),
+                        status="error",
+                        error="duplicate",
+                        obj=None,
+                    )
+                    continue
+                if _passes_protocol(obj, protocol):
+                    self._by_key[key] = PluginInfo(
+                        group=group,
+                        name=name,
+                        module=_module_path(obj),
+                        status="loaded",
+                        error=None,
+                        obj=obj,
+                    )
+                else:
+                    self._by_key[key] = PluginInfo(
+                        group=group,
+                        name=name,
+                        module=_module_path(obj),
+                        status="error",
+                        error=f"does not satisfy Protocol {protocol.__name__}",
+                        obj=None,
+                    )
+
+    def get(self, group: str, name: str) -> Any | None:
+        info = self._by_key.get((group, name))
+        if info is None or info.status != "loaded":
+            return None
+        return info.obj
+
+    def list(self, group: str | None = None) -> list[PluginInfo]:
+        if group is None:
+            return list(self._by_key.values())
+        return [info for (g, _), info in self._by_key.items() if g == group]
+
+    def check(self, group: str, name: str) -> PluginInfo:
+        info = self._by_key.get((group, name))
+        if info is None:
+            raise PluginValidationError(group=group, name=name, reason="not discovered")
+        if info.status != "loaded":
+            raise PluginValidationError(
+                group=group, name=name, reason=info.error or "unknown error"
+            )
+        return info
+
+
+@functools.lru_cache(maxsize=1)
+def get_registry() -> PluginRegistry:
+    """Return the process-wide plugin registry (built on first call)."""
+    return PluginRegistry()
