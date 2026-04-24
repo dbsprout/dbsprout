@@ -152,3 +152,13 @@ class TestSymlinkGuard:
             files = _discover_migration_files(root, None)
         assert [f.name for f in files] == ["V1__a.sql"]
         assert "symlink" in caplog.text.lower()
+
+
+class TestLocationEscape:
+    def test_parent_escape_raises(self, tmp_path: Path) -> None:
+        # Caller passes a path that escapes project_path via `../`
+        outside = tmp_path.parent / "other"
+        outside.mkdir(exist_ok=True)
+        (outside / "V1__x.sql").write_text(EMPTY_SQL, encoding="utf-8")
+        with pytest.raises(MigrationParseError, match="escapes project root"):
+            _discover_migration_files(tmp_path, ("../other",))

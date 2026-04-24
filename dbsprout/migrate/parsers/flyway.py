@@ -67,7 +67,7 @@ class FlywayMigrationParser:
         changes: list[SchemaChange] = []
         for file in files:
             stmts = _parse_file(file, dialect=self.dialect, placeholders=placeholders)
-            changes.extend(_walk_statements(stmts, dialect=self.dialect, ledger=ledger))
+            changes.extend(_walk_statements(stmts, ledger=ledger))
         return changes
 
 
@@ -108,7 +108,16 @@ def _version_sort_key(version: tuple[int, ...]) -> tuple[int, ...]:
 
 def _resolve_locations(project_path: Path, locations: tuple[str, ...] | None) -> list[Path]:
     if locations is not None:
-        return [project_path / loc for loc in locations]
+        resolved_root = project_path.resolve()
+        dirs: list[Path] = []
+        for loc in locations:
+            candidate = (project_path / loc).resolve()
+            if resolved_root not in candidate.parents and candidate != resolved_root:
+                raise MigrationParseError(
+                    f"location '{loc}' escapes project root {project_path}",
+                )
+            dirs.append(candidate)
+        return dirs
     for default in _DEFAULT_LOCATIONS:
         candidate = project_path / default
         if candidate.is_dir():
@@ -477,9 +486,9 @@ def _alter_column_nullability_change(
 def _alter_column_default_change(
     table_name: str,
     col_name: str,
-    default_expr: object,
+    default_expr: exp.Expression | None,
 ) -> SchemaChange:
-    new_value = default_expr.sql(dialect=None) if isinstance(default_expr, exp.Expression) else None
+    new_value = default_expr.sql(dialect=None) if default_expr is not None else None
     return SchemaChange(
         change_type=SchemaChangeType.COLUMN_DEFAULT_CHANGED,
         table_name=table_name,
@@ -503,9 +512,9 @@ def _handle_alter_column(
             _alter_column_nullability_change(table_name, col_name, allow_null=bool(allow_null)),
         )
     if "default" in action.args:
-        out.append(
-            _alter_column_default_change(table_name, col_name, action.args.get("default")),
-        )
+        raw_default = action.args.get("default")
+        default_expr = raw_default if isinstance(raw_default, exp.Expression) else None
+        out.append(_alter_column_default_change(table_name, col_name, default_expr))
     elif action.args.get("drop") is True and dtype is None and allow_null is None:
         out.append(_alter_column_default_change(table_name, col_name, None))
     if not out:
@@ -711,7 +720,6 @@ def _handle_drop_index(node: exp.Drop) -> list[SchemaChange]:
 def _walk_statements(
     stmts: list[exp.Expression],
     *,
-    dialect: str,
     ledger: _FKLedger,
 ) -> list[SchemaChange]:
     out: list[SchemaChange] = []
@@ -733,5 +741,4 @@ def _walk_statements(
                 type(stmt).__name__,
                 kind or "N/A",
             )
-    _ = dialect  # available for future dialect-specific handling
     return out

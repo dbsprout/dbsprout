@@ -97,7 +97,7 @@ class TestCreateDropTable:
             "CREATE TABLE authors (id INT PRIMARY KEY, name VARCHAR(120) NOT NULL);",
             read="postgres",
         )
-        changes = _walk_statements(stmts, dialect="postgres", ledger=_FKLedger())
+        changes = _walk_statements(stmts, ledger=_FKLedger())
         assert len(changes) == 1
         c = changes[0]
         assert c.change_type is SchemaChangeType.TABLE_ADDED
@@ -115,7 +115,7 @@ class TestCreateDropTable:
             "CREATE TABLE books (id INT, author_id INT REFERENCES authors(id));",
             read="postgres",
         )
-        changes = _walk_statements(stmts, dialect="postgres", ledger=_FKLedger())
+        changes = _walk_statements(stmts, ledger=_FKLedger())
         assert changes[0].change_type is SchemaChangeType.TABLE_ADDED
         fks = changes[0].detail["foreign_keys"]
         assert fks[0]["ref_table"] == "authors"
@@ -124,13 +124,13 @@ class TestCreateDropTable:
 
     def test_create_table_with_schema_prefix(self) -> None:
         stmts = sqlglot.parse("CREATE TABLE app.orders (id INT);", read="postgres")
-        changes = _walk_statements(stmts, dialect="postgres", ledger=_FKLedger())
+        changes = _walk_statements(stmts, ledger=_FKLedger())
         assert changes[0].table_name == "orders"
         assert changes[0].detail["schema"] == "app"
 
     def test_drop_table(self) -> None:
         stmts = sqlglot.parse("DROP TABLE authors;", read="postgres")
-        changes = _walk_statements(stmts, dialect="postgres", ledger=_FKLedger())
+        changes = _walk_statements(stmts, ledger=_FKLedger())
         assert len(changes) == 1
         assert changes[0].change_type is SchemaChangeType.TABLE_REMOVED
         assert changes[0].table_name == "authors"
@@ -142,7 +142,7 @@ class TestAddDropColumn:
             "ALTER TABLE users ADD COLUMN email VARCHAR(254) NOT NULL DEFAULT '';",
             read="postgres",
         )
-        changes = _walk_statements(stmts, dialect="postgres", ledger=_FKLedger())
+        changes = _walk_statements(stmts, ledger=_FKLedger())
         assert len(changes) == 1
         c = changes[0]
         assert c.change_type is SchemaChangeType.COLUMN_ADDED
@@ -157,7 +157,7 @@ class TestAddDropColumn:
             "ALTER TABLE books ADD COLUMN author_id INT REFERENCES authors(id);",
             read="postgres",
         )
-        changes = _walk_statements(stmts, dialect="postgres", ledger=_FKLedger())
+        changes = _walk_statements(stmts, ledger=_FKLedger())
         # Two changes: COLUMN_ADDED + FOREIGN_KEY_ADDED
         kinds = [c.change_type for c in changes]
         assert SchemaChangeType.COLUMN_ADDED in kinds
@@ -168,7 +168,7 @@ class TestAddDropColumn:
 
     def test_drop_column(self) -> None:
         stmts = sqlglot.parse("ALTER TABLE users DROP COLUMN legacy_flag;", read="postgres")
-        changes = _walk_statements(stmts, dialect="postgres", ledger=_FKLedger())
+        changes = _walk_statements(stmts, ledger=_FKLedger())
         assert len(changes) == 1
         c = changes[0]
         assert c.change_type is SchemaChangeType.COLUMN_REMOVED
@@ -179,7 +179,7 @@ class TestAddDropColumn:
 class TestAlterColumn:
     def test_alter_type(self) -> None:
         stmts = sqlglot.parse("ALTER TABLE t ALTER COLUMN c TYPE BIGINT;", read="postgres")
-        changes = _walk_statements(stmts, dialect="postgres", ledger=_FKLedger())
+        changes = _walk_statements(stmts, ledger=_FKLedger())
         assert len(changes) == 1
         c = changes[0]
         assert c.change_type is SchemaChangeType.COLUMN_TYPE_CHANGED
@@ -189,13 +189,13 @@ class TestAlterColumn:
 
     def test_alter_set_not_null(self) -> None:
         stmts = sqlglot.parse("ALTER TABLE t ALTER COLUMN c SET NOT NULL;", read="postgres")
-        changes = _walk_statements(stmts, dialect="postgres", ledger=_FKLedger())
+        changes = _walk_statements(stmts, ledger=_FKLedger())
         assert changes[0].change_type is SchemaChangeType.COLUMN_NULLABILITY_CHANGED
         assert changes[0].new_value == "NOT NULL"
 
     def test_alter_drop_not_null(self) -> None:
         stmts = sqlglot.parse("ALTER TABLE t ALTER COLUMN c DROP NOT NULL;", read="postgres")
-        changes = _walk_statements(stmts, dialect="postgres", ledger=_FKLedger())
+        changes = _walk_statements(stmts, ledger=_FKLedger())
         assert changes[0].change_type is SchemaChangeType.COLUMN_NULLABILITY_CHANGED
         assert changes[0].new_value == "NULL"
 
@@ -204,7 +204,7 @@ class TestAlterColumn:
             "ALTER TABLE t ALTER COLUMN c SET DEFAULT 42;",
             read="postgres",
         )
-        changes = _walk_statements(stmts, dialect="postgres", ledger=_FKLedger())
+        changes = _walk_statements(stmts, ledger=_FKLedger())
         assert changes[0].change_type is SchemaChangeType.COLUMN_DEFAULT_CHANGED
         assert changes[0].new_value == "42"
 
@@ -213,7 +213,7 @@ class TestAlterColumn:
             "ALTER TABLE t ALTER COLUMN c DROP DEFAULT;",
             read="postgres",
         )
-        changes = _walk_statements(stmts, dialect="postgres", ledger=_FKLedger())
+        changes = _walk_statements(stmts, ledger=_FKLedger())
         assert changes[0].change_type is SchemaChangeType.COLUMN_DEFAULT_CHANGED
         assert changes[0].new_value is None
 
@@ -226,7 +226,7 @@ class TestAddDropConstraint:
         )
         stmts = sqlglot.parse(fk_add_sql, read="postgres")
         ledger = _FKLedger()
-        changes = _walk_statements(stmts, dialect="postgres", ledger=ledger)
+        changes = _walk_statements(stmts, ledger=ledger)
         assert len(changes) == 1
         c = changes[0]
         assert c.change_type is SchemaChangeType.FOREIGN_KEY_ADDED
@@ -246,8 +246,8 @@ class TestAddDropConstraint:
             read="postgres",
         )
         ledger = _FKLedger()
-        _walk_statements(add, dialect="postgres", ledger=ledger)
-        changes = _walk_statements(drop, dialect="postgres", ledger=ledger)
+        _walk_statements(add, ledger=ledger)
+        changes = _walk_statements(drop, ledger=ledger)
         assert len(changes) == 1
         assert changes[0].change_type is SchemaChangeType.FOREIGN_KEY_REMOVED
         assert changes[0].detail["constraint_name"] == "fk_author"
@@ -261,7 +261,7 @@ class TestAddDropConstraint:
             read="postgres",
         )
         with caplog.at_level("DEBUG", logger="dbsprout.migrate.parsers.flyway"):
-            changes = _walk_statements(stmts, dialect="postgres", ledger=_FKLedger())
+            changes = _walk_statements(stmts, ledger=_FKLedger())
         assert changes == []
         assert "chk_price" in caplog.text
 
@@ -272,7 +272,7 @@ class TestCreateDropIndex:
             "CREATE INDEX idx_users_email ON users (email);",
             read="postgres",
         )
-        changes = _walk_statements(stmts, dialect="postgres", ledger=_FKLedger())
+        changes = _walk_statements(stmts, ledger=_FKLedger())
         assert len(changes) == 1
         c = changes[0]
         assert c.change_type is SchemaChangeType.INDEX_ADDED
@@ -282,17 +282,20 @@ class TestCreateDropIndex:
 
     def test_drop_index(self) -> None:
         stmts = sqlglot.parse("DROP INDEX idx_users_email;", read="postgres")
-        changes = _walk_statements(stmts, dialect="postgres", ledger=_FKLedger())
+        changes = _walk_statements(stmts, ledger=_FKLedger())
         assert len(changes) == 1
         c = changes[0]
         assert c.change_type is SchemaChangeType.INDEX_REMOVED
         assert c.detail["index_name"] == "idx_users_email"
+        # DROP INDEX in Postgres carries no table name. Contract: emit ""
+        # as the sentinel. Downstream adapters reconcile via detail["index_name"].
+        assert c.table_name == ""
 
 
 class TestRename:
     def test_rename_table_emits_pair(self) -> None:
         stmts = sqlglot.parse("ALTER TABLE old_name RENAME TO new_name;", read="postgres")
-        changes = _walk_statements(stmts, dialect="postgres", ledger=_FKLedger())
+        changes = _walk_statements(stmts, ledger=_FKLedger())
         assert len(changes) == 2
         rm, add = changes
         assert rm.change_type is SchemaChangeType.TABLE_REMOVED
@@ -307,7 +310,7 @@ class TestRename:
             "ALTER TABLE users RENAME COLUMN uname TO username;",
             read="postgres",
         )
-        changes = _walk_statements(stmts, dialect="postgres", ledger=_FKLedger())
+        changes = _walk_statements(stmts, ledger=_FKLedger())
         assert len(changes) == 2
         rm, add = changes
         assert rm.change_type is SchemaChangeType.COLUMN_REMOVED
@@ -336,7 +339,7 @@ class TestEdgeCases:
 
     def test_create_table_as_select_skipped(self) -> None:
         stmts = sqlglot.parse("CREATE TABLE t AS SELECT 1;", read="postgres")
-        changes = _walk_statements(stmts, dialect="postgres", ledger=_FKLedger())
+        changes = _walk_statements(stmts, ledger=_FKLedger())
         assert changes == []
 
     def test_handle_create_table_non_schema_returns_empty(self) -> None:
@@ -346,7 +349,7 @@ class TestEdgeCases:
 
     def test_drop_table_with_schema_prefix(self) -> None:
         stmts = sqlglot.parse("DROP TABLE app.orders;", read="postgres")
-        changes = _walk_statements(stmts, dialect="postgres", ledger=_FKLedger())
+        changes = _walk_statements(stmts, ledger=_FKLedger())
         assert len(changes) == 1
         assert changes[0].table_name == "orders"
         assert changes[0].detail is not None
@@ -359,7 +362,7 @@ class TestEdgeCases:
 
     def test_add_column_with_schema_prefix(self) -> None:
         stmts = sqlglot.parse("ALTER TABLE app.users ADD COLUMN notes TEXT;", read="postgres")
-        changes = _walk_statements(stmts, dialect="postgres", ledger=_FKLedger())
+        changes = _walk_statements(stmts, ledger=_FKLedger())
         assert len(changes) == 1
         assert changes[0].change_type is SchemaChangeType.COLUMN_ADDED
         assert changes[0].detail.get("schema") == "app"
@@ -372,28 +375,28 @@ class TestEdgeCases:
     def test_add_constraint_non_fk_skipped(self, caplog: pytest.LogCaptureFixture) -> None:
         stmts = sqlglot.parse("ALTER TABLE t ADD CONSTRAINT uq_col UNIQUE (col);", read="postgres")
         with caplog.at_level("DEBUG", logger="dbsprout.migrate.parsers.flyway"):
-            changes = _walk_statements(stmts, dialect="postgres", ledger=_FKLedger())
+            changes = _walk_statements(stmts, ledger=_FKLedger())
         assert changes == []
         assert "not a FK" in caplog.text
 
     def test_alter_table_unsupported_action_logged(self, caplog: pytest.LogCaptureFixture) -> None:
         stmts = sqlglot.parse("ALTER TABLE t SET TABLESPACE tblspc;", read="postgres")
         with caplog.at_level("DEBUG", logger="dbsprout.migrate.parsers.flyway"):
-            changes = _walk_statements(stmts, dialect="postgres", ledger=_FKLedger())
+            changes = _walk_statements(stmts, ledger=_FKLedger())
         assert changes == []
         assert "AlterSet" in caplog.text
 
     def test_alter_table_drop_index_skipped(self, caplog: pytest.LogCaptureFixture) -> None:
         stmts = sqlglot.parse("ALTER TABLE t DROP INDEX my_idx;", read="mysql")
         with caplog.at_level("DEBUG", logger="dbsprout.migrate.parsers.flyway"):
-            changes = _walk_statements(stmts, dialect="mysql", ledger=_FKLedger())
+            changes = _walk_statements(stmts, ledger=_FKLedger())
         assert changes == []
         assert "unsupported ALTER TABLE DROP action" in caplog.text
 
     def test_unsupported_statement_logged(self, caplog: pytest.LogCaptureFixture) -> None:
         stmts = sqlglot.parse("INSERT INTO t VALUES (1);", read="postgres")
         with caplog.at_level("DEBUG", logger="dbsprout.migrate.parsers.flyway"):
-            changes = _walk_statements(stmts, dialect="postgres", ledger=_FKLedger())
+            changes = _walk_statements(stmts, ledger=_FKLedger())
         assert changes == []
         assert "skipping unsupported statement" in caplog.text
 
@@ -444,7 +447,7 @@ class TestEdgeCases:
             "CREATE TABLE books (id INT, author_id INT REFERENCES authors);",
             read="mysql",
         )
-        changes = _walk_statements(stmts, dialect="mysql", ledger=_FKLedger())
+        changes = _walk_statements(stmts, ledger=_FKLedger())
         assert changes[0].change_type is SchemaChangeType.TABLE_ADDED
         fks = changes[0].detail["foreign_keys"]
         assert fks[0]["ref_table"] == "authors"
@@ -455,7 +458,7 @@ class TestEdgeCases:
             "ALTER TABLE books ADD COLUMN author_id INT REFERENCES authors;",
             read="mysql",
         )
-        changes = _walk_statements(stmts, dialect="mysql", ledger=_FKLedger())
+        changes = _walk_statements(stmts, ledger=_FKLedger())
         kinds = [c.change_type for c in changes]
         assert SchemaChangeType.COLUMN_ADDED in kinds
         assert SchemaChangeType.FOREIGN_KEY_ADDED in kinds
@@ -469,7 +472,7 @@ class TestEdgeCases:
         )
         stmts = sqlglot.parse(fk_sql, read="mysql")
         ledger = _FKLedger()
-        changes = _walk_statements(stmts, dialect="mysql", ledger=ledger)
+        changes = _walk_statements(stmts, ledger=ledger)
         assert len(changes) == 1
         assert changes[0].change_type is SchemaChangeType.FOREIGN_KEY_ADDED
 
@@ -478,7 +481,7 @@ class TestEdgeCases:
         fk_sql = "ALTER TABLE books ADD FOREIGN KEY (author_id) REFERENCES authors(id);"
         stmts = sqlglot.parse(fk_sql, read="mysql")
         ledger = _FKLedger()
-        changes = _walk_statements(stmts, dialect="mysql", ledger=ledger)
+        changes = _walk_statements(stmts, ledger=ledger)
         assert len(changes) == 1
         assert changes[0].change_type is SchemaChangeType.FOREIGN_KEY_ADDED
 
@@ -488,7 +491,7 @@ class TestEdgeCases:
             "CREATE INDEX idx_lower ON t (lower(name));",
             read="postgres",
         )
-        changes = _walk_statements(stmts, dialect="postgres", ledger=_FKLedger())
+        changes = _walk_statements(stmts, ledger=_FKLedger())
         assert len(changes) == 1
         assert changes[0].change_type is SchemaChangeType.INDEX_ADDED
 
@@ -513,7 +516,7 @@ class TestEdgeCases:
             ");"
         )
         stmts = sqlglot.parse(sql, read="mysql")
-        changes = _walk_statements(stmts, dialect="mysql", ledger=_FKLedger())
+        changes = _walk_statements(stmts, ledger=_FKLedger())
         assert changes[0].change_type is SchemaChangeType.TABLE_ADDED
         fks = changes[0].detail["foreign_keys"]
         assert fks[0]["ref_table"] == "authors"
@@ -525,7 +528,7 @@ class TestEdgeCases:
         )
         stmts = sqlglot.parse(fk_sql, read="mysql")
         ledger = _FKLedger()
-        changes = _walk_statements(stmts, dialect="mysql", ledger=ledger)
+        changes = _walk_statements(stmts, ledger=ledger)
         assert len(changes) == 1
         assert changes[0].change_type is SchemaChangeType.FOREIGN_KEY_ADDED
         assert changes[0].detail["ref_table"] == "authors"
@@ -541,7 +544,7 @@ class TestEdgeCases:
             ");"
         )
         stmts = sqlglot.parse(sql, read="postgres")
-        changes = _walk_statements(stmts, dialect="postgres", ledger=_FKLedger())
+        changes = _walk_statements(stmts, ledger=_FKLedger())
         assert changes[0].change_type is SchemaChangeType.TABLE_ADDED
         fks = changes[0].detail["foreign_keys"]
         assert len(fks) == 1
