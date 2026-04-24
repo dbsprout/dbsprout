@@ -1,0 +1,2 @@
+ALTER TABLE books ADD COLUMN published_at DATE;
+ALTER TABLE books ALTER COLUMN title TYPE TEXT;

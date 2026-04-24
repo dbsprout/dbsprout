@@ -54,7 +54,13 @@ class FlywayMigrationParser:
             raise MigrationParseError(
                 f"no V*__*.sql found under {project_path}; searched: {searched}",
             )
-        raise NotImplementedError("walker lands in later tasks")
+        placeholders = dict(self.placeholders)
+        ledger = _FKLedger()
+        changes: list[SchemaChange] = []
+        for file in files:
+            stmts = _parse_file(file, dialect=self.dialect, placeholders=placeholders)
+            changes.extend(_walk_statements(stmts, dialect=self.dialect, ledger=ledger))
+        return changes
 
 
 # ---------------------------------------------------------------------------
