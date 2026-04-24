@@ -358,3 +358,46 @@ class TestRenames:
             SchemaChangeType.TABLE_ADDED,
         }
         assert {c.table_name for c in pair} == {"blog_oldpost", "blog_post"}
+
+
+class TestIndexes:
+    def test_add_index(self, tmp_path: Path) -> None:
+        create = (
+            "migrations.CreateModel(name='Post', fields=["
+            "('id', models.AutoField()), ('title', models.CharField())]),"
+        )
+        add_idx = (
+            "migrations.AddIndex(model_name='Post',"
+            " index=models.Index(fields=['title'], name='idx_post_title')),"
+        )
+        root = build_django_project(
+            tmp_path,
+            apps={
+                "blog": [
+                    ("0001_initial", _mig(create)),
+                    ("0002_idx", _mig(add_idx)),
+                ]
+            },
+        )
+        changes = DjangoMigrationParser().detect_changes(root)
+        idx = [c for c in changes if c.change_type is SchemaChangeType.INDEX_ADDED]
+        assert len(idx) == 1
+        assert idx[0].detail["cols"] == ["title"]
+        assert idx[0].detail["index_name"] == "idx_post_title"
+
+    def test_remove_index(self, tmp_path: Path) -> None:
+        create = "migrations.CreateModel(name='Post', fields=[('id', models.AutoField())]),"
+        rm_idx = "migrations.RemoveIndex(model_name='Post', name='idx_post_title'),"
+        root = build_django_project(
+            tmp_path,
+            apps={
+                "blog": [
+                    ("0001_initial", _mig(create)),
+                    ("0002_rm", _mig(rm_idx)),
+                ]
+            },
+        )
+        changes = DjangoMigrationParser().detect_changes(root)
+        idx = [c for c in changes if c.change_type is SchemaChangeType.INDEX_REMOVED]
+        assert len(idx) == 1
+        assert idx[0].detail["index_name"] == "idx_post_title"

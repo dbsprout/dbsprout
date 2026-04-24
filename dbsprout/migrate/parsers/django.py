@@ -829,3 +829,91 @@ def _handle_rename_model(
 
 _HANDLERS["RenameField"] = _handle_rename_field
 _HANDLERS["RenameModel"] = _handle_rename_model
+
+
+# ---------------------------------------------------------------------------
+# Task 12: AddIndex + RemoveIndex handlers
+# ---------------------------------------------------------------------------
+
+
+def _handle_add_index(
+    op: ast.Call,
+    *,
+    mig: _ParsedMigration,
+    tables: _TableNameLedger,
+    fields: _FieldLedger,  # noqa: ARG001
+    out: list[SchemaChange],
+) -> None:
+    from dbsprout.migrate.models import SchemaChangeType  # noqa: PLC0415
+
+    kw = _kwargs(op)
+    model_node = kw.get("model_name")
+    index_node = kw.get("index")
+    if not isinstance(model_node, ast.Constant) or not isinstance(model_node.value, str):
+        return
+    if not isinstance(index_node, ast.Call):
+        return
+    model_name: str = model_node.value
+    index_kw = _kwargs(index_node)
+    cols_node = index_kw.get("fields")
+    cols: list[str] = []
+    if isinstance(cols_node, (ast.List, ast.Tuple)):
+        cols = [
+            e.value
+            for e in cols_node.elts
+            if isinstance(e, ast.Constant) and isinstance(e.value, str)
+        ]
+    name_kw = index_kw.get("name")
+    index_name = (
+        name_kw.value
+        if isinstance(name_kw, ast.Constant) and isinstance(name_kw.value, str)
+        else None
+    )
+    table_name = tables.get(
+        (mig.app_label, model_name), _default_table_name(mig.app_label, model_name)
+    )
+    out.append(
+        SchemaChange(
+            change_type=SchemaChangeType.INDEX_ADDED,
+            table_name=table_name,
+            detail={"cols": cols, "index_name": index_name},
+        ),
+    )
+
+
+def _handle_remove_index(
+    op: ast.Call,
+    *,
+    mig: _ParsedMigration,
+    tables: _TableNameLedger,
+    fields: _FieldLedger,  # noqa: ARG001
+    out: list[SchemaChange],
+) -> None:
+    from dbsprout.migrate.models import SchemaChangeType  # noqa: PLC0415
+
+    kw = _kwargs(op)
+    model_node = kw.get("model_name")
+    name_node = kw.get("name")
+    if not (
+        isinstance(model_node, ast.Constant)
+        and isinstance(model_node.value, str)
+        and isinstance(name_node, ast.Constant)
+        and isinstance(name_node.value, str)
+    ):
+        return
+    model_name: str = model_node.value
+    index_name: str = name_node.value
+    table_name = tables.get(
+        (mig.app_label, model_name), _default_table_name(mig.app_label, model_name)
+    )
+    out.append(
+        SchemaChange(
+            change_type=SchemaChangeType.INDEX_REMOVED,
+            table_name=table_name,
+            detail={"index_name": index_name},
+        ),
+    )
+
+
+_HANDLERS["AddIndex"] = _handle_add_index
+_HANDLERS["RemoveIndex"] = _handle_remove_index
