@@ -185,6 +185,71 @@ def _wrap_ct(table_name: str) -> str:
     )
 
 
+class TestChangesetIdentity:
+    def test_duplicate_identity_raises(self, tmp_path: Path) -> None:
+        project = build_liquibase_project(
+            tmp_path,
+            changelogs={
+                "db/changelog/db.changelog-master.xml": (
+                    '<?xml version="1.0" encoding="UTF-8"?>\n'
+                    '<databaseChangeLog xmlns="http://www.liquibase.org/xml/ns/dbchangelog">\n'
+                    '  <include file="01-first.xml" relativeToChangelogFile="true"/>\n'
+                    '  <include file="02-second.xml" relativeToChangelogFile="true"/>\n'
+                    "</databaseChangeLog>\n"
+                ),
+                "db/changelog/01-first.xml": _wrap_ct_with_identity("alice", "c1", "users"),
+                "db/changelog/02-second.xml": _wrap_ct_with_identity("alice", "c1", "accounts"),
+            },
+        )
+        with pytest.raises(MigrationParseError, match="duplicate changeset alice:c1"):
+            LiquibaseMigrationParser().detect_changes(project)
+
+    def test_missing_id_raises(self, tmp_path: Path) -> None:
+        project = build_liquibase_project(
+            tmp_path,
+            changelogs={
+                "changelog.xml": (
+                    '<?xml version="1.0" encoding="UTF-8"?>\n'
+                    '<databaseChangeLog xmlns="http://www.liquibase.org/xml/ns/dbchangelog">\n'
+                    '  <changeSet author="alice">\n'
+                    '    <createTable tableName="users"/>\n'
+                    "  </changeSet>\n"
+                    "</databaseChangeLog>\n"
+                ),
+            },
+        )
+        with pytest.raises(MigrationParseError, match="missing id"):
+            LiquibaseMigrationParser().detect_changes(project)
+
+    def test_missing_author_raises(self, tmp_path: Path) -> None:
+        project = build_liquibase_project(
+            tmp_path,
+            changelogs={
+                "changelog.xml": (
+                    '<?xml version="1.0" encoding="UTF-8"?>\n'
+                    '<databaseChangeLog xmlns="http://www.liquibase.org/xml/ns/dbchangelog">\n'
+                    '  <changeSet id="c1">\n'
+                    '    <createTable tableName="users"/>\n'
+                    "  </changeSet>\n"
+                    "</databaseChangeLog>\n"
+                ),
+            },
+        )
+        with pytest.raises(MigrationParseError, match="missing author"):
+            LiquibaseMigrationParser().detect_changes(project)
+
+
+def _wrap_ct_with_identity(author: str, cs_id: str, table: str) -> str:
+    return (
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        '<databaseChangeLog xmlns="http://www.liquibase.org/xml/ns/dbchangelog">\n'
+        f'  <changeSet id="{cs_id}" author="{author}">\n'
+        f'    <createTable tableName="{table}"/>\n'
+        "  </changeSet>\n"
+        "</databaseChangeLog>\n"
+    )
+
+
 _EMPTY_CHANGELOG = (
     '<?xml version="1.0" encoding="UTF-8"?>\n'
     '<databaseChangeLog xmlns="http://www.liquibase.org/xml/ns/dbchangelog"/>\n'

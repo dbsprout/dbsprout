@@ -133,7 +133,7 @@ def _walk_changelog(
     for elem in tree.getroot():
         tag = _strip_ns(elem.tag)
         if tag == "changeSet":
-            yield from _handle_changeset(elem, root, ledger)
+            yield from _handle_changeset(elem, root, ledger, seen_changesets)
         elif tag == "include":
             target = _resolve_include(root, elem, project_path)
             yield from _walk_changelog(target, project_path, ledger, visited, seen_changesets)
@@ -207,7 +207,22 @@ def _handle_changeset(
     changeset: Element,
     source: Path,
     ledger: _FKLedger,
+    seen: dict[tuple[str, str], Path] | None = None,
 ) -> Iterable[SchemaChange]:
+    cs_id = changeset.get("id") or ""
+    author = changeset.get("author") or ""
+    if not cs_id:
+        raise MigrationParseError(f"changeset in {source} missing id", file_path=source)
+    if not author:
+        raise MigrationParseError(f"changeset in {source} missing author", file_path=source)
+    if seen is not None:
+        key = (author, cs_id)
+        if key in seen:
+            raise MigrationParseError(
+                f"duplicate changeset {author}:{cs_id} in {seen[key]} and {source}",
+                file_path=source,
+            )
+        seen[key] = source
     for child in changeset:
         tag = _strip_ns(child.tag)
         handler = _OP_HANDLERS.get(tag)
