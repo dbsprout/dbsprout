@@ -293,7 +293,8 @@ class TestSecurity:
         assert result == []
 
     def test_parser_never_imports_stdlib_etree(self) -> None:
-        src = Path("dbsprout/migrate/parsers/liquibase.py").read_text()
+        repo_root = Path(__file__).resolve().parents[4]
+        src = (repo_root / "dbsprout/migrate/parsers/liquibase.py").read_text()
         assert "from xml.etree" not in src
         assert "import xml.etree" not in src
 
@@ -442,3 +443,41 @@ class TestIncludePathEscape:
         (project_root / "changelog.xml").write_text(master_body, encoding="utf-8")
         with pytest.raises(MigrationParseError, match="escapes project root"):
             LiquibaseMigrationParser().detect_changes(project_root)
+
+
+class TestDiamondInclude:
+    def test_diamond_include_of_empty_fanout_is_not_cycle(self, tmp_path: Path) -> None:
+        master_body = (
+            '<?xml version="1.0" encoding="UTF-8"?>\n'
+            '<databaseChangeLog xmlns="http://www.liquibase.org/xml/ns/dbchangelog">\n'
+            '  <include file="a.xml" relativeToChangelogFile="true"/>\n'
+            '  <include file="b.xml" relativeToChangelogFile="true"/>\n'
+            "</databaseChangeLog>\n"
+        )
+        a_body = (
+            '<?xml version="1.0" encoding="UTF-8"?>\n'
+            '<databaseChangeLog xmlns="http://www.liquibase.org/xml/ns/dbchangelog">\n'
+            '  <include file="shared_fanout.xml" relativeToChangelogFile="true"/>\n'
+            "</databaseChangeLog>\n"
+        )
+        b_body = (
+            '<?xml version="1.0" encoding="UTF-8"?>\n'
+            '<databaseChangeLog xmlns="http://www.liquibase.org/xml/ns/dbchangelog">\n'
+            '  <include file="shared_fanout.xml" relativeToChangelogFile="true"/>\n'
+            "</databaseChangeLog>\n"
+        )
+        shared_fanout_body = (
+            '<?xml version="1.0" encoding="UTF-8"?>\n'
+            '<databaseChangeLog xmlns="http://www.liquibase.org/xml/ns/dbchangelog"/>\n'
+        )
+        project = build_liquibase_project(
+            tmp_path,
+            changelogs={
+                "changelog.xml": master_body,
+                "a.xml": a_body,
+                "b.xml": b_body,
+                "shared_fanout.xml": shared_fanout_body,
+            },
+        )
+        result = LiquibaseMigrationParser().detect_changes(project)
+        assert result == []

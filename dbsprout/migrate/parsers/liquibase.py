@@ -140,24 +140,29 @@ def _walk_changelog(
         return
     visited.add(resolved)
     try:
-        tree = defused_parse(str(root))
-    except (DefusedXMLParseError, DefusedXmlException) as exc:
-        raise MigrationParseError(
-            f"could not parse {root}: {exc}",
-            file_path=root,
-        ) from exc
-    for elem in tree.getroot():
-        tag = _strip_ns(elem.tag)
-        if tag == "changeSet":
-            yield from _handle_changeset(elem, root, ledger, seen_changesets)
-        elif tag == "include":
-            target = _resolve_include(root, elem, project_path)
-            yield from _walk_changelog(target, project_path, ledger, visited, seen_changesets)
-        elif tag == "includeAll":
-            for target in _resolve_include_all(root, elem, project_path):
+        try:
+            tree = defused_parse(str(root))
+        except (DefusedXMLParseError, DefusedXmlException) as exc:
+            raise MigrationParseError(
+                f"could not parse {root}: {exc}",
+                file_path=root,
+            ) from exc
+        for elem in tree.getroot():
+            tag = _strip_ns(elem.tag)
+            if tag == "changeSet":
+                yield from _handle_changeset(elem, root, ledger, seen_changesets)
+            elif tag == "include":
+                target = _resolve_include(root, elem, project_path)
                 yield from _walk_changelog(target, project_path, ledger, visited, seen_changesets)
-        else:
-            logger.debug("skipping unsupported Liquibase element: %s", tag)
+            elif tag == "includeAll":
+                for target in _resolve_include_all(root, elem, project_path):
+                    yield from _walk_changelog(
+                        target, project_path, ledger, visited, seen_changesets
+                    )
+            else:
+                logger.debug("skipping unsupported Liquibase element: %s", tag)
+    finally:
+        visited.discard(resolved)
 
 
 def _is_contained(candidate: Path, root: Path) -> bool:
