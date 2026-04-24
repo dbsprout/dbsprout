@@ -376,3 +376,81 @@ class TestDefaultValue:
         [change] = LiquibaseMigrationParser().detect_changes(project)
         assert change.change_type is SchemaChangeType.COLUMN_DEFAULT_CHANGED
         assert change.new_value is None
+
+
+class TestForeignKey:
+    def test_add_fk_simple(self, tmp_path: Path) -> None:
+        project = build_liquibase_project(
+            tmp_path,
+            changelogs={
+                "changelog.xml": _wrap(
+                    "<addForeignKeyConstraint"
+                    ' baseTableName="orders" baseColumnNames="user_id"'
+                    ' referencedTableName="users" referencedColumnNames="id"'
+                    ' constraintName="fk_orders_user"/>'
+                ),
+            },
+        )
+        [change] = LiquibaseMigrationParser().detect_changes(project)
+        assert change.change_type is SchemaChangeType.FOREIGN_KEY_ADDED
+        assert change.table_name == "orders"
+        detail = change.detail or {}
+        assert detail["constraint_name"] == "fk_orders_user"
+        assert detail["local_cols"] == ["user_id"]
+        assert detail["ref_table"] == "users"
+        assert detail["remote_cols"] == ["id"]
+
+    def test_add_fk_composite(self, tmp_path: Path) -> None:
+        project = build_liquibase_project(
+            tmp_path,
+            changelogs={
+                "changelog.xml": _wrap(
+                    "<addForeignKeyConstraint"
+                    ' baseTableName="line_items" baseColumnNames="order_id, tenant_id"'
+                    ' referencedTableName="orders" referencedColumnNames="id, tenant_id"'
+                    ' constraintName="fk_li_orders"/>'
+                ),
+            },
+        )
+        [change] = LiquibaseMigrationParser().detect_changes(project)
+        detail = change.detail or {}
+        assert detail["local_cols"] == ["order_id", "tenant_id"]
+        assert detail["remote_cols"] == ["id", "tenant_id"]
+
+    def test_drop_fk_known(self, tmp_path: Path) -> None:
+        project = build_liquibase_project(
+            tmp_path,
+            changelogs={
+                "changelog.xml": (
+                    '<?xml version="1.0" encoding="UTF-8"?>\n'
+                    f"<databaseChangeLog {_NS}>\n"
+                    '  <changeSet id="c1" author="alice">\n'
+                    '    <addForeignKeyConstraint baseTableName="orders"'
+                    ' baseColumnNames="user_id" referencedTableName="users"'
+                    ' referencedColumnNames="id" constraintName="fk_ou"/>\n'
+                    "  </changeSet>\n"
+                    '  <changeSet id="c2" author="alice">\n'
+                    '    <dropForeignKeyConstraint baseTableName="orders"'
+                    ' constraintName="fk_ou"/>\n'
+                    "  </changeSet>\n"
+                    "</databaseChangeLog>\n"
+                ),
+            },
+        )
+        changes = LiquibaseMigrationParser().detect_changes(project)
+        assert [c.change_type for c in changes] == [
+            SchemaChangeType.FOREIGN_KEY_ADDED,
+            SchemaChangeType.FOREIGN_KEY_REMOVED,
+        ]
+
+    def test_drop_fk_unknown_is_skipped(self, tmp_path: Path) -> None:
+        project = build_liquibase_project(
+            tmp_path,
+            changelogs={
+                "changelog.xml": _wrap(
+                    '<dropForeignKeyConstraint baseTableName="orders" constraintName="unknown_fk"/>'
+                ),
+            },
+        )
+        changes = LiquibaseMigrationParser().detect_changes(project)
+        assert changes == []

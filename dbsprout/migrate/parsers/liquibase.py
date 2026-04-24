@@ -432,6 +432,42 @@ def _handle_drop_default_value(elem: Element, _ledger: _FKLedger) -> list[Schema
     ]
 
 
+def _handle_add_foreign_key(elem: Element, ledger: _FKLedger) -> list[SchemaChange]:
+    local = [c.strip() for c in elem.get("baseColumnNames", "").split(",") if c.strip()]
+    remote = [c.strip() for c in elem.get("referencedColumnNames", "").split(",") if c.strip()]
+    change = SchemaChange(
+        change_type=SchemaChangeType.FOREIGN_KEY_ADDED,
+        table_name=elem.get("baseTableName", ""),
+        detail={
+            "constraint_name": elem.get("constraintName"),
+            "local_cols": local,
+            "ref_table": elem.get("referencedTableName", ""),
+            "remote_cols": remote,
+        },
+    )
+    ledger.record(change)
+    return [change]
+
+
+def _handle_drop_foreign_key(elem: Element, ledger: _FKLedger) -> list[SchemaChange]:
+    table = elem.get("baseTableName", "")
+    name = elem.get("constraintName", "")
+    if ledger.resolve(table, name) is None:
+        logger.debug(
+            "dropForeignKeyConstraint %s on %s not in ledger; skipping",
+            name,
+            table,
+        )
+        return []
+    return [
+        SchemaChange(
+            change_type=SchemaChangeType.FOREIGN_KEY_REMOVED,
+            table_name=table,
+            detail={"constraint_name": name},
+        )
+    ]
+
+
 _OpHandler = Callable[[Any, "_FKLedger"], "list[SchemaChange]"]
 
 _OP_HANDLERS: dict[str, _OpHandler] = {
@@ -446,6 +482,8 @@ _OP_HANDLERS: dict[str, _OpHandler] = {
     "dropNotNullConstraint": _handle_drop_not_null,
     "addDefaultValue": _handle_add_default_value,
     "dropDefaultValue": _handle_drop_default_value,
+    "addForeignKeyConstraint": _handle_add_foreign_key,
+    "dropForeignKeyConstraint": _handle_drop_foreign_key,
 }
 
 _DEBUG_SKIP_TAGS: frozenset[str] = frozenset(
