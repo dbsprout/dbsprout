@@ -1,0 +1,13 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "dbsprout-plugin-yaml"
+version = "0.0.1"
+description = "Example YAML schema parser plugin for DBSprout."
+requires-python = ">=3.10"
+dependencies = ["dbsprout", "pyyaml>=6.0"]
+
+[project.entry-points."dbsprout.parsers"]
+yaml = "dbsprout_plugin_yaml:YamlParser"
