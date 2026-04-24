@@ -481,3 +481,44 @@ class TestDiamondInclude:
         )
         result = LiquibaseMigrationParser().detect_changes(project)
         assert result == []
+
+
+class TestDepthAndIncludeAllEscape:
+    def test_deeply_nested_includes_raise(self, tmp_path: Path) -> None:
+        chain_depth = 60
+        chain: dict[str, str] = {}
+        for i in range(chain_depth):
+            next_file = f"chain_{i + 1}.xml"
+            chain[f"chain_{i}.xml"] = (
+                '<?xml version="1.0" encoding="UTF-8"?>\n'
+                '<databaseChangeLog xmlns="http://www.liquibase.org/xml/ns/dbchangelog">\n'
+                f'  <include file="{next_file}" relativeToChangelogFile="true"/>\n'
+                "</databaseChangeLog>\n"
+            )
+        chain[f"chain_{chain_depth}.xml"] = (
+            '<?xml version="1.0" encoding="UTF-8"?>\n'
+            '<databaseChangeLog xmlns="http://www.liquibase.org/xml/ns/dbchangelog"/>\n'
+        )
+        project = build_liquibase_project(tmp_path, changelogs=chain)
+        with pytest.raises(MigrationParseError, match="exceeds max"):
+            LiquibaseMigrationParser(changelog_file="chain_0.xml").detect_changes(project)
+
+    def test_include_all_path_escape_raises(self, tmp_path: Path) -> None:
+        outside_dir = tmp_path / "outside"
+        outside_dir.mkdir()
+        (outside_dir / "leak.xml").write_text(
+            '<?xml version="1.0" encoding="UTF-8"?>\n'
+            '<databaseChangeLog xmlns="http://www.liquibase.org/xml/ns/dbchangelog"/>\n',
+            encoding="utf-8",
+        )
+        project_root = tmp_path / "project"
+        project_root.mkdir()
+        master_body = (
+            '<?xml version="1.0" encoding="UTF-8"?>\n'
+            '<databaseChangeLog xmlns="http://www.liquibase.org/xml/ns/dbchangelog">\n'
+            '  <includeAll path="../outside" relativeToChangelogFile="true"/>\n'
+            "</databaseChangeLog>\n"
+        )
+        (project_root / "changelog.xml").write_text(master_body, encoding="utf-8")
+        with pytest.raises(MigrationParseError, match="escapes project root"):
+            LiquibaseMigrationParser().detect_changes(project_root)

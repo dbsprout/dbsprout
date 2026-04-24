@@ -33,6 +33,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _MAX_CHANGELOG_BYTES = 1024 * 1024  # 1 MB per-file cap
+_MAX_INCLUDE_DEPTH = 50  # guard against stack overflow via crafted nested <include>
 
 _V1_SUPPORTED_SUFFIX = ".xml"
 _V1_UNSUPPORTED_SUFFIXES = frozenset({".yaml", ".yml", ".json", ".sql"})
@@ -88,7 +89,9 @@ class LiquibaseMigrationParser:
         ledger = _FKLedger()
         seen_changesets: dict[tuple[str, str], Path] = {}
         visited: set[Path] = set()
-        return list(_walk_changelog(root, project_path, ledger, visited, seen_changesets))
+        return list(
+            _walk_changelog(root, project_path, ledger, visited, seen_changesets, depth=0),
+        )
 
 
 def _resolve_root(project_path: Path, changelog_file: str | None) -> Path | None:
@@ -123,13 +126,19 @@ class _FKLedger:
         return self.by_key.get((table, constraint_name))
 
 
-def _walk_changelog(
+def _walk_changelog(  # noqa: PLR0913 — shared walk state threaded through recursion
     root: Path,
     project_path: Path,
     ledger: _FKLedger,
     visited: set[Path],
     seen_changesets: dict[tuple[str, str], Path],
+    depth: int = 0,
 ) -> Iterator[SchemaChange]:
+    if depth > _MAX_INCLUDE_DEPTH:
+        raise MigrationParseError(
+            f"include depth {depth} exceeds max {_MAX_INCLUDE_DEPTH} at {root}",
+            file_path=root,
+        )
     resolved = root.resolve()
     if resolved in visited:
         raise MigrationParseError(f"include cycle detected at {resolved}")
@@ -153,11 +162,23 @@ def _walk_changelog(
                 yield from _handle_changeset(elem, root, ledger, seen_changesets)
             elif tag == "include":
                 target = _resolve_include(root, elem, project_path)
-                yield from _walk_changelog(target, project_path, ledger, visited, seen_changesets)
+                yield from _walk_changelog(
+                    target,
+                    project_path,
+                    ledger,
+                    visited,
+                    seen_changesets,
+                    depth + 1,
+                )
             elif tag == "includeAll":
                 for target in _resolve_include_all(root, elem, project_path):
                     yield from _walk_changelog(
-                        target, project_path, ledger, visited, seen_changesets
+                        target,
+                        project_path,
+                        ledger,
+                        visited,
+                        seen_changesets,
+                        depth + 1,
                     )
             else:
                 logger.debug("skipping unsupported Liquibase element: %s", tag)
@@ -204,6 +225,11 @@ def _resolve_include_all(
     base: Path = parent.parent if relative else project_path
     directory: Path = (base / path_attr).resolve()
     project_root = project_path.resolve()
+    if not _is_contained(directory, project_root):
+        raise MigrationParseError(
+            f"<includeAll path='{path_attr}'> from {parent} escapes project root {project_root}",
+            file_path=parent,
+        )
     if not directory.is_dir():
         raise MigrationParseError(
             f"<includeAll path='{path_attr}'> from {parent} not found at {directory}",
