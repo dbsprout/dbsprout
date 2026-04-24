@@ -1,3 +1,5 @@
+import logging
+
 import pytest
 
 from dbsprout.plugins.errors import PluginValidationError
@@ -73,22 +75,26 @@ def test_registry_rejects_protocol_mismatch(make_ep, patched_eps):
     assert "protocol" in (infos[0].error or "").lower()
 
 
-def test_registry_duplicate_names_first_wins(make_ep, patched_eps):
+def test_registry_duplicate_names_first_wins(make_ep, patched_eps, caplog):
     first = _ParserOk()
     second = _ParserOk()
-    with patched_eps(
-        {
-            "dbsprout.parsers": [
-                make_ep(name="dup", group="dbsprout.parsers", obj=first),
-                make_ep(name="dup", group="dbsprout.parsers", obj=second),
-            ]
-        }
+    with (
+        caplog.at_level(logging.WARNING, logger="dbsprout.plugins.registry"),
+        patched_eps(
+            {
+                "dbsprout.parsers": [
+                    make_ep(name="dup", group="dbsprout.parsers", obj=first),
+                    make_ep(name="dup", group="dbsprout.parsers", obj=second),
+                ]
+            }
+        ),
     ):
         reg = get_registry()
     assert reg.get("dbsprout.parsers", "dup") is first
     infos = reg.list("dbsprout.parsers")
-    statuses = sorted(info.status for info in infos)
-    assert statuses == ["error", "loaded"]
+    assert len(infos) == 1
+    assert infos[0].status == "loaded"
+    assert any("duplicate plugin name" in rec.message for rec in caplog.records)
 
 
 def test_registry_check_raises_on_mismatch(make_ep, patched_eps):

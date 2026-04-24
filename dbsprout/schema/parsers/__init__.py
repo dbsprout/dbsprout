@@ -50,8 +50,12 @@ def parse_schema_file(path: Path) -> DatabaseSchema:
         obj = info.obj
         if obj is None:
             continue
-        if suffix in getattr(obj, "suffixes", ()):
-            return cast("DatabaseSchema", obj.parse(text, source_file=source))
+        suffixes = getattr(obj, "suffixes", ())
+        if suffix not in suffixes:
+            continue
+        if not obj.can_parse(text):
+            continue
+        return cast("DatabaseSchema", obj.parse(text, source_file=source))
 
     if suffix == ".dbml":
         return parse_dbml(text, source_file=source)

@@ -157,12 +157,11 @@ def test_fallback_writer_json(patched_eps, fmt):
     assert writer.__class__.__name__ == "JSONWriter"
 
 
-def test_fallback_writer_unknown_returns_none(patched_eps):
+def test_fallback_writer_unknown_raises(patched_eps):
     from dbsprout.cli.commands.generate import _resolve_writer  # noqa: PLC0415
 
-    with patched_eps({}):
-        writer = _resolve_writer("nonexistent-format")
-    assert writer is None
+    with patched_eps({}), pytest.raises(ValueError, match="Unknown output format"):
+        _resolve_writer("nonexistent-format")
 
 
 def test_fallback_engine_heuristic(patched_eps):
@@ -181,12 +180,11 @@ def test_fallback_engine_spec_driven(patched_eps):
     assert eng.__class__.__name__ == "SpecDrivenEngine"
 
 
-def test_fallback_engine_unknown_returns_none(patched_eps):
+def test_fallback_engine_unknown_raises(patched_eps):
     from dbsprout.cli.commands.generate import _resolve_engine  # noqa: PLC0415
 
-    with patched_eps({}):
-        eng = _resolve_engine("nonexistent-engine", seed=42)
-    assert eng is None
+    with patched_eps({}), pytest.raises(ValueError, match="Unknown generation engine"):
+        _resolve_engine("nonexistent-engine", seed=42)
 
 
 def test_fallback_writer_parquet(patched_eps):

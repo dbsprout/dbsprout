@@ -64,17 +64,9 @@ class PluginRegistry:
                 key = (group, name)
                 if key in self._by_key:
                     logger.warning(
-                        "duplicate plugin name %r in group %s — keeping first",
+                        "duplicate plugin name %r in group %s — keeping first, ignoring duplicate",
                         name,
                         group,
-                    )
-                    self._by_key[(group, f"{name}#dup")] = PluginInfo(
-                        group=group,
-                        name=name,
-                        module=_module_path(obj),
-                        status="error",
-                        error="duplicate",
-                        obj=None,
                     )
                     continue
                 if _passes_protocol(obj, protocol):

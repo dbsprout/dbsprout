@@ -11,8 +11,8 @@ call with a normal ``TypeError``.
 
 **Class-level attributes required.** The registry's ``isinstance`` check
 only inspects class attributes for class-valued entry points. Plugin
-authors must declare Protocol attributes (``suffixes``, ``format``,
-``provider_locality``) at the class level, not inside ``__init__``.
+authors must declare Protocol attributes (``suffixes``, ``format``)
+at the class level, not inside ``__init__``.
 """
 
 from __future__ import annotations

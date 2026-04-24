@@ -58,7 +58,11 @@ def _resolve_writer(output_format: str) -> Any:
         from dbsprout.output.parquet_writer import ParquetWriter  # noqa: PLC0415
 
         return ParquetWriter()
-    return None
+    # Unknown format — unreachable in production because _write_output
+    # guards via if/elif, but raise a descriptive error for test / direct
+    # callers so a bug is surfaced immediately instead of becoming a
+    # cryptic AttributeError on `.write()`.
+    raise ValueError(f"Unknown output format: {output_format!r}")
 
 
 def _resolve_engine(engine: str, *, seed: int) -> Any:
@@ -90,7 +94,7 @@ def _resolve_engine(engine: str, *, seed: int) -> Any:
         from dbsprout.generate.engines.spec_driven import SpecDrivenEngine  # noqa: PLC0415
 
         return SpecDrivenEngine(seed=seed)
-    return None
+    raise ValueError(f"Unknown generation engine: {engine!r}")
 
 
 # Snapshot directory — always project-root-relative so ``init``, ``diff`` and
