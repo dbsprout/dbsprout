@@ -280,3 +280,32 @@ class TestCreateDropIndex:
         c = changes[0]
         assert c.change_type is SchemaChangeType.INDEX_REMOVED
         assert c.detail["index_name"] == "idx_users_email"
+
+
+class TestRename:
+    def test_rename_table_emits_pair(self) -> None:
+        stmts = sqlglot.parse("ALTER TABLE old_name RENAME TO new_name;", read="postgres")
+        changes = _walk_statements(stmts, dialect="postgres", ledger=_FKLedger())
+        assert len(changes) == 2
+        rm, add = changes
+        assert rm.change_type is SchemaChangeType.TABLE_REMOVED
+        assert rm.table_name == "old_name"
+        assert add.change_type is SchemaChangeType.TABLE_ADDED
+        assert add.table_name == "new_name"
+        assert add.detail["rename_of"] == "old_name"
+        assert rm.detail["rename_of"] == "new_name"
+
+    def test_rename_column_emits_pair(self) -> None:
+        stmts = sqlglot.parse(
+            "ALTER TABLE users RENAME COLUMN uname TO username;",
+            read="postgres",
+        )
+        changes = _walk_statements(stmts, dialect="postgres", ledger=_FKLedger())
+        assert len(changes) == 2
+        rm, add = changes
+        assert rm.change_type is SchemaChangeType.COLUMN_REMOVED
+        assert rm.column_name == "uname"
+        assert add.change_type is SchemaChangeType.COLUMN_ADDED
+        assert add.column_name == "username"
+        assert add.detail["rename_of"] == "uname"
+        assert rm.detail["rename_of"] == "username"

@@ -571,6 +571,10 @@ def _handle_alter_table(
             out.extend(_handle_add_column(table_name, schema_name, action))
         elif isinstance(action, exp.AlterColumn):
             out.extend(_handle_alter_column(table_name, action))
+        elif isinstance(action, exp.AlterRename):
+            out.extend(_handle_rename_table(table_name, action))
+        elif isinstance(action, exp.RenameColumn):
+            out.extend(_handle_rename_column(table_name, action))
         elif isinstance(action, exp.AddConstraint):
             out.extend(_handle_add_constraint(table_name, action, ledger))
         elif isinstance(action, exp.Drop):
@@ -587,6 +591,52 @@ def _handle_alter_table(
                 type(action).__name__,
             )
     return out
+
+
+def _handle_rename_table(
+    old_table: str,
+    rename_action: exp.AlterRename,
+) -> list[SchemaChange]:
+    new_expr = rename_action.this
+    _, new_table = _split_qualified(
+        new_expr.sql(dialect=None) if isinstance(new_expr, exp.Expression) else ""
+    )
+    return [
+        SchemaChange(
+            change_type=SchemaChangeType.TABLE_REMOVED,
+            table_name=old_table,
+            detail={"rename_of": new_table},
+        ),
+        SchemaChange(
+            change_type=SchemaChangeType.TABLE_ADDED,
+            table_name=new_table,
+            detail={"rename_of": old_table},
+        ),
+    ]
+
+
+def _handle_rename_column(
+    table_name: str,
+    action: exp.RenameColumn,
+) -> list[SchemaChange]:
+    old_col = action.this
+    old_name = _strip_quotes(old_col.name) if old_col else ""
+    new_col = action.args.get("to")
+    new_name = _strip_quotes(new_col.name) if new_col is not None else ""
+    return [
+        SchemaChange(
+            change_type=SchemaChangeType.COLUMN_REMOVED,
+            table_name=table_name,
+            column_name=old_name,
+            detail={"rename_of": new_name},
+        ),
+        SchemaChange(
+            change_type=SchemaChangeType.COLUMN_ADDED,
+            table_name=table_name,
+            column_name=new_name,
+            detail={"rename_of": old_name},
+        ),
+    ]
 
 
 def _handle_create_index(node: exp.Create) -> list[SchemaChange]:
