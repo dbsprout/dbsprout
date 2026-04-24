@@ -17,7 +17,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from dbsprout.migrate.models import SchemaChange  # noqa: TC001
+from dbsprout.migrate.models import SchemaChange
 from dbsprout.migrate.parsers import MigrationParseError
 
 if TYPE_CHECKING:
@@ -281,3 +281,173 @@ def _op_name(op: ast.Call) -> str:
 
 _OpHandler = Callable[..., None]  # runtime alias used in _HANDLERS below
 _HANDLERS: dict[str, _OpHandler] = {}  # populated in subsequent tasks
+
+
+# ---------------------------------------------------------------------------
+# Task 7: CreateModel + DeleteModel handlers
+# ---------------------------------------------------------------------------
+
+
+def _handle_create_model(
+    op: ast.Call,
+    *,
+    mig: _ParsedMigration,
+    tables: _TableNameLedger,
+    fields: _FieldLedger,
+    out: list[SchemaChange],
+) -> None:
+    from dbsprout.migrate.models import SchemaChangeType  # noqa: PLC0415
+
+    kw = _kwargs(op)
+    name_node = kw.get("name")
+    if not _is_str(name_node):
+        logger.debug("CreateModel with non-literal name in %s", mig.path)
+        return
+    model_name: str = name_node.value  # type: ignore[union-attr]
+
+    options = _kwargs_dict(kw.get("options"))
+    db_table = options.get("db_table") if options else None
+    table_name = db_table or _default_table_name(mig.app_label, model_name)
+    tables[(mig.app_label, model_name)] = table_name
+
+    field_nodes = kw.get("fields")
+    field_dicts, fk_dicts = _extract_fields(
+        field_nodes, mig=mig, model=model_name, fields_ledger=fields, tables=tables
+    )
+
+    out.append(
+        SchemaChange(
+            change_type=SchemaChangeType.TABLE_ADDED,
+            table_name=table_name,
+            detail={
+                "fields": field_dicts,
+                "foreign_keys": fk_dicts,
+                "db_table": db_table,
+            },
+        ),
+    )
+
+
+def _handle_delete_model(
+    op: ast.Call,
+    *,
+    mig: _ParsedMigration,
+    tables: _TableNameLedger,
+    fields: _FieldLedger,
+    out: list[SchemaChange],
+) -> None:
+    from dbsprout.migrate.models import SchemaChangeType  # noqa: PLC0415
+
+    kw = _kwargs(op)
+    name_node = kw.get("name")
+    if not _is_str(name_node):
+        return
+    model_name: str = name_node.value  # type: ignore[union-attr]
+    table_name = tables.pop(
+        (mig.app_label, model_name), _default_table_name(mig.app_label, model_name)
+    )
+    # Clean up field ledger entries under this model.
+    for key in [k for k in fields if k[0] == mig.app_label and k[1] == model_name]:
+        fields.pop(key)
+    out.append(SchemaChange(change_type=SchemaChangeType.TABLE_REMOVED, table_name=table_name))
+
+
+_HANDLERS["CreateModel"] = _handle_create_model
+_HANDLERS["DeleteModel"] = _handle_delete_model
+
+
+def _default_table_name(app_label: str, model_name: str) -> str:
+    return f"{app_label}_{model_name.lower()}"
+
+
+def _kwargs(op: ast.Call) -> dict[str, ast.AST]:
+    return {kw.arg: kw.value for kw in op.keywords if kw.arg is not None}
+
+
+def _kwargs_dict(node: ast.AST | None) -> dict[str, str | None]:
+    if not isinstance(node, ast.Dict):
+        return {}
+    result: dict[str, str | None] = {}
+    for k, v in zip(node.keys, node.values, strict=False):
+        if isinstance(k, ast.Constant) and isinstance(k.value, str):
+            raw = v.value if isinstance(v, ast.Constant) else None
+            result[k.value] = str(raw) if isinstance(raw, str) else None
+    return result
+
+
+def _is_str(node: ast.AST | None) -> bool:
+    return isinstance(node, ast.Constant) and isinstance(node.value, str)
+
+
+def _extract_fields(
+    fields_node: ast.AST | None,
+    *,
+    mig: _ParsedMigration,
+    model: str,
+    fields_ledger: _FieldLedger,
+    tables: _TableNameLedger,
+) -> tuple[list[dict[str, object]], list[dict[str, object]]]:
+    field_dicts: list[dict[str, object]] = []
+    fk_dicts: list[dict[str, object]] = []
+    if not isinstance(fields_node, (ast.List, ast.Tuple)):
+        return field_dicts, fk_dicts
+    for tup in fields_node.elts:
+        if not isinstance(tup, ast.Tuple) or len(tup.elts) != 2:
+            continue
+        name_node, field_call = tup.elts
+        if not isinstance(name_node, ast.Constant) or not isinstance(name_node.value, str):
+            continue
+        if not isinstance(field_call, ast.Call):
+            continue
+        col_name: str = name_node.value
+        snapshot = _field_snapshot(field_call, mig=mig, tables=tables)
+        fields_ledger[(mig.app_label, model, col_name)] = snapshot
+        field_dicts.append(
+            {
+                "name": col_name,
+                "django_type": snapshot.django_type,
+                "nullable": snapshot.nullable,
+                "default": snapshot.default,
+            },
+        )
+        if snapshot.is_fk and snapshot.ref_table:
+            fk_dicts.append(
+                {
+                    "column": col_name,
+                    "ref_table": snapshot.ref_table,
+                    "ref_columns": ["id"],
+                },
+            )
+    return field_dicts, fk_dicts
+
+
+def _field_snapshot(
+    field_call: ast.Call, *, mig: _ParsedMigration, tables: _TableNameLedger
+) -> _FieldSnapshot:
+    type_name = _op_name(field_call)
+    kw = _kwargs(field_call)
+    django_type = ast.unparse(field_call)
+    nullable_node = kw.get("null")
+    nullable = isinstance(nullable_node, ast.Constant) and nullable_node.value is True
+    default_node = kw.get("default")
+    default = ast.unparse(default_node) if default_node is not None else None
+    is_fk = type_name in {"ForeignKey", "OneToOneField"}
+    ref_table: str | None = None
+    if is_fk and field_call.args:
+        first = field_call.args[0]
+        if isinstance(first, ast.Constant) and isinstance(first.value, str):
+            ref_table = _resolve_ref(first.value, mig=mig, tables=tables)
+    return _FieldSnapshot(
+        django_type=django_type,
+        nullable=nullable,
+        default=default,
+        is_fk=is_fk,
+        ref_table=ref_table,
+    )
+
+
+def _resolve_ref(raw: str, *, mig: _ParsedMigration, tables: _TableNameLedger) -> str:
+    if "." in raw:
+        app, model = raw.split(".", 1)
+        return tables.get((app, model), _default_table_name(app, model))
+    return tables.get((mig.app_label, raw), _default_table_name(mig.app_label, raw))
