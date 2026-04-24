@@ -7,8 +7,10 @@ import pytest
 
 from dbsprout.migrate.parsers import MigrationParseError
 from dbsprout.migrate.parsers.flyway import (
+    _check_unresolved,
     _discover_migration_files,
     _parse_version,
+    _substitute_placeholders,
 )
 from tests.unit.test_migrate.test_parsers.conftest import build_flyway_project
 
@@ -115,3 +117,25 @@ class TestVersionParsing:
 # ---------------------------------------------------------------------------
 # Placeholder tests (added in Task 4)
 # ---------------------------------------------------------------------------
+
+
+class TestPlaceholders:
+    def test_substitutes_simple(self) -> None:
+        assert _substitute_placeholders("CREATE TABLE ${s}.t();", {"s": "public"}) == (
+            "CREATE TABLE public.t();"
+        )
+
+    def test_substitutes_dotted_key(self) -> None:
+        assert (
+            _substitute_placeholders("-- ${env.DB_NAME}", {"env.DB_NAME": "app_prod"})
+            == "-- app_prod"
+        )
+
+    def test_leaves_unresolved(self) -> None:
+        # Unresolved token passes through verbatim; caller detects.
+        assert _substitute_placeholders("${missing}", {}) == "${missing}"
+
+    def test_unresolved_raises(self, tmp_path: Path) -> None:
+        file_path = tmp_path / "V1__x.sql"
+        with pytest.raises(MigrationParseError, match=r"unresolved placeholder \$\{schema\}"):
+            _check_unresolved("CREATE TABLE ${schema}.t();", file_path)
