@@ -70,6 +70,10 @@ def _resolve_engine(engine: str, *, seed: int) -> Any:
 
     Entry points may register a class or a pre-built instance.  When a
     class is returned it is instantiated with ``seed=seed``.
+
+    Currently called only from tests — production engine dispatch in
+    ``dbsprout/generate/orchestrator.py`` still uses hard-wired imports;
+    the registry wiring is tracked as a Sprint 8 follow-up.
     """
     import inspect  # noqa: PLC0415
 

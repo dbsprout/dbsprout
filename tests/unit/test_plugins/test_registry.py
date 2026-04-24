@@ -1,7 +1,8 @@
 import pytest
 
 from dbsprout.plugins.errors import PluginValidationError
-from dbsprout.plugins.registry import get_registry
+from dbsprout.plugins.registry import _module_path, get_registry
+from dbsprout.schema.models import DatabaseSchema
 
 
 class _ParserOk:
@@ -106,3 +107,37 @@ def test_registry_list_full_without_group(make_ep, patched_eps):
         reg = get_registry()
         full = reg.list()
     assert len(full) >= 1
+
+
+def test_check_raises_for_unknown_plugin(make_ep, patched_eps):
+    with patched_eps({}):
+        reg = get_registry()
+        with pytest.raises(PluginValidationError, match="not discovered"):
+            reg.check("dbsprout.parsers", "does-not-exist")
+
+
+def test_module_path_uses_class_when_obj_has_no_module(make_ep, patched_eps):
+    """Plugins whose target has no ``__module__`` fall back to class."""
+
+    class _Plain:
+        suffixes = (".x",)
+
+        def can_parse(self, text: str) -> bool:
+            return True
+
+        def parse(self, text: str, *, source_file: str | None = None) -> DatabaseSchema:
+            return DatabaseSchema(tables=[], dialect="postgresql")
+
+    plain = _Plain()
+    # Force __module__ to be falsy to exercise the cls-fallback branch.
+    plain.__module__ = ""  # type: ignore[assignment]
+    result = _module_path(plain)
+    # Falls back to the class's __module__, which is this test module.
+    assert result  # non-empty — class.__module__ is set
+
+    with patched_eps(
+        {"dbsprout.parsers": [make_ep(name="p", group="dbsprout.parsers", obj=plain)]}
+    ):
+        reg = get_registry()
+        infos = reg.list("dbsprout.parsers")
+    assert infos[0].module

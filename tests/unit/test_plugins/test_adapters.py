@@ -21,3 +21,9 @@ def test_ddl_adapter_parses_simple_create_table() -> None:
 
 def test_ddl_adapter_suffixes() -> None:
     assert ddl_parser.suffixes == (".sql",)
+
+
+def test_adapter_can_parse_returns_true() -> None:
+    # The adapter's can_parse is a suffix-gated no-op that always
+    # returns True — pin the contract so accidental regressions trip.
+    assert dbml_parser.can_parse("anything") is True

@@ -120,5 +120,11 @@ class PluginRegistry:
 
 @functools.lru_cache(maxsize=1)
 def get_registry() -> PluginRegistry:
-    """Return the process-wide plugin registry (built on first call)."""
+    """Return the process-wide plugin registry (built on first call).
+
+    CPython CLI usage is single-threaded; concurrent first-call races
+    are not guarded against. Callers in multi-threaded contexts (future
+    web/TUI surfaces) should warm the cache from a single thread before
+    fan-out, or add their own lock.
+    """
     return PluginRegistry()
