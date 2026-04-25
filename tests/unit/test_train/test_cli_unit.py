@@ -21,7 +21,7 @@ def test_privacy_gate_blocks_non_local_tier(tmp_path: Path) -> None:
     cfg.privacy.tier = "cloud"
     with (
         patch("dbsprout.cli.commands.train.load_config", return_value=cfg),
-        patch("dbsprout.cli.commands.train.SampleExtractor") as fake,
+        patch("dbsprout.train.extractor.SampleExtractor") as fake,
     ):
         result = runner.invoke(
             app,
@@ -48,7 +48,7 @@ def test_extract_invokes_sample_extractor(tmp_path: Path) -> None:
     fake_extractor.extract.return_value = MagicMock(tables=(), duration_seconds=0.0)
     with (
         patch("dbsprout.cli.commands.train.load_config", return_value=cfg),
-        patch("dbsprout.cli.commands.train.SampleExtractor", return_value=fake_extractor),
+        patch("dbsprout.train.extractor.SampleExtractor", return_value=fake_extractor),
     ):
         result = runner.invoke(
             app,

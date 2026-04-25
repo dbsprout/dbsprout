@@ -7,8 +7,6 @@ from pathlib import Path
 import typer
 
 from dbsprout.config import load_config
-from dbsprout.train.extractor import SampleExtractor
-from dbsprout.train.models import ExtractorConfig
 
 train_app = typer.Typer(name="train", help="Training pipeline subcommands.", no_args_is_help=True)
 
@@ -33,6 +31,10 @@ def extract(  # noqa: PLR0913 - CLI flags are inherently positional/named
             err=True,
         )
         raise typer.Exit(code=2)
+
+    # Lazy import: keeps polars/sqlalchemy off the <500 ms CLI startup path.
+    from dbsprout.train.extractor import SampleExtractor  # noqa: PLC0415
+    from dbsprout.train.models import ExtractorConfig  # noqa: PLC0415
 
     extractor = SampleExtractor()
     result = extractor.extract(
