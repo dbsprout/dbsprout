@@ -9,6 +9,7 @@ from __future__ import annotations
 import typer
 
 from dbsprout.cli.commands.plugins import plugins_app
+from dbsprout.cli.commands.train import train_app
 
 app = typer.Typer(
     name="dbsprout",
@@ -17,6 +18,7 @@ app = typer.Typer(
 )
 
 app.add_typer(plugins_app, name="plugins")
+app.add_typer(train_app, name="train")
 
 
 @app.command(name="init")
