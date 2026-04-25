@@ -79,12 +79,19 @@ class PluginRegistry:
                         obj=obj,
                     )
                 else:
+                    reason = f"does not satisfy Protocol {protocol.__name__}"
+                    logger.warning(
+                        "plugin %r in %s rejected at registration: %s",
+                        name,
+                        group,
+                        reason,
+                    )
                     self._by_key[key] = PluginInfo(
                         group=group,
                         name=name,
                         module=_module_path(obj),
                         status="error",
-                        error=f"does not satisfy Protocol {protocol.__name__}",
+                        error=reason,
                         obj=None,
                     )
 

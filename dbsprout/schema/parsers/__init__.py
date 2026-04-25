@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING, cast
 
 from dbsprout.schema.parsers.dbml import can_parse_dbml, parse_dbml
@@ -15,6 +16,8 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from dbsprout.schema.models import DatabaseSchema
+
+logger = logging.getLogger(__name__)
 
 _MAX_SCHEMA_BYTES = 10 * 1024 * 1024  # 10 MB
 
@@ -54,6 +57,11 @@ def parse_schema_file(path: Path) -> DatabaseSchema:
         if suffix not in suffixes:
             continue
         if not obj.can_parse(text):
+            logger.debug(
+                "plugin %r in dbsprout.parsers matched suffix %s but rejected content",
+                info.name,
+                suffix,
+            )
             continue
         return cast("DatabaseSchema", obj.parse(text, source_file=source))
 
