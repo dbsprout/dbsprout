@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import time
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 import typer
 from rich.console import Console
@@ -12,6 +12,7 @@ from rich.table import Table
 
 from dbsprout.config.models import DBSproutConfig
 from dbsprout.generate.orchestrator import GenerateResult, orchestrate
+from dbsprout.plugins.dispatch import resolve_writer as _resolve_writer
 from dbsprout.schema.models import DatabaseSchema
 
 if TYPE_CHECKING:
@@ -22,79 +23,6 @@ if TYPE_CHECKING:
     from dbsprout.quality.integrity import IntegrityReport
 
 console = Console()
-
-
-def _resolve_writer(output_format: str) -> Any:
-    """Return a writer instance for *output_format*.
-
-    Consults the plugin registry first; falls back to the hard-wired
-    mapping so editable installs without refreshed entry-point metadata
-    keep working.
-
-    Entry points may register a class or a pre-built instance.  When a
-    class is returned (the common case from ``pyproject.toml`` entry
-    points) it is instantiated with no arguments.
-    """
-    import inspect  # noqa: PLC0415
-
-    from dbsprout.plugins.registry import get_registry  # noqa: PLC0415
-
-    obj = get_registry().get("dbsprout.outputs", output_format)
-    if obj is not None:
-        return obj() if inspect.isclass(obj) else obj
-    if output_format == "sql":
-        from dbsprout.output.sql_writer import SQLWriter  # noqa: PLC0415
-
-        return SQLWriter()
-    if output_format == "csv":
-        from dbsprout.output.csv_writer import CSVWriter  # noqa: PLC0415
-
-        return CSVWriter()
-    if output_format in ("json", "jsonl"):
-        from dbsprout.output.json_writer import JSONWriter  # noqa: PLC0415
-
-        return JSONWriter()
-    if output_format == "parquet":
-        from dbsprout.output.parquet_writer import ParquetWriter  # noqa: PLC0415
-
-        return ParquetWriter()
-    # Unknown format — unreachable in production because _write_output
-    # guards via if/elif, but raise a descriptive error for test / direct
-    # callers so a bug is surfaced immediately instead of becoming a
-    # cryptic AttributeError on `.write()`.
-    raise ValueError(f"Unknown output format: {output_format!r}")
-
-
-def _resolve_engine(engine: str, *, seed: int) -> Any:
-    """Return an engine instance for *engine*.
-
-    Consults the plugin registry first; falls back to the hard-wired
-    mapping so editable installs without refreshed entry-point metadata
-    keep working.
-
-    Entry points may register a class or a pre-built instance.  When a
-    class is returned it is instantiated with ``seed=seed``.
-
-    Currently called only from tests — production engine dispatch in
-    ``dbsprout/generate/orchestrator.py`` still uses hard-wired imports;
-    the registry wiring is tracked as a Sprint 8 follow-up.
-    """
-    import inspect  # noqa: PLC0415
-
-    from dbsprout.plugins.registry import get_registry  # noqa: PLC0415
-
-    obj = get_registry().get("dbsprout.generators", engine)
-    if obj is not None:
-        return obj(seed=seed) if inspect.isclass(obj) else obj
-    if engine == "heuristic":
-        from dbsprout.generate.engines.heuristic import HeuristicEngine  # noqa: PLC0415
-
-        return HeuristicEngine(seed=seed)
-    if engine == "spec_driven":
-        from dbsprout.generate.engines.spec_driven import SpecDrivenEngine  # noqa: PLC0415
-
-        return SpecDrivenEngine(seed=seed)
-    raise ValueError(f"Unknown generation engine: {engine!r}")
 
 
 # Snapshot directory — always project-root-relative so ``init``, ``diff`` and

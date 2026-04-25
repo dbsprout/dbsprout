@@ -23,8 +23,7 @@ from dbsprout.migrate.parsers import MigrationParser
 from dbsprout.spec.providers.base import SpecProvider
 
 if TYPE_CHECKING:
-    from dbsprout.schema.models import DatabaseSchema, TableSchema
-    from dbsprout.spec.models import DataSpec
+    from dbsprout.schema.models import DatabaseSchema
 
 
 @runtime_checkable
@@ -40,15 +39,17 @@ class SchemaParser(Protocol):
 
 @runtime_checkable
 class GenerationEngine(Protocol):
-    """Produces rows for a single table."""
+    """Produces rows for a single table.
 
-    def generate_table(
-        self,
-        table: TableSchema,
-        *,
-        rows: int,
-        spec: DataSpec | None = None,
-    ) -> list[dict[str, Any]]: ...
+    The concrete ``generate_table`` signature varies across in-tree
+    engines (``HeuristicEngine`` takes a column→generator mapping;
+    ``SpecDrivenEngine`` takes a per-table :class:`DataSpec`). Like
+    :class:`OutputWriter`, this Protocol declares only the method name
+    so the registry can validate plugin shape at registration; callers
+    are responsible for invoking the engine with the kwargs it expects.
+    """
+
+    def generate_table(self, *args: Any, **kwargs: Any) -> list[dict[str, Any]]: ...
 
 
 @runtime_checkable

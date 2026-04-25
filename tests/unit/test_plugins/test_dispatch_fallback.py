@@ -53,7 +53,7 @@ def test_registry_empty_falls_back_to_hardwired(tmp_path, patched_eps):
 
 
 def test_registry_writer_is_used(make_ep, patched_eps):
-    from dbsprout.cli.commands.generate import _resolve_writer  # noqa: PLC0415
+    from dbsprout.plugins.dispatch import resolve_writer as _resolve_writer  # noqa: PLC0415
 
     class FakeWriter:
         format = "fake"
@@ -70,7 +70,7 @@ def test_registry_writer_is_used(make_ep, patched_eps):
 
 
 def test_registry_engine_is_used(make_ep, patched_eps):
-    from dbsprout.cli.commands.generate import _resolve_engine  # noqa: PLC0415
+    from dbsprout.plugins.dispatch import resolve_engine as _resolve_engine  # noqa: PLC0415
 
     class FakeEngine:
         def generate_table(self, table, *, rows, spec=None):
@@ -132,7 +132,7 @@ def test_fallback_parser_skips_registry_entry_with_none_obj(tmp_path, make_ep, p
 
 
 def test_fallback_writer_sql(patched_eps):
-    from dbsprout.cli.commands.generate import _resolve_writer  # noqa: PLC0415
+    from dbsprout.plugins.dispatch import resolve_writer as _resolve_writer  # noqa: PLC0415
 
     with patched_eps({}):
         writer = _resolve_writer("sql")
@@ -141,7 +141,7 @@ def test_fallback_writer_sql(patched_eps):
 
 
 def test_fallback_writer_csv(patched_eps):
-    from dbsprout.cli.commands.generate import _resolve_writer  # noqa: PLC0415
+    from dbsprout.plugins.dispatch import resolve_writer as _resolve_writer  # noqa: PLC0415
 
     with patched_eps({}):
         writer = _resolve_writer("csv")
@@ -150,7 +150,7 @@ def test_fallback_writer_csv(patched_eps):
 
 @pytest.mark.parametrize("fmt", ["json", "jsonl"])
 def test_fallback_writer_json(patched_eps, fmt):
-    from dbsprout.cli.commands.generate import _resolve_writer  # noqa: PLC0415
+    from dbsprout.plugins.dispatch import resolve_writer as _resolve_writer  # noqa: PLC0415
 
     with patched_eps({}):
         writer = _resolve_writer(fmt)
@@ -158,14 +158,14 @@ def test_fallback_writer_json(patched_eps, fmt):
 
 
 def test_fallback_writer_unknown_raises(patched_eps):
-    from dbsprout.cli.commands.generate import _resolve_writer  # noqa: PLC0415
+    from dbsprout.plugins.dispatch import resolve_writer as _resolve_writer  # noqa: PLC0415
 
     with patched_eps({}), pytest.raises(ValueError, match="Unknown output format"):
         _resolve_writer("nonexistent-format")
 
 
 def test_fallback_engine_heuristic(patched_eps):
-    from dbsprout.cli.commands.generate import _resolve_engine  # noqa: PLC0415
+    from dbsprout.plugins.dispatch import resolve_engine as _resolve_engine  # noqa: PLC0415
 
     with patched_eps({}):
         eng = _resolve_engine("heuristic", seed=42)
@@ -173,7 +173,7 @@ def test_fallback_engine_heuristic(patched_eps):
 
 
 def test_fallback_engine_spec_driven(patched_eps):
-    from dbsprout.cli.commands.generate import _resolve_engine  # noqa: PLC0415
+    from dbsprout.plugins.dispatch import resolve_engine as _resolve_engine  # noqa: PLC0415
 
     with patched_eps({}):
         eng = _resolve_engine("spec_driven", seed=42)
@@ -181,14 +181,14 @@ def test_fallback_engine_spec_driven(patched_eps):
 
 
 def test_fallback_engine_unknown_raises(patched_eps):
-    from dbsprout.cli.commands.generate import _resolve_engine  # noqa: PLC0415
+    from dbsprout.plugins.dispatch import resolve_engine as _resolve_engine  # noqa: PLC0415
 
     with patched_eps({}), pytest.raises(ValueError, match="Unknown generation engine"):
         _resolve_engine("nonexistent-engine", seed=42)
 
 
 def test_fallback_writer_parquet(patched_eps):
-    from dbsprout.cli.commands.generate import _resolve_writer  # noqa: PLC0415
+    from dbsprout.plugins.dispatch import resolve_writer as _resolve_writer  # noqa: PLC0415
 
     with patched_eps({}):
         writer = _resolve_writer("parquet")
