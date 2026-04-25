@@ -15,6 +15,7 @@ from dbsprout.plugins.protocols import (
     OutputWriter,
     SchemaParser,
     SpecProvider,
+    TrainExtractor,
 )
 
 logger = logging.getLogger(__name__)
@@ -25,6 +26,7 @@ GROUPS: dict[str, type] = {
     "dbsprout.outputs": OutputWriter,
     "dbsprout.llm_providers": SpecProvider,
     "dbsprout.migration_frameworks": MigrationParser,
+    "dbsprout.train_extractors": TrainExtractor,
 }
 
 
