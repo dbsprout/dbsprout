@@ -31,3 +31,26 @@ def test_discover_skips_broken_plugin_and_logs_warning(make_ep, patched_eps, cap
 def test_discover_empty_group_returns_nothing(patched_eps):
     with patched_eps({}):
         assert list(discover("dbsprout.outputs")) == []
+
+
+def test_discover_rejects_unknown_group():
+    import pytest  # noqa: PLC0415
+
+    with pytest.raises(ValueError, match="unknown plugin group"):
+        list(discover("evil.group"))
+
+
+def test_discover_sanitises_name_in_log(make_ep, patched_eps, caplog):
+    """Newlines/escape codes in plugin names must not bleed into log lines."""
+    hostile = make_ep(
+        name="evil\ninjected",
+        group="dbsprout.parsers",
+        obj=ModuleNotFoundError("boom"),
+    )
+    with (
+        caplog.at_level(logging.WARNING, logger="dbsprout.plugins.discovery"),
+        patched_eps({"dbsprout.parsers": [hostile]}),
+    ):
+        list(discover("dbsprout.parsers"))
+    assert any("evil?injected" in rec.message for rec in caplog.records)
+    assert not any("evil\ninjected" in rec.message for rec in caplog.records)

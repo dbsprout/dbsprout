@@ -7,7 +7,7 @@ import logging
 from dataclasses import dataclass
 from typing import Any, Literal
 
-from dbsprout.plugins.discovery import discover
+from dbsprout.plugins.discovery import _safe_label, discover
 from dbsprout.plugins.errors import PluginValidationError
 from dbsprout.plugins.protocols import (
     GenerationEngine,
@@ -65,8 +65,8 @@ class PluginRegistry:
                 if key in self._by_key:
                     logger.warning(
                         "duplicate plugin name %r in group %s — keeping first, ignoring duplicate",
-                        name,
-                        group,
+                        _safe_label(name),
+                        _safe_label(group),
                     )
                     continue
                 if _passes_protocol(obj, protocol):
@@ -82,8 +82,8 @@ class PluginRegistry:
                     reason = f"does not satisfy Protocol {protocol.__name__}"
                     logger.warning(
                         "plugin %r in %s rejected at registration: %s",
-                        name,
-                        group,
+                        _safe_label(name),
+                        _safe_label(group),
                         reason,
                     )
                     self._by_key[key] = PluginInfo(
