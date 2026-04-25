@@ -31,7 +31,7 @@ def _sample_manifest() -> SampleManifest:
             ),
         ),
         fk_closure_iterations=2,
-        fk_unresolved_per_table={},
+        fk_unresolved_per_table={"orders": 3, "audit_log": 1},
         duration_seconds=0.42,
     )
 

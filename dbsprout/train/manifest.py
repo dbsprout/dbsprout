@@ -24,6 +24,6 @@ def read_manifest(path: Path) -> SampleManifest:
     if version > _SUPPORTED_MANIFEST_VERSION:
         raise ValueError(
             f"manifest_version {version} is newer than supported "
-            f"({_SUPPORTED_MANIFEST_VERSION}); upgrade dbsprout to read this file."
+            f"({_SUPPORTED_MANIFEST_VERSION}); upgrade dbsprout to read {path}."
         )
     return SampleManifest.model_validate(raw)
