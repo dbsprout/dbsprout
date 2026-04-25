@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
 
 import polars as pl
+import pytest
 
 from dbsprout.schema.models import (
     ColumnSchema,
@@ -128,3 +129,29 @@ def test_extractor_records_closure_additions(tmp_path: Path) -> None:
 
     by_table = {r.table: r for r in result.tables}
     assert by_table["users"].fk_closure_added == 1
+
+
+def test_extractor_disposes_engine_on_failure(tmp_path: Path) -> None:
+    """Engine.dispose() must run even when an inner step raises."""
+    cfg = ExtractorConfig(
+        db_url="sqlite:///:memory:",
+        sample_rows=10,
+        output_dir=tmp_path,
+        seed=1,
+        max_per_table=10,
+        quiet=True,
+    )
+    schema = _two_table_schema()
+    with (
+        patch("dbsprout.train.extractor.introspect", return_value=schema),
+        patch(
+            "dbsprout.train.extractor._row_counts",
+            side_effect=RuntimeError("boom"),
+        ),
+        patch("dbsprout.train.extractor.sa.create_engine") as create_engine_mock,
+    ):
+        engine = create_engine_mock.return_value
+        engine.dialect.name = "sqlite"
+        with pytest.raises(RuntimeError, match="boom"):
+            SampleExtractor().extract(source=cfg.db_url, config=cfg)
+        engine.dispose.assert_called_once()

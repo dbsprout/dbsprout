@@ -69,13 +69,21 @@ def _row_counts(engine: sa.Engine, schema: DatabaseSchema) -> dict[str, int]:
 
 
 def _has_rowid(engine: sa.Engine, table_name: str) -> bool:
-    """Probe whether a SQLite table has a rowid (False for WITHOUT ROWID)."""
+    """Probe whether a SQLite table has a rowid (False for ``WITHOUT ROWID``).
+
+    Reads the table's CREATE statement from ``sqlite_master`` and looks for the
+    ``WITHOUT ROWID`` clause. This is more precise than catching
+    ``OperationalError`` from a probe SELECT (which would also swallow locked /
+    permission-denied errors and silently fall back to unseeded sampling).
+    """
     with engine.connect() as conn:
-        try:
-            conn.execute(sa.text(f'SELECT rowid FROM "{table_name}" LIMIT 0'))  # noqa: S608  # nosec B608
-        except sa.exc.OperationalError:
-            return False
-    return True
+        ddl = conn.execute(
+            sa.text("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = :n"),
+            {"n": table_name},
+        ).scalar()
+    if ddl is None:
+        return True
+    return "WITHOUT ROWID" not in ddl.upper()
 
 
 def _fetch_random(
@@ -98,7 +106,9 @@ def _fetch_random(
     )
     if q.warning:
         logger.warning("train.random: %s", q.warning)
-    with engine.begin() as conn:  # one transaction for setup + main
+    # ``begin()`` (not ``connect()``) so PG ``setseed`` binds to the same
+    # transaction as the SELECT — otherwise the seed is reset between statements.
+    with engine.begin() as conn:
         for setup_sql, setup_params in q.setup:
             conn.execute(sa.text(setup_sql), setup_params)
         rows = conn.execute(sa.text(q.sql), q.params).mappings().all()
