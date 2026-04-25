@@ -24,6 +24,7 @@ from dbsprout.spec.providers.base import SpecProvider
 
 if TYPE_CHECKING:
     from dbsprout.schema.models import DatabaseSchema
+    from dbsprout.train.models import ExtractorConfig, SampleResult
 
 
 @runtime_checkable
@@ -68,10 +69,24 @@ class OutputWriter(Protocol):
     def write(self, *args: Any, **kwargs: Any) -> Any: ...
 
 
+@runtime_checkable
+class TrainExtractor(Protocol):
+    """Extracts a stratified sample from a data source for fine-tuning.
+
+    The ``source`` is intentionally a plain string (URL, file path, etc.) so
+    plugins beyond the built-in ``live_db`` extractor can register without a
+    new Protocol — for example a future ``csv_dump`` or ``parquet_dir``
+    extractor that consumes filesystem paths.
+    """
+
+    def extract(self, *, source: str, config: ExtractorConfig) -> SampleResult: ...
+
+
 __all__ = [
     "GenerationEngine",
     "MigrationParser",
     "OutputWriter",
     "SchemaParser",
     "SpecProvider",
+    "TrainExtractor",
 ]

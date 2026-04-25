@@ -32,6 +32,7 @@ _ALLOWED_GROUPS: frozenset[str] = frozenset(
         "dbsprout.outputs",
         "dbsprout.llm_providers",
         "dbsprout.migration_frameworks",
+        "dbsprout.train_extractors",
     }
 )
 

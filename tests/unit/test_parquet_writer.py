@@ -572,22 +572,30 @@ class TestParquetSpecial:
 
 class TestParquetSecurity:
     def test_path_traversal_sanitized(self, tmp_path: Path) -> None:
-        """Table names with path separators should be sanitized."""
-        schema = DatabaseSchema(
-            tables=[
-                TableSchema(
-                    name="../escape",
-                    columns=[
-                        ColumnSchema(
-                            name="id",
-                            data_type=ColumnType.INTEGER,
-                            nullable=False,
-                            primary_key=True,
-                        ),
-                    ],
-                    primary_key=["id"],
+        """Table names with path separators should be sanitized.
+
+        ``TableSchema`` now rejects path-traversal identifiers at validation
+        time (see :func:`dbsprout.schema.models._validate_identifier`), so
+        bypass validation via ``model_construct`` to exercise the writer's
+        own defensive sanitization layer.
+        """
+        bad_table = TableSchema.model_construct(
+            name="../escape",
+            columns=[
+                ColumnSchema(
+                    name="id",
+                    data_type=ColumnType.INTEGER,
+                    nullable=False,
+                    primary_key=True,
                 ),
             ],
+            primary_key=["id"],
+            foreign_keys=[],
+            indexes=[],
+        )
+        schema = DatabaseSchema.model_construct(
+            tables=[bad_table],
+            enums={},
             dialect="postgresql",
         )
         data: dict[str, list[dict[str, Any]]] = {

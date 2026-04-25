@@ -235,25 +235,12 @@ def _load_old_schema(output_dir: Path, snapshot: str | None) -> DatabaseSchema:
 
 
 def _scrub_secrets(message: str, source_url: str) -> str:
-    """Remove any password from *message* by replacing it with ``***``.
-
-    Uses :func:`sqlalchemy.engine.make_url` to extract the password from
-    *source_url*. If the URL can't be parsed or carries no password, the
-    message is returned unchanged (nothing to scrub). Both the raw password
-    and the full source URL are substituted (belt-and-suspenders: some
-    SQLAlchemy exceptions embed only the password, others the whole URL).
+    """Re-exported from :mod:`dbsprout.cli._utils` so call sites in this
+    module (and any tests that patch ``diff._scrub_secrets``) keep working.
     """
-    import sqlalchemy as sa  # noqa: PLC0415
+    from dbsprout.cli._utils import scrub_secrets  # noqa: PLC0415
 
-    try:
-        url = sa.engine.make_url(source_url)
-    except sa.exc.ArgumentError:
-        return message
-    password = url.password
-    if not password:
-        return message
-    safe_url = url.render_as_string(hide_password=True)
-    return message.replace(password, "***").replace(source_url, safe_url)
+    return scrub_secrets(message, source_url)
 
 
 def _introspect_db(url: str) -> DatabaseSchema:

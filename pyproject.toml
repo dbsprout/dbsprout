@@ -77,6 +77,9 @@ flyway = "dbsprout.migrate.parsers.flyway:FlywayMigrationParser"
 liquibase = "dbsprout.migrate.parsers.liquibase:LiquibaseMigrationParser"
 prisma = "dbsprout.migrate.parsers.prisma:PrismaMigrationParser"
 
+[project.entry-points."dbsprout.train_extractors"]
+live_db = "dbsprout.train.extractor:SampleExtractor"
+
 [project.optional-dependencies]
 dev = [
     "pytest>=8.0",
@@ -144,9 +147,13 @@ tui = [
 data = [
     "polars>=1.0",
 ]
+train = [
+    "polars>=1.0",
+    "sqlalchemy>=2.0",
+]
 # Excludes train-cuda/train-mlx (platform-specific) and cloud (subset of llm)
 all = [
-    "dbsprout[db,pg,gen,llm,stats,data,web,tui]",
+    "dbsprout[db,pg,gen,llm,stats,data,web,tui,train]",
 ]
 
 [build-system]
