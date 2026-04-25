@@ -116,6 +116,9 @@ def _fetch_random(
     return pl.DataFrame([dict(r) for r in rows]) if rows else pl.DataFrame()
 
 
+_PK_FETCH_BATCH = 5_000  # safely below SQLite's 32_766 bind limit and PG/MySQL packet caps
+
+
 def _fetch_by_pk(
     engine: sa.Engine,
     *,
@@ -123,16 +126,23 @@ def _fetch_by_pk(
     pk_column: str,
     values: Iterable[Any],
 ) -> pl.DataFrame:
+    """Fetch parent rows by PK in chunks to stay below per-statement bind limits."""
     md = sa.MetaData()
     sa_table = sa.Table(table.name, md, autoload_with=engine)
-    sql = sa_table.select().where(sa_table.c[pk_column].in_(list(values)))
+    value_list = list(values)
+    if not value_list:
+        return pl.DataFrame(schema={pk_column: pl.Int64})
+    frames: list[pl.DataFrame] = []
     with engine.connect() as conn:
-        rows = conn.execute(sql).mappings().all()
-    return (
-        pl.DataFrame([dict(r) for r in rows])
-        if rows
-        else pl.DataFrame(schema={pk_column: pl.Int64})
-    )
+        for start in range(0, len(value_list), _PK_FETCH_BATCH):
+            chunk = value_list[start : start + _PK_FETCH_BATCH]
+            sql = sa_table.select().where(sa_table.c[pk_column].in_(chunk))
+            rows = conn.execute(sql).mappings().all()
+            if rows:
+                frames.append(pl.DataFrame([dict(r) for r in rows]))
+    if not frames:
+        return pl.DataFrame(schema={pk_column: pl.Int64})
+    return pl.concat(frames, how="diagonal_relaxed") if len(frames) > 1 else frames[0]
 
 
 class _EngineAdapter(ParentFetcher):
@@ -239,6 +249,7 @@ class SampleExtractor:
                 tables=tuple(table_results),
                 fk_closure_iterations=report.iterations,
                 fk_unresolved_per_table=report.unresolved_per_table,
+                fk_unresolved_total=sum(report.unresolved_per_table.values()),
                 duration_seconds=duration,
             )
             manifest_path = config.output_dir / "manifest.json"

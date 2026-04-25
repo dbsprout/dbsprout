@@ -79,9 +79,13 @@ def build_random_query(  # noqa: PLR0913 - dialect/seed/row_count/has_rowid each
                 params={"n": n},
                 warning=f"seed ignored for WITHOUT ROWID table '{name}'",
             )
-        # Seed-derived linear-congruential coefficients.
-        a = (seed * 6364136223846793005 + 1) % (2**31 - 1) or 1
-        b = (seed * 1442695040888963407 + 17) % (2**31 - 1)
+        # Seed-derived linear-congruential coefficients. Pre-mix the raw seed
+        # with the SplittableRandom golden gamma so seed=0 (the default) doesn't
+        # collapse `a` to 1 — which would degenerate the ORDER BY into the
+        # monotonic ``rowid`` order and silently destroy the random sample.
+        mixed_seed = seed ^ 0x9E3779B97F4A7C15
+        a = (mixed_seed * 6364136223846793005 + 1) % (2**31 - 1) or 1
+        b = (mixed_seed * 1442695040888963407 + 17) % (2**31 - 1)
         p = 2**31 - 1
         sql = f'SELECT * FROM "{name}" ORDER BY ((rowid * :a + :b) % :p) LIMIT :n'  # noqa: S608  # nosec B608 - name from SA reflection
         return RandomQuery(sql=sql, params={"a": a, "b": b, "p": p, "n": n})

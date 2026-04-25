@@ -50,6 +50,16 @@ def test_sqlite_uses_rowid_arithmetic_when_seed_set() -> None:
     assert q.params["n"] == 50
 
 
+def test_sqlite_seed_zero_does_not_degenerate_to_rowid_order() -> None:
+    """Regression: seed=0 must not collapse the LCG multiplier to 1 (silent quality bug)."""
+    q0 = build_random_query(_table(), n=50, dialect="sqlite", seed=0, row_count=1000)
+    q1 = build_random_query(_table(), n=50, dialect="sqlite", seed=1, row_count=1000)
+    # `a` must not be 1 at seed=0 — that would make the ORDER BY monotonic in rowid.
+    assert q0.params["a"] != 1
+    # And the coefficients at seed=0 vs seed=1 must differ — separate samples per seed.
+    assert (q0.params["a"], q0.params["b"]) != (q1.params["a"], q1.params["b"])
+
+
 def test_sqlite_without_rowid_falls_back_to_random() -> None:
     q = build_random_query(
         _table(), n=50, dialect="sqlite", seed=11, row_count=1000, has_rowid=False

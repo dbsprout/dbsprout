@@ -9,6 +9,8 @@ from pydantic import BaseModel, ConfigDict, Field
 
 
 class ExtractorConfig(BaseModel):
+    """User-supplied configuration for one ``SampleExtractor.extract`` call."""
+
     model_config = ConfigDict(frozen=True)
 
     db_url: str
@@ -22,6 +24,13 @@ class ExtractorConfig(BaseModel):
 
 
 class SampleAllocation(BaseModel):
+    """Per-table extraction target derived by the stratified allocator.
+
+    ``floor_clamped`` / ``ceiling_clamped`` reflect only the user-configured
+    ``min_per_table`` / ``max_per_table`` bounds — not the implicit per-table
+    row-count cap.
+    """
+
     model_config = ConfigDict(frozen=True)
 
     table: str
@@ -32,6 +41,13 @@ class SampleAllocation(BaseModel):
 
 
 class TableExtractionResult(BaseModel):
+    """Outcome of extracting one table.
+
+    ``sampled`` counts rows obtained by the random sampler; ``fk_closure_added``
+    counts rows the FK closure pass appended afterwards. The Parquet file
+    contains both (sampled + closure-added).
+    """
+
     model_config = ConfigDict(frozen=True)
 
     table: str
@@ -42,6 +58,8 @@ class TableExtractionResult(BaseModel):
 
 
 class SampleResult(BaseModel):
+    """Aggregate return value of ``SampleExtractor.extract``."""
+
     model_config = ConfigDict(frozen=True)
 
     output_dir: Path
@@ -51,6 +69,14 @@ class SampleResult(BaseModel):
 
 
 class SampleManifest(BaseModel):
+    """On-disk metadata written next to the per-table Parquet files.
+
+    ``effective_budget`` is the actual total row count written
+    (``sampled + fk_closure_added`` summed across tables) — typically larger
+    than ``requested_budget`` once FK closure pulls in missing parent rows.
+    ``fk_unresolved_total`` is a convenience sum over ``fk_unresolved_per_table``.
+    """
+
     model_config = ConfigDict(frozen=True)
 
     manifest_version: int = 1
@@ -64,10 +90,13 @@ class SampleManifest(BaseModel):
     tables: tuple[TableExtractionResult, ...]
     fk_closure_iterations: int
     fk_unresolved_per_table: dict[str, int]
+    fk_unresolved_total: int = 0
     duration_seconds: float
 
 
 class ClosureReport(BaseModel):
+    """Internal return value of ``close_fk_graph``."""
+
     model_config = ConfigDict(frozen=True)
 
     iterations: int
