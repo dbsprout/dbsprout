@@ -20,15 +20,23 @@ if TYPE_CHECKING:
     import sqlalchemy as sa
 
 _PG_TABLESAMPLE_THRESHOLD: Final[int] = 1_000_000
+# Oversample so BERNOULLI's per-row variance still yields >= n rows w.h.p.
 _PG_OVERSAMPLE_FACTOR: Final[int] = 3
 
 
 @dataclass(frozen=True)
 class RandomQuery:
-    """Bound SQL + parameters for a dialect-specific random sample."""
+    """Dialect-specific random query.
+
+    `params` keys vary per dialect (e.g. `n`, `seed`, `p`, `a`, `b`); callers
+    should pass the whole dict to `text(sql).bindparams(**params)`.
+    `setup` is a tuple of (sql, params) pairs to execute in the SAME
+    transaction immediately before `sql` (e.g. `setseed` on PostgreSQL).
+    """
 
     sql: str
     params: dict[str, object]
+    setup: tuple[tuple[str, dict[str, object]], ...] = ()
     warning: str | None = None
 
 
@@ -51,8 +59,13 @@ def build_random_query(  # noqa: PLR0913 - dialect/seed/row_count/has_rowid each
                 f"TABLESAMPLE BERNOULLI(:p) REPEATABLE (:seed) LIMIT :n"
             )
             return RandomQuery(sql=sql, params={"p": pct, "seed": seed, "n": n})
-        sql = f'SELECT setseed(:s); SELECT * FROM "{name}" ORDER BY random() LIMIT :n'  # noqa: S608  # nosec B608 - name from SA reflection
-        return RandomQuery(sql=sql, params={"s": seed / (2**31 - 1), "n": n})
+        s = max(-1.0, min(1.0, seed / (2**31 - 1)))
+        sql = f'SELECT * FROM "{name}" ORDER BY random() LIMIT :n'  # noqa: S608  # nosec B608 - name from SA reflection
+        return RandomQuery(
+            sql=sql,
+            params={"n": n},
+            setup=(("SELECT setseed(:s)", {"s": s}),),
+        )
 
     if dialect == "mysql":
         sql = f"SELECT * FROM `{name}` ORDER BY RAND(:seed) LIMIT :n"  # noqa: S608  # nosec B608 - name from SA reflection

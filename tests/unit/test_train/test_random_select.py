@@ -20,6 +20,16 @@ def test_postgresql_small_table_uses_order_by_random() -> None:
     assert q.params["n"] == 100
 
 
+def test_postgresql_small_table_returns_setseed_setup_statement() -> None:
+    q = build_random_query(_table(), n=100, dialect="postgresql", seed=42, row_count=1000)
+    assert len(q.setup) == 1
+    setup_sql, setup_params = q.setup[0]
+    assert "setseed" in setup_sql
+    assert "s" in setup_params
+    assert "setseed" not in q.sql
+    assert "ORDER BY random()" in q.sql
+
+
 def test_postgresql_large_table_uses_tablesample() -> None:
     q = build_random_query(_table(), n=100, dialect="postgresql", seed=42, row_count=2_000_000)
     assert "TABLESAMPLE BERNOULLI" in q.sql
