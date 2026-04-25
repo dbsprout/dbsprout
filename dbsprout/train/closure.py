@@ -47,10 +47,17 @@ def _missing_parent_values(
 def _append_fetched(
     samples: dict[str, pl.DataFrame], parent_table_name: str, fetched: pl.DataFrame
 ) -> None:
-    """Append fetched parent rows into the in-memory sample dict."""
+    """Append fetched parent rows into the in-memory sample dict.
+
+    Uses ``how="diagonal_relaxed"`` so a column-order or nullable-type mismatch
+    between the existing parent sample and the fetched rows does not raise —
+    Polars unions the schemas, filling missing columns with NULL.
+    """
     parent_df = samples.get(parent_table_name)
     samples[parent_table_name] = (
-        pl.concat([parent_df, fetched]) if parent_df is not None else fetched
+        pl.concat([parent_df, fetched], how="diagonal_relaxed")
+        if parent_df is not None
+        else fetched
     )
 
 
@@ -61,11 +68,17 @@ def close_fk_graph(  # noqa: PLR0912 - validation/warning branches are inherent 
     *,
     max_iterations: int,
 ) -> ClosureReport:
-    """Iteratively pull missing parent rows until no FK is dangling or we hit the cap."""
+    """Iteratively pull missing parent rows until no FK is dangling or we hit the cap.
+
+    Mutates ``samples`` in place: appends fetched parent rows to existing
+    DataFrames. Composite FKs (multi-column) are not yet supported — they are
+    skipped with a one-time warning per FK.
+    """
     additions: dict[str, int] = defaultdict(int)
     unresolved: dict[str, int] = defaultdict(int)
     warned_no_pk: set[str] = set()
     warned_empty_parent: set[tuple[str, str]] = set()
+    warned_composite_fk: set[tuple[str, str]] = set()
     iterations = 0
 
     while iterations < max_iterations:
@@ -84,6 +97,17 @@ def close_fk_graph(  # noqa: PLR0912 - validation/warning branches are inherent 
                             fk.ref_table,
                         )
                         warned_no_pk.add(fk.ref_table)
+                    continue
+                if len(fk.columns) > 1 or len(fk.ref_columns) > 1:
+                    composite_key = (table.name, fk.ref_table)
+                    if composite_key not in warned_composite_fk:
+                        logger.warning(
+                            "skipping composite FK on '%s' -> '%s' (multi-column FKs "
+                            "not yet supported by closure pass)",
+                            table.name,
+                            fk.ref_table,
+                        )
+                        warned_composite_fk.add(composite_key)
                     continue
                 parent_pk_col = fk.ref_columns[0]
                 missing = _missing_parent_values(

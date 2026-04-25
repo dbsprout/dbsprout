@@ -167,6 +167,46 @@ def test_closure_terminates_on_cycle(caplog: pytest.LogCaptureFixture) -> None:
     assert any("closure terminated" in r.message for r in caplog.records)
 
 
+def test_closure_skips_composite_fk_with_warning(caplog: pytest.LogCaptureFixture) -> None:
+    """Composite (multi-column) FKs are not yet supported by closure — warn + skip."""
+    parent = TableSchema(
+        name="composite_pk",
+        columns=[
+            ColumnSchema(name="a", data_type=ColumnType.INTEGER, nullable=False, primary_key=True),
+            ColumnSchema(name="b", data_type=ColumnType.INTEGER, nullable=False, primary_key=True),
+        ],
+        primary_key=["a", "b"],
+        foreign_keys=[],
+    )
+    child = TableSchema(
+        name="child",
+        columns=[
+            ColumnSchema(name="id", data_type=ColumnType.INTEGER, nullable=False, primary_key=True),
+            ColumnSchema(name="ref_a", data_type=ColumnType.INTEGER, nullable=True),
+            ColumnSchema(name="ref_b", data_type=ColumnType.INTEGER, nullable=True),
+        ],
+        primary_key=["id"],
+        foreign_keys=[
+            ForeignKeySchema(
+                columns=["ref_a", "ref_b"],
+                ref_table="composite_pk",
+                ref_columns=["a", "b"],
+            ),
+        ],
+    )
+    schema = DatabaseSchema(dialect="sqlite", tables=[parent, child])
+    engine = _StubEngine({})
+    samples = {
+        "composite_pk": pl.DataFrame({"a": [1], "b": [1]}),
+        "child": pl.DataFrame({"id": [10], "ref_a": [99], "ref_b": [99]}),
+    }
+    with caplog.at_level(logging.WARNING, logger="dbsprout.train.closure"):
+        report = close_fk_graph(samples, schema, engine, max_iterations=4)
+    assert any("composite FK" in r.message for r in caplog.records)
+    assert engine.calls == []
+    assert report.additions == {}
+
+
 def test_closure_logs_unresolved_for_empty_parent(caplog: pytest.LogCaptureFixture) -> None:
     engine = _StubEngine({"users": {}})  # parent table empty
     samples = {
