@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+import logging
+from typing import TYPE_CHECKING, cast
 
 from dbsprout.schema.parsers.dbml import can_parse_dbml, parse_dbml
 from dbsprout.schema.parsers.ddl import parse_ddl
@@ -15,6 +16,8 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from dbsprout.schema.models import DatabaseSchema
+
+logger = logging.getLogger(__name__)
 
 _MAX_SCHEMA_BYTES = 10 * 1024 * 1024  # 10 MB
 
@@ -40,6 +43,27 @@ def parse_schema_file(path: Path) -> DatabaseSchema:
     text = path.read_text(encoding="utf-8")
     source = str(path)
     suffix = path.suffix.lower()
+
+    # Registry-first: a plugin whose ``suffixes`` tuple contains this
+    # file suffix wins. The fallback below keeps editable-install / CI
+    # paths working when entry-point metadata is unavailable.
+    from dbsprout.plugins.registry import get_registry  # noqa: PLC0415
+
+    for info in get_registry().list("dbsprout.parsers"):
+        obj = info.obj
+        if obj is None:
+            continue
+        suffixes = getattr(obj, "suffixes", ())
+        if suffix not in suffixes:
+            continue
+        if not obj.can_parse(text):
+            logger.debug(
+                "plugin %r in dbsprout.parsers matched suffix %s but rejected content",
+                info.name,
+                suffix,
+            )
+            continue
+        return cast("DatabaseSchema", obj.parse(text, source_file=source))
 
     if suffix == ".dbml":
         return parse_dbml(text, source_file=source)

@@ -17,13 +17,14 @@ from dbsprout.schema.models import ColumnType
 
 if TYPE_CHECKING:
     from pathlib import Path
+    from types import ModuleType
 
     from dbsprout.schema.models import DatabaseSchema, TableSchema
 
 try:
-    import polars as pl  # type: ignore[import-not-found,unused-ignore]
-except ImportError:
-    pl = None  # type: ignore[assignment,unused-ignore]
+    import polars as pl
+except ImportError:  # pragma: no cover
+    pl: ModuleType | None = None  # type: ignore[no-redef]
 
 _COMPRESSION: Literal["lz4", "uncompressed", "snappy", "gzip", "brotli", "zstd"] = "snappy"
 _SAFE_TABLE_NAME = re.compile(r"^[A-Za-z0-9_.\- ]+$")
@@ -102,6 +103,8 @@ def _sanitize_rows(
 
 class ParquetWriter:
     """Write generated data as Parquet files via Polars."""
+
+    format: str = "parquet"
 
     def write(
         self,

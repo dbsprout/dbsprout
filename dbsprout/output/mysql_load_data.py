@@ -142,6 +142,8 @@ def _is_local_infile_error(exc: Exception) -> bool:
 class MysqlLoadDataWriter:
     """Write generated data directly to MySQL via LOAD DATA LOCAL INFILE."""
 
+    format: str = "mysql_load_data"
+
     def write(
         self,
         tables_data: dict[str, list[dict[str, Any]]],

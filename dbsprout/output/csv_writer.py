@@ -45,6 +45,8 @@ def _is_nan_or_inf(value: Any) -> bool:
 class CSVWriter:
     """Write generated data as CSV files."""
 
+    format: str = "csv"
+
     def write(
         self,
         tables_data: dict[str, list[dict[str, Any]]],

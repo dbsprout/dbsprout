@@ -22,7 +22,7 @@ if TYPE_CHECKING:
     from dbsprout.schema.models import DatabaseSchema
 
 try:
-    import psycopg  # type: ignore[import-not-found,unused-ignore]
+    import psycopg
 except ImportError:  # pragma: no cover
     psycopg: ModuleType | None = None  # type: ignore[no-redef]
 
@@ -104,6 +104,8 @@ __all__ = [
 
 class PgCopyWriter:
     """Write generated data directly to PostgreSQL via COPY FROM STDIN."""
+
+    format: str = "pg_copy"
 
     def write(
         self,

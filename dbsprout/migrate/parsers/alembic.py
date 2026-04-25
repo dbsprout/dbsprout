@@ -57,10 +57,10 @@ class AlembicParser:
                 ``pip install dbsprout[migrate]``).
         """
         try:
-            from alembic.autogenerate import (  # type: ignore[import-not-found, unused-ignore]  # noqa: PLC0415
+            from alembic.autogenerate import (  # noqa: PLC0415
                 compare_metadata as _alembic_compare,
             )
-            from alembic.runtime.migration import (  # type: ignore[import-not-found, unused-ignore]  # noqa: PLC0415
+            from alembic.runtime.migration import (  # noqa: PLC0415
                 MigrationContext,
             )
         except ImportError as exc:

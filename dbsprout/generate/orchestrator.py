@@ -16,8 +16,8 @@ if TYPE_CHECKING:
     from dbsprout.schema.models import DatabaseSchema
 
 from dbsprout.generate.constraints import enforce_constraints
-from dbsprout.generate.engines.heuristic import HeuristicEngine
 from dbsprout.generate.fk_sampling import sample_fk_values
+from dbsprout.plugins.dispatch import resolve_engine
 from dbsprout.schema.graph import FKGraph, resolve_cycles
 from dbsprout.spec.heuristics import map_columns
 
@@ -55,16 +55,17 @@ def orchestrate(
     # Map columns to generators (once for whole schema)
     all_mappings = map_columns(schema)
 
-    # Select engine
+    # Select engine — registry-first dispatch so third-party engines
+    # registered via ``[project.entry-points."dbsprout.generators"]`` win
+    # over the hard-wired fallback.
     use_spec = engine == "spec"
-    heuristic_engine = HeuristicEngine(seed=seed)
+    heuristic_engine = resolve_engine("heuristic", seed=seed)
     spec_engine = None
     all_table_specs = None
     if use_spec:
-        from dbsprout.generate.engines.spec_driven import SpecDrivenEngine  # noqa: PLC0415
         from dbsprout.spec.analyzer import heuristic_fallback  # noqa: PLC0415
 
-        spec_engine = SpecDrivenEngine(seed=seed)
+        spec_engine = resolve_engine("spec_driven", seed=seed)
         dataspec = heuristic_fallback(schema)
         all_table_specs = {ts.table_name: ts for ts in dataspec.tables}
 
