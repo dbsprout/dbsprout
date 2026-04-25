@@ -99,7 +99,6 @@ def test_extractor_warns_when_target_exceeds_memory_threshold(
     """Target above 500_000 rows triggers the memory-pressure warning."""
     schema = _single_table_schema()
     cfg = ExtractorConfig(
-        db_url="sqlite:///:memory:",
         sample_rows=600_000,
         output_dir=tmp_path,
         seed=1,
@@ -128,6 +127,55 @@ def test_extractor_warns_when_target_exceeds_memory_threshold(
     ):
         ce.return_value.dialect.name = "sqlite"
         with caplog.at_level("WARNING", logger="dbsprout.train.extractor"):
-            SampleExtractor().extract(source=cfg.db_url, config=cfg)
+            SampleExtractor().extract(source="sqlite:///:memory:", config=cfg)
 
     assert any("memory" in r.message.lower() for r in caplog.records)
+
+
+def test_extractor_skips_table_with_path_traversal_name(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Defensive: a table whose name escapes samples_dir is skipped with a warning."""
+    # Note: this should never happen because _validate_identifier blocks it at
+    # parse time, but the orchestrator carries a defense-in-depth check.
+    # Construct a TableSchema bypassing validation via model_construct.
+    bad = TableSchema.model_construct(
+        name="../escape",
+        columns=[
+            ColumnSchema(name="id", data_type=ColumnType.INTEGER, nullable=False, primary_key=True)
+        ],
+        primary_key=["id"],
+        foreign_keys=[],
+    )
+    schema = DatabaseSchema.model_construct(dialect="sqlite", tables=[bad], enums={})
+    cfg = ExtractorConfig(
+        sample_rows=1,
+        output_dir=tmp_path,
+        seed=1,
+        max_per_table=10,
+        quiet=True,
+    )
+
+    def fake_table_factory(name: str, *_a: object, **_k: object) -> MagicMock:
+        m = MagicMock()
+        m.name = name
+        return m
+
+    with (
+        patch("dbsprout.train.extractor.introspect", return_value=schema),
+        patch("dbsprout.train.extractor._row_counts", return_value={"../escape": 100}),
+        patch(
+            "dbsprout.train.extractor._fetch_random",
+            return_value=pl.DataFrame({"id": [1]}),
+        ),
+        patch("dbsprout.train.extractor._fetch_by_pk", return_value=pl.DataFrame()),
+        patch("dbsprout.train.extractor.sa.create_engine") as ce,
+        patch("dbsprout.train.extractor.sa.Table", side_effect=fake_table_factory),
+    ):
+        ce.return_value.dialect.name = "sqlite"
+        with caplog.at_level("WARNING", logger="dbsprout.train.extractor"):
+            SampleExtractor().extract(source="sqlite:///:memory:", config=cfg)
+
+    # Defensive guard fired; no Parquet escaped tmp_path.
+    assert any("escapes output directory" in r.message for r in caplog.records)
+    assert not (tmp_path.parent / "escape.parquet").exists()

@@ -66,7 +66,6 @@ def test_full_extract_mysql(mysql_tables: tuple[str, str, str], tmp_path: Path) 
     dsn, users_t, orders_t = mysql_tables
     out = tmp_path / "run"
     cfg = ExtractorConfig(
-        db_url=dsn,
         sample_rows=20,
         output_dir=out,
         seed=3,

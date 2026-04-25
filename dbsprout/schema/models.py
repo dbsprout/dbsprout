@@ -27,6 +27,8 @@ def _validate_identifier(v: str) -> str:
         raise ValueError("Identifier must not be empty")
     if len(v) > 128:
         raise ValueError(f"Identifier must be ≤128 chars, got {len(v)}")
+    if "/" in v or "\\" in v or v.startswith("..") or v == ".":
+        raise ValueError(f"Identifier {v!r} contains path-separator or path-traversal characters")
     return v
 
 

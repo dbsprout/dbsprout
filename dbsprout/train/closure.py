@@ -27,7 +27,9 @@ class ParentFetcher(Protocol):
         table: TableSchema,
         pk_column: str,
         values: Iterable[Any],
-    ) -> pl.DataFrame: ...
+    ) -> pl.DataFrame:
+        """Return parent rows from *table* whose *pk_column* is in *values*."""
+        ...
 
 
 def _missing_parent_values(
@@ -128,7 +130,7 @@ def close_fk_graph(  # noqa: PLR0912 - validation/warning branches are inherent 
                             table.name,
                         )
                         warned_empty_parent.add(key)
-                if len(fetched) > 0:
+                if not fetched.is_empty():
                     _append_fetched(samples, fk.ref_table, fetched)
                     additions[fk.ref_table] += len(fetched)
                     added_this_pass += len(fetched)

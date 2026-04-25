@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import time
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Final
 
 import polars as pl
 import sqlalchemy as sa
@@ -17,7 +17,9 @@ from dbsprout.train.allocator import allocate_budget
 from dbsprout.train.closure import ParentFetcher, close_fk_graph
 from dbsprout.train.manifest import write_manifest
 from dbsprout.train.models import (
+    ClosureReport,
     ExtractorConfig,
+    SampleAllocation,
     SampleManifest,
     SampleResult,
     TableExtractionResult,
@@ -26,13 +28,14 @@ from dbsprout.train.random_select import build_random_query
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
+    from pathlib import Path
 
     from dbsprout.schema.models import DatabaseSchema, TableSchema
 
 logger = logging.getLogger("dbsprout.train.extractor")
 
-_MEMORY_WARN_THRESHOLD = 500_000
-_CLOSURE_HARD_CAP = 16
+_MEMORY_WARN_THRESHOLD: Final[int] = 500_000
+_CLOSURE_HARD_CAP: Final[int] = 16
 
 
 def _row_counts(engine: sa.Engine, schema: DatabaseSchema) -> dict[str, int]:
@@ -95,6 +98,13 @@ def _fetch_random(
     seed: int,
     row_count: int,
 ) -> pl.DataFrame:
+    """Fetch ``n`` random rows from *table* using a dialect-aware seeded query.
+
+    Uses :meth:`Engine.begin` (not ``connect()``) so that, on PostgreSQL, the
+    ``setseed`` call binds to the same transaction as the subsequent ``SELECT``;
+    a fresh connection per statement would otherwise reset the seed and break
+    determinism.
+    """
     dialect = engine.dialect.name
     has_rowid = _has_rowid(engine, table.name) if dialect == "sqlite" else True
     q = build_random_query(
@@ -116,7 +126,8 @@ def _fetch_random(
     return pl.DataFrame([dict(r) for r in rows]) if rows else pl.DataFrame()
 
 
-_PK_FETCH_BATCH = 5_000  # safely below SQLite's 32_766 bind limit and PG/MySQL packet caps
+# Safely below SQLite's 32_766 bind limit and PG/MySQL packet caps.
+_PK_FETCH_BATCH: Final[int] = 5_000
 
 
 def _fetch_by_pk(
@@ -157,6 +168,7 @@ class _EngineAdapter(ParentFetcher):
         pk_column: str,
         values: Iterable[Any],
     ) -> pl.DataFrame:
+        """Delegate to :func:`_fetch_by_pk` using this adapter's engine."""
         return _fetch_by_pk(self.engine, table=table, pk_column=pk_column, values=values)
 
 
@@ -164,78 +176,25 @@ class SampleExtractor:
     """Built-in ``live_db`` train extractor."""
 
     def extract(self, *, source: str, config: ExtractorConfig) -> SampleResult:
+        """Extract a stratified sample from *source* into Parquet files.
+
+        Pipeline: introspect schema → compute per-table allocations → fetch
+        random rows → close FK graph → write per-table Parquet + manifest.
+        Always disposes the SQLAlchemy engine on exit.
+        """
         start = time.perf_counter()
         engine = sa.create_engine(source)
         try:
             schema = introspect(source)
-            row_counts = _row_counts(engine, schema)
-
-            n_tables = max(1, len([c for c in row_counts.values() if c > 0]))
-            max_per_table = config.max_per_table or max(50, 10 * config.sample_rows // n_tables)
-            allocations = allocate_budget(
-                row_counts=row_counts,
-                budget=config.sample_rows,
-                min_per_table=config.min_per_table,
-                max_per_table=max_per_table,
-            )
-
-            for a in allocations:
-                if a.target > _MEMORY_WARN_THRESHOLD:
-                    logger.warning(
-                        "train.allocator: table '%s' target is %d rows "
-                        "(~%d MB est. in memory); consider lowering --max-per-table",
-                        a.table,
-                        a.target,
-                        a.target * 5 // 1024,
-                    )
-
-            samples: dict[str, pl.DataFrame] = {}
-            md = sa.MetaData()
-            with Progress(
-                SpinnerColumn(),
-                TextColumn("[bold blue]{task.description}"),
-                BarColumn(),
-                TextColumn("{task.completed}/{task.total}"),
-                TimeElapsedColumn(),
-                disable=config.quiet,
-            ) as progress:
-                overall = progress.add_task("Extracting", total=sum(a.target for a in allocations))
-                for a in allocations:
-                    if a.target == 0:
-                        continue
-                    sa_table = sa.Table(a.table, md, autoload_with=engine)
-                    samples[a.table] = _fetch_random(
-                        engine,
-                        table=sa_table,
-                        n=a.target,
-                        seed=config.seed,
-                        row_count=a.row_count,
-                    )
-                    progress.update(overall, advance=a.target, description=f"Extracting {a.table}")
+            allocations, _ = self._allocate(engine, schema, config)
+            samples = self._fetch_samples(engine, allocations, config)
 
             cap = config.fk_closure_max_iterations or min(_CLOSURE_HARD_CAP, len(schema.tables))
             report = close_fk_graph(samples, schema, _EngineAdapter(engine), max_iterations=cap)
 
             samples_dir = config.output_dir / "samples"
             samples_dir.mkdir(parents=True, exist_ok=True)
-            table_results: list[TableExtractionResult] = []
-            for a in allocations:
-                if a.target == 0 or a.table not in samples:
-                    continue
-                parquet_path = samples_dir / f"{a.table}.parquet"
-                samples[a.table].write_parquet(
-                    parquet_path, compression="zstd", compression_level=3
-                )
-                added = report.additions.get(a.table, 0)
-                table_results.append(
-                    TableExtractionResult(
-                        table=a.table,
-                        target=a.target,
-                        sampled=len(samples[a.table]) - added,
-                        fk_closure_added=added,
-                        parquet_path=parquet_path,
-                    )
-                )
+            table_results = self._write_results(samples, allocations, report, samples_dir)
 
             duration = time.perf_counter() - start
             manifest = SampleManifest(
@@ -263,3 +222,106 @@ class SampleExtractor:
             )
         finally:
             engine.dispose()
+
+    def _allocate(
+        self,
+        engine: sa.Engine,
+        schema: DatabaseSchema,
+        config: ExtractorConfig,
+    ) -> tuple[list[SampleAllocation], int]:
+        """Compute per-table sample allocations and emit memory-pressure warnings.
+
+        Returns ``(allocations, max_per_table)`` where ``max_per_table`` is the
+        effective ceiling actually applied (either user-supplied or derived).
+        """
+        row_counts = _row_counts(engine, schema)
+        n_tables = max(1, sum(1 for c in row_counts.values() if c > 0))
+        max_per_table = config.max_per_table or max(50, 10 * config.sample_rows // n_tables)
+        allocations = allocate_budget(
+            row_counts=row_counts,
+            budget=config.sample_rows,
+            min_per_table=config.min_per_table,
+            max_per_table=max_per_table,
+        )
+        for a in allocations:
+            if a.target > _MEMORY_WARN_THRESHOLD:
+                logger.warning(
+                    "train.allocator: table '%s' target is %d rows "
+                    "(~%d MB est. in memory); consider lowering --max-per-table",
+                    a.table,
+                    a.target,
+                    a.target * 5 // 1024,
+                )
+        return allocations, max_per_table
+
+    def _fetch_samples(
+        self,
+        engine: sa.Engine,
+        allocations: list[SampleAllocation],
+        config: ExtractorConfig,
+    ) -> dict[str, pl.DataFrame]:
+        """Run the per-table random fetch loop with a Rich progress display."""
+        samples: dict[str, pl.DataFrame] = {}
+        md = sa.MetaData()
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[bold blue]{task.description}"),
+            BarColumn(),
+            TextColumn("{task.completed}/{task.total}"),
+            TimeElapsedColumn(),
+            disable=config.quiet,
+        ) as progress:
+            overall = progress.add_task("Extracting", total=sum(a.target for a in allocations))
+            for a in allocations:
+                if a.target == 0:
+                    continue
+                sa_table = sa.Table(a.table, md, autoload_with=engine)
+                samples[a.table] = _fetch_random(
+                    engine,
+                    table=sa_table,
+                    n=a.target,
+                    seed=config.seed,
+                    row_count=a.row_count,
+                )
+                progress.update(overall, advance=a.target, description=f"Extracting {a.table}")
+        return samples
+
+    def _write_results(
+        self,
+        samples: dict[str, pl.DataFrame],
+        allocations: list[SampleAllocation],
+        report: ClosureReport,
+        samples_dir: Path,
+    ) -> list[TableExtractionResult]:
+        """Write per-table Parquet files and build :class:`TableExtractionResult` records.
+
+        Includes a defense-in-depth path-traversal guard: a table whose
+        resolved Parquet path escapes ``samples_dir`` (only possible if upstream
+        identifier validation has been bypassed) is skipped with a warning.
+        """
+        samples_dir_resolved = samples_dir.resolve()
+        table_results: list[TableExtractionResult] = []
+        for a in allocations:
+            if a.target == 0 or a.table not in samples:
+                continue
+            parquet_path = samples_dir / f"{a.table}.parquet"
+            try:
+                parquet_path.resolve().relative_to(samples_dir_resolved)
+            except ValueError:
+                logger.warning(
+                    "skipping table %r: resolved Parquet path escapes output directory",
+                    a.table,
+                )
+                continue
+            samples[a.table].write_parquet(parquet_path, compression="zstd", compression_level=3)
+            added = report.additions.get(a.table, 0)
+            table_results.append(
+                TableExtractionResult(
+                    table=a.table,
+                    target=a.target,
+                    sampled=max(0, len(samples[a.table]) - added),
+                    fk_closure_added=added,
+                    parquet_path=parquet_path,
+                )
+            )
+        return table_results

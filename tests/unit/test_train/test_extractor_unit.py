@@ -83,7 +83,6 @@ def _patch_engine_internals(
 
 def test_extractor_writes_per_table_parquet_and_manifest(tmp_path: Path) -> None:
     cfg = ExtractorConfig(
-        db_url="sqlite:///:memory:",
         sample_rows=10,
         output_dir=tmp_path,
         seed=1,
@@ -99,7 +98,7 @@ def test_extractor_writes_per_table_parquet_and_manifest(tmp_path: Path) -> None
     with p_introspect, p_counts, p_random, p_fetch, p_engine as create_engine_mock, p_table:
         engine = create_engine_mock.return_value
         engine.dialect.name = "sqlite"
-        result = SampleExtractor().extract(source=cfg.db_url, config=cfg)
+        result = SampleExtractor().extract(source="sqlite:///:memory:", config=cfg)
 
     assert (tmp_path / "samples" / "users.parquet").exists()
     assert (tmp_path / "samples" / "orders.parquet").exists()
@@ -109,7 +108,6 @@ def test_extractor_writes_per_table_parquet_and_manifest(tmp_path: Path) -> None
 
 def test_extractor_records_closure_additions(tmp_path: Path) -> None:
     cfg = ExtractorConfig(
-        db_url="sqlite:///:memory:",
         sample_rows=10,
         output_dir=tmp_path,
         seed=1,
@@ -125,7 +123,7 @@ def test_extractor_records_closure_additions(tmp_path: Path) -> None:
     with p_introspect, p_counts, p_random, p_fetch, p_engine as create_engine_mock, p_table:
         engine = create_engine_mock.return_value
         engine.dialect.name = "sqlite"
-        result = SampleExtractor().extract(source=cfg.db_url, config=cfg)
+        result = SampleExtractor().extract(source="sqlite:///:memory:", config=cfg)
 
     by_table = {r.table: r for r in result.tables}
     assert by_table["users"].fk_closure_added == 1
@@ -134,7 +132,6 @@ def test_extractor_records_closure_additions(tmp_path: Path) -> None:
 def test_extractor_disposes_engine_on_failure(tmp_path: Path) -> None:
     """Engine.dispose() must run even when an inner step raises."""
     cfg = ExtractorConfig(
-        db_url="sqlite:///:memory:",
         sample_rows=10,
         output_dir=tmp_path,
         seed=1,
@@ -153,5 +150,5 @@ def test_extractor_disposes_engine_on_failure(tmp_path: Path) -> None:
         engine = create_engine_mock.return_value
         engine.dialect.name = "sqlite"
         with pytest.raises(RuntimeError, match="boom"):
-            SampleExtractor().extract(source=cfg.db_url, config=cfg)
+            SampleExtractor().extract(source="sqlite:///:memory:", config=cfg)
         engine.dispose.assert_called_once()

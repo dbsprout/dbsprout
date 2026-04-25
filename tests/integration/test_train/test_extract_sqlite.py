@@ -17,7 +17,6 @@ if TYPE_CHECKING:
 def test_full_extract_sqlite(sqlite_db: str, tmp_path: Path) -> None:
     out = tmp_path / "run"
     cfg = ExtractorConfig(
-        db_url=sqlite_db,
         sample_rows=50,
         output_dir=out,
         seed=7,
@@ -49,7 +48,6 @@ def test_fk_closure_actually_adds_rows(sqlite_db: str, tmp_path: Path) -> None:
     out = tmp_path / "run"
     # `min_per_table=1` keeps users tiny so most order_items reference unsampled users.
     cfg = ExtractorConfig(
-        db_url=sqlite_db,
         sample_rows=200,
         output_dir=out,
         seed=11,
@@ -80,7 +78,6 @@ def test_determinism_same_seed(sqlite_db: str, tmp_path: Path) -> None:
     out_a = tmp_path / "a"
     out_b = tmp_path / "b"
     cfg_a = ExtractorConfig(
-        db_url=sqlite_db,
         sample_rows=20,
         output_dir=out_a,
         seed=99,
@@ -88,7 +85,6 @@ def test_determinism_same_seed(sqlite_db: str, tmp_path: Path) -> None:
         quiet=True,
     )
     cfg_b = ExtractorConfig(
-        db_url=sqlite_db,
         sample_rows=20,
         output_dir=out_b,
         seed=99,

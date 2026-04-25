@@ -34,22 +34,25 @@ def extract(  # noqa: PLR0913 - CLI flags are inherently positional/named
         raise typer.Exit(code=2)
 
     # Lazy import: keeps polars/sqlalchemy off the <500 ms CLI startup path.
+    from dbsprout.cli._utils import scrub_secrets  # noqa: PLC0415
     from dbsprout.train.extractor import SampleExtractor  # noqa: PLC0415
     from dbsprout.train.models import ExtractorConfig  # noqa: PLC0415
 
     extractor = SampleExtractor()
-    result = extractor.extract(
-        source=db,
-        config=ExtractorConfig(
-            db_url=db,
-            sample_rows=sample_rows,
-            output_dir=output,
-            seed=seed,
-            min_per_table=min_per_table,
-            max_per_table=max_per_table,
-            quiet=quiet,
-        ),
+    cfg = ExtractorConfig(
+        sample_rows=sample_rows,
+        output_dir=output,
+        seed=seed,
+        min_per_table=min_per_table,
+        max_per_table=max_per_table,
+        quiet=quiet,
     )
+    try:
+        result = extractor.extract(source=db, config=cfg)
+    except Exception as exc:
+        safe_msg = scrub_secrets(str(exc), db)
+        console.print(f"[red]Error:[/red] {safe_msg}")
+        raise typer.Exit(code=1) from exc
     if not quiet:
         total = sum(r.sampled + r.fk_closure_added for r in result.tables)
         closure = sum(r.fk_closure_added for r in result.tables)

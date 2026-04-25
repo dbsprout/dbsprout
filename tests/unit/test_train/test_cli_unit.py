@@ -66,3 +66,38 @@ def test_extract_invokes_sample_extractor(tmp_path: Path) -> None:
         )
     assert result.exit_code == 0, result.stderr
     fake_extractor.extract.assert_called_once()
+
+
+def test_extract_scrubs_password_from_error_output(tmp_path: Path) -> None:
+    """An exception bubbling out of extract() must not leak the DSN password."""
+    cfg = MagicMock()
+    cfg.privacy.tier = "local"
+    dsn = "postgres://user:secret123@host/db"
+    fake_extractor = MagicMock()
+    # Simulate a connection failure whose message embeds the raw DSN + password
+    # (typical of SQLAlchemy / DBAPI error chains).
+    fake_extractor.extract.side_effect = RuntimeError(
+        f"connection failed for {dsn} (password=secret123)"
+    )
+    with (
+        patch("dbsprout.cli.commands.train.load_config", return_value=cfg),
+        patch("dbsprout.train.extractor.SampleExtractor", return_value=fake_extractor),
+    ):
+        result = runner.invoke(
+            app,
+            [
+                "train",
+                "extract",
+                "--db",
+                dsn,
+                "--sample-rows",
+                "5",
+                "--output",
+                str(tmp_path),
+                "--quiet",
+            ],
+        )
+    assert result.exit_code == 1
+    assert "secret123" not in result.stdout
+    assert "secret123" not in (result.stderr or "")
+    assert "Error" in result.stdout

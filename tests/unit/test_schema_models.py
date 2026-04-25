@@ -738,6 +738,16 @@ class TestIdentifierValidation:
         with pytest.raises(ValidationError):
             TableSchema(name="t\x00", columns=[_make_col("id")])
 
+    @pytest.mark.parametrize("bad_name", ["../foo", "a/b", "a\\b", "..", "."])
+    def test_path_traversal_chars_rejected_on_table(self, bad_name: str) -> None:
+        with pytest.raises(ValidationError):
+            TableSchema(name=bad_name, columns=[_make_col("id")])
+
+    @pytest.mark.parametrize("bad_name", ["../foo", "a/b", "a\\b", "..", "."])
+    def test_path_traversal_chars_rejected_on_column(self, bad_name: str) -> None:
+        with pytest.raises(ValidationError):
+            ColumnSchema(name=bad_name, data_type=ColumnType.INTEGER)
+
 
 # ── Referential action validation ───────────────────────────────────────
 

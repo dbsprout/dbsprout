@@ -13,7 +13,6 @@ class ExtractorConfig(BaseModel):
 
     model_config = ConfigDict(frozen=True)
 
-    db_url: str
     sample_rows: int = Field(gt=0)
     output_dir: Path
     seed: int = 0
@@ -51,9 +50,9 @@ class TableExtractionResult(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     table: str
-    target: int
-    sampled: int
-    fk_closure_added: int = 0
+    target: int = Field(ge=0)
+    sampled: int = Field(ge=0)
+    fk_closure_added: int = Field(default=0, ge=0)
     parquet_path: Path
 
 
@@ -85,13 +84,13 @@ class SampleManifest(BaseModel):
     dialect: str
     schema_hash: str
     seed: int
-    requested_budget: int
-    effective_budget: int
+    requested_budget: int = Field(ge=0)
+    effective_budget: int = Field(ge=0)
     tables: tuple[TableExtractionResult, ...]
-    fk_closure_iterations: int
+    fk_closure_iterations: int = Field(ge=0)
     fk_unresolved_per_table: dict[str, int]
-    fk_unresolved_total: int = 0
-    duration_seconds: float
+    fk_unresolved_total: int = Field(default=0, ge=0)
+    duration_seconds: float = Field(ge=0)
 
 
 class ClosureReport(BaseModel):

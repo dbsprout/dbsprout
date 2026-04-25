@@ -22,7 +22,6 @@ if TYPE_CHECKING:
 
 def test_extractor_config_defaults(tmp_path: Path) -> None:
     cfg = ExtractorConfig(
-        db_url="sqlite:///:memory:",
         sample_rows=100,
         output_dir=tmp_path,
     )
@@ -35,7 +34,6 @@ def test_extractor_config_defaults(tmp_path: Path) -> None:
 
 def test_extractor_config_is_frozen(tmp_path: Path) -> None:
     cfg = ExtractorConfig(
-        db_url="sqlite:///:memory:",
         sample_rows=1,
         output_dir=tmp_path,
     )
@@ -46,7 +44,6 @@ def test_extractor_config_is_frozen(tmp_path: Path) -> None:
 def test_extractor_config_rejects_zero_sample_rows(tmp_path: Path) -> None:
     with pytest.raises(ValidationError):
         ExtractorConfig(
-            db_url="sqlite:///:memory:",
             sample_rows=0,
             output_dir=tmp_path,
         )
