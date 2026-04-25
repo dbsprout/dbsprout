@@ -21,11 +21,28 @@ def allocate_budget(
 
     Targets are clamped to ``[min_per_table, max_per_table]``. The clamp on the
     table's own row count is implicit: a table is never asked for more rows
-    than it actually has. After clamping, any rounding residual is redistributed
-    by adjusting the largest unclamped tables one row at a time.
+    than it actually has, so ``min_per_table`` is itself reduced to the table's
+    row count when the table has fewer rows than the configured floor. After
+    clamping, any rounding residual is redistributed by adjusting the
+    largest unclamped tables one row at a time.
 
     Empty tables (row_count == 0) are excluded from the result.
+
+    .. note::
+        ``min_per_table`` is a **hard floor** by design: when
+        ``min_per_table * n_non_empty_tables > budget`` the returned sum will
+        legitimately overshoot ``budget`` (each non-empty table still receives
+        at least ``min_per_table`` rows, capped at its own row count). This
+        guarantees the floor is honored even at the cost of the budget bound.
+
+    Raises:
+        ValueError: if ``min_per_table > max_per_table``.
     """
+    if min_per_table > max_per_table:
+        raise ValueError(
+            f"min_per_table ({min_per_table}) must be <= max_per_table ({max_per_table})"
+        )
+
     non_empty = {t: c for t, c in row_counts.items() if c > 0}
     if not non_empty or budget <= 0:
         return [
@@ -45,14 +62,19 @@ def allocate_budget(
     targets: dict[str, int] = {}
     for t, r in raw.items():
         bounded_max = min(max_per_table, non_empty[t])
-        targets[t] = max(min_per_table, min(bounded_max, round(r)))
+        # Cap the floor at the table's row count: if the table has fewer rows
+        # than ``min_per_table`` the row count itself becomes the binding cap
+        # (neither user-configured floor nor ceiling is the binding bound).
+        effective_min = min(min_per_table, non_empty[t])
+        targets[t] = max(effective_min, min(bounded_max, round(r)))
 
     # Redistribute residual without crossing clamp bounds. We loop until either
     # the residual is zero or no table can absorb another row in the required
-    # direction (everything is pinned at its bound). Bound iterations defensively
-    # by the worst-case adjustment volume so a pathological input cannot spin.
+    # direction (everything is pinned at its bound). Each outer iteration that
+    # finds a non-empty ``adjustables`` set reduces ``|residual|`` by exactly
+    # one, so ``abs(residual) + 1`` iterations is a provably-sufficient cap.
     residual = budget - sum(targets.values())
-    max_iters = abs(residual) + len(non_empty) + 1
+    max_iters = abs(residual) + 1
     iterations = 0
     while residual != 0 and iterations < max_iters:
         iterations += 1
@@ -64,17 +86,14 @@ def allocate_budget(
         ]
         if not adjustables:
             break
-        # Adjust the largest-raw table first (most influential).
+        # Adjust the largest-raw table first (most influential). The
+        # ``adjustables`` filter already guarantees the step stays inside the
+        # bound, so a single step per outer iteration is sufficient.
         adjustables.sort(key=lambda t: raw[t], reverse=True)
-        for t in adjustables:
-            if residual == 0:
-                break
-            step = 1 if residual > 0 else -1
-            new_value = targets[t] + step
-            if new_value < min_per_table or new_value > min(max_per_table, non_empty[t]):
-                continue
-            targets[t] = new_value
-            residual -= step
+        t = adjustables[0]
+        step = 1 if residual > 0 else -1
+        targets[t] += step
+        residual -= step
 
     # ``floor_clamped`` / ``ceiling_clamped`` reflect whether the user's
     # configured ``min_per_table`` / ``max_per_table`` was the binding bound.

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from dbsprout.train.allocator import allocate_budget
 
 
@@ -118,3 +120,51 @@ def test_zero_budget_returns_zero_targets() -> None:
         )
     )
     assert allocs[0].target == 0
+
+
+def test_min_floor_overshoots_budget_by_design() -> None:
+    """``min_per_table`` is a hard floor: total may legitimately exceed budget.
+
+    Regression test documenting the intentional behavior described in the
+    docstring: when ``min_per_table * n > budget``, the floor wins.
+    """
+    allocs = list(
+        allocate_budget(
+            row_counts={"a": 100, "b": 100, "c": 100},
+            budget=10,
+            min_per_table=10,
+            max_per_table=100,
+        )
+    )
+    assert sum(a.target for a in allocs) == 30
+    assert all(a.target == 10 for a in allocs)
+
+
+def test_min_per_table_capped_at_row_count() -> None:
+    """Row count caps the floor: a 5-row table never overshoots into target=10.
+
+    Neither the user-configured floor nor ceiling binds — the row count itself
+    is the binding cap, so both clamp flags must be False.
+    """
+    allocs = {
+        a.table: a
+        for a in allocate_budget(
+            row_counts={"a": 5},
+            budget=100,
+            min_per_table=10,
+            max_per_table=100,
+        )
+    }
+    assert allocs["a"].target == 5
+    assert allocs["a"].floor_clamped is False
+    assert allocs["a"].ceiling_clamped is False
+
+
+def test_min_greater_than_max_raises() -> None:
+    with pytest.raises(ValueError, match="must be <= max_per_table"):
+        allocate_budget(
+            row_counts={"a": 100},
+            budget=10,
+            min_per_table=20,
+            max_per_table=10,
+        )
