@@ -193,3 +193,26 @@ def test_fallback_writer_parquet(patched_eps):
     with patched_eps({}):
         writer = _resolve_writer("parquet")
     assert writer.__class__.__name__ == "ParquetWriter"
+
+
+def test_dispatch_wraps_constructor_failure_as_plugin_error(make_ep, patched_eps):
+    """Plugin class whose ``__init__`` raises is surfaced as ``PluginError``."""
+    from dbsprout.plugins.dispatch import resolve_writer as _resolve_writer  # noqa: PLC0415
+    from dbsprout.plugins.errors import PluginError  # noqa: PLC0415
+
+    class BadWriter:
+        format = "bad"
+
+        def __init__(self) -> None:
+            raise RuntimeError("init blew up")
+
+        def write(self, *args, **kwargs):  # pragma: no cover — never reached
+            pass
+
+    with (
+        patched_eps(
+            {"dbsprout.outputs": [make_ep(name="bad", group="dbsprout.outputs", obj=BadWriter)]}
+        ),
+        pytest.raises(PluginError, match=r"Failed to instantiate plugin dbsprout\.outputs:bad"),
+    ):
+        _resolve_writer("bad")

@@ -16,7 +16,26 @@ from __future__ import annotations
 import inspect
 from typing import Any
 
+from dbsprout.plugins.errors import PluginError
 from dbsprout.plugins.registry import get_registry
+
+
+def _instantiate(obj: Any, group: str, name: str, **kwargs: Any) -> Any:
+    """Call *obj* with *kwargs* if it is a class; convert constructor failures.
+
+    Third-party plugin classes can blow up in their ``__init__`` (missing
+    optional dep, bad signature, etc.). We surface those as
+    :class:`PluginError` rather than letting an unwrapped traceback
+    bubble out of CLI dispatch.
+    """
+    if not inspect.isclass(obj):
+        return obj
+    try:
+        return obj(**kwargs)
+    except Exception as exc:
+        raise PluginError(
+            f"Failed to instantiate plugin {group}:{name} ({type(exc).__name__}: {exc})"
+        ) from exc
 
 
 def resolve_writer(output_format: str) -> Any:
@@ -28,7 +47,7 @@ def resolve_writer(output_format: str) -> Any:
     """
     obj = get_registry().get("dbsprout.outputs", output_format)
     if obj is not None:
-        return obj() if inspect.isclass(obj) else obj
+        return _instantiate(obj, "dbsprout.outputs", output_format)
     if output_format == "sql":
         from dbsprout.output.sql_writer import SQLWriter  # noqa: PLC0415
 
@@ -57,7 +76,7 @@ def resolve_engine(engine: str, *, seed: int) -> Any:
     """
     obj = get_registry().get("dbsprout.generators", engine)
     if obj is not None:
-        return obj(seed=seed) if inspect.isclass(obj) else obj
+        return _instantiate(obj, "dbsprout.generators", engine, seed=seed)
     if engine == "heuristic":
         from dbsprout.generate.engines.heuristic import HeuristicEngine  # noqa: PLC0415
 

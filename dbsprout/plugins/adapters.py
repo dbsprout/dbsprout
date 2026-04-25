@@ -40,6 +40,14 @@ class _FnParserAdapter:
         self.suffixes = suffixes
 
     def can_parse(self, text: str) -> bool:  # noqa: ARG002
+        # The in-tree adapters always claim the file because dispatch in
+        # ``parse_schema_file`` is suffix-keyed and each in-tree adapter
+        # owns a unique suffix tuple — no two in-tree adapters claim the
+        # same suffix, so ``can_parse=True`` is safe. Third-party plugins
+        # that share a suffix should ship their own ``can_parse`` to
+        # disambiguate; the registry preserves first-load order so a
+        # downstream plugin can override an in-tree parser by registering
+        # the same name.
         return True
 
     def parse(self, text: str, *, source_file: str | None = None) -> DatabaseSchema:

@@ -50,5 +50,5 @@ def check_cmd(target: str) -> None:
         info = get_registry().check(group, name)
     except PluginValidationError as exc:
         console.print(f"[red]Invalid:[/red] {exc}")
-        raise typer.Exit(code=2) from None
+        raise typer.Exit(code=2) from exc
     console.print(f"[green]OK:[/green] {info.group}:{info.name} @ {info.module}")
