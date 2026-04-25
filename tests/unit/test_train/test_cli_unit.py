@@ -37,7 +37,7 @@ def test_privacy_gate_blocks_non_local_tier(tmp_path: Path) -> None:
             ],
         )
     assert result.exit_code == 2
-    assert "privacy tier 'local'" in result.stderr
+    assert "privacy tier 'local'" in result.stdout
     fake.assert_not_called()
 
 

@@ -6,6 +6,7 @@ from pathlib import Path
 
 import typer
 
+from dbsprout.cli.console import console
 from dbsprout.config import load_config
 
 train_app = typer.Typer(name="train", help="Training pipeline subcommands.", no_args_is_help=True)
@@ -24,11 +25,11 @@ def extract(  # noqa: PLR0913 - CLI flags are inherently positional/named
     """Extract a stratified sample from a live database into Parquet files."""
     config = load_config()
     if config.privacy.tier != "local":
-        typer.echo(
-            f"Error: train extract requires privacy tier 'local' "
+        console.print(
+            f"[red]Error:[/red] train extract requires privacy tier 'local' "
             f"(current: {config.privacy.tier}). "
             f'Set [privacy] tier = "local" in dbsprout.toml.',
-            err=True,
+            style="bold",
         )
         raise typer.Exit(code=2)
 
@@ -52,8 +53,9 @@ def extract(  # noqa: PLR0913 - CLI flags are inherently positional/named
     if not quiet:
         total = sum(r.sampled + r.fk_closure_added for r in result.tables)
         closure = sum(r.fk_closure_added for r in result.tables)
-        typer.echo(
-            f"Extracted {total} rows across {len(result.tables)} tables "
-            f"(FK closure added {closure} rows) in {result.duration_seconds:.2f} s. "
-            f"Manifest: {result.manifest_path}"
+        console.print(
+            f"[green bold]Extracted[/green bold] {total} rows across "
+            f"{len(result.tables)} tables (FK closure added {closure} rows) in "
+            f"{result.duration_seconds:.2f} s.\n"
+            f"Manifest: [cyan]{result.manifest_path}[/cyan]"
         )
