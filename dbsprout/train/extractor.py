@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Any
 
 import polars as pl
 import sqlalchemy as sa
+from rich.progress import BarColumn, Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
 
 from dbsprout import __version__ as dbs_version
 from dbsprout.schema.introspect import introspect
@@ -180,17 +181,27 @@ class SampleExtractor:
 
             samples: dict[str, pl.DataFrame] = {}
             md = sa.MetaData()
-            for a in allocations:
-                if a.target == 0:
-                    continue
-                sa_table = sa.Table(a.table, md, autoload_with=engine)
-                samples[a.table] = _fetch_random(
-                    engine,
-                    table=sa_table,
-                    n=a.target,
-                    seed=config.seed,
-                    row_count=a.row_count,
-                )
+            with Progress(
+                SpinnerColumn(),
+                TextColumn("[bold blue]{task.description}"),
+                BarColumn(),
+                TextColumn("{task.completed}/{task.total}"),
+                TimeElapsedColumn(),
+                disable=config.quiet,
+            ) as progress:
+                overall = progress.add_task("Extracting", total=sum(a.target for a in allocations))
+                for a in allocations:
+                    if a.target == 0:
+                        continue
+                    sa_table = sa.Table(a.table, md, autoload_with=engine)
+                    samples[a.table] = _fetch_random(
+                        engine,
+                        table=sa_table,
+                        n=a.target,
+                        seed=config.seed,
+                        row_count=a.row_count,
+                    )
+                    progress.update(overall, advance=a.target, description=f"Extracting {a.table}")
 
             cap = config.fk_closure_max_iterations or min(_CLOSURE_HARD_CAP, len(schema.tables))
             report = close_fk_graph(samples, schema, _EngineAdapter(engine), max_iterations=cap)
