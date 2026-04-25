@@ -44,6 +44,37 @@ def test_full_extract_sqlite(sqlite_db: str, tmp_path: Path) -> None:
     assert items_order_ids.issubset(orders_ids)
 
 
+def test_fk_closure_actually_adds_rows(sqlite_db: str, tmp_path: Path) -> None:
+    """Force closure to fire by giving children a much larger budget than parents."""
+    out = tmp_path / "run"
+    # `min_per_table=1` keeps users tiny so most order_items reference unsampled users.
+    cfg = ExtractorConfig(
+        db_url=sqlite_db,
+        sample_rows=200,
+        output_dir=out,
+        seed=11,
+        min_per_table=1,
+        max_per_table=120,
+        quiet=True,
+    )
+    result = SampleExtractor().extract(source=sqlite_db, config=cfg)
+
+    closure_added = sum(r.fk_closure_added for r in result.tables)
+    breakdown = [(r.table, r.target, r.sampled, r.fk_closure_added) for r in result.tables]
+    assert closure_added > 0, (
+        f"FK closure added no rows in a scenario engineered to require it; breakdown={breakdown}"
+    )
+
+    # And FK satisfaction must hold for every child→parent edge in the sampled set.
+    items = pl.read_parquet(out / "samples" / "order_items.parquet")
+    orders = pl.read_parquet(out / "samples" / "orders.parquet")
+    products = pl.read_parquet(out / "samples" / "products.parquet")
+    users = pl.read_parquet(out / "samples" / "users.parquet")
+    assert set(items["order_id"].to_list()).issubset(set(orders["id"].to_list()))
+    assert set(items["product_id"].to_list()).issubset(set(products["id"].to_list()))
+    assert set(orders["user_id"].to_list()).issubset(set(users["id"].to_list()))
+
+
 def test_determinism_same_seed(sqlite_db: str, tmp_path: Path) -> None:
     """Two runs with the same seed produce byte-identical Parquet files."""
     out_a = tmp_path / "a"
