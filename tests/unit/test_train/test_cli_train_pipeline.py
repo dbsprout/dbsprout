@@ -1,8 +1,10 @@
 """Unit tests for the `dbsprout train` end-to-end pipeline callback (S-068).
 
 The pipeline chains SampleExtractor -> DataPreparer -> select_trainer() ->
-Exporter. Every heavy stage is mocked at its import site in
-``dbsprout.cli.commands.train`` so no real DB, training, or export runs.
+Exporter. Components are injected via the ``_default_components`` seam (S-068
+review #16) so these tests run WITHOUT the heavy ``[data]``/``[stats]`` extras
+(no real ``polars``/``torch``/``mlx`` import) — patching the extractor's
+import site used to force ``polars`` and fail core-only runs.
 """
 
 from __future__ import annotations
@@ -69,19 +71,42 @@ def _export_result(out: _Path) -> MagicMock:
     return res
 
 
-def _patches(
+def _components(
+    extractor: MagicMock,
+    preparer: MagicMock,
+    trainer: MagicMock,
+    exporter: MagicMock,
+    *,
+    select: object | None = None,
+) -> MagicMock:
+    """Build a fake ``_PipelineComponents`` (the injectable seam).
+
+    No heavy import happens — the real ``_default_components`` (which lazily
+    pulls polars/torch/mlx) is replaced wholesale.
+    """
+    comps = MagicMock(name="components")
+    comps.make_extractor = MagicMock(return_value=extractor)
+    comps.make_preparer = MagicMock(return_value=preparer)
+    comps.select_trainer = select if select is not None else MagicMock(return_value=trainer)
+    comps.make_exporter = MagicMock(return_value=exporter)
+    return comps
+
+
+def _patches(  # noqa: PLR0913 - one mock per pipeline stage + cfg
     cfg: MagicMock,
     extractor: MagicMock,
     preparer: MagicMock,
     trainer: MagicMock,
     exporter: MagicMock,
+    *,
+    select: object | None = None,
 ):
     return (
         patch("dbsprout.cli.commands.train.load_config", return_value=cfg),
-        patch("dbsprout.train.extractor.SampleExtractor", return_value=extractor),
-        patch("dbsprout.train.serializer.DataPreparer", return_value=preparer),
-        patch("dbsprout.train.mlx_trainer.select_trainer", return_value=trainer),
-        patch("dbsprout.train.exporter.Exporter", return_value=exporter),
+        patch(
+            "dbsprout.cli.commands.train._default_components",
+            return_value=_components(extractor, preparer, trainer, exporter, select=select),
+        ),
     )
 
 
@@ -93,7 +118,7 @@ def test_pipeline_privacy_gate_blocks_non_local_tier(tmp_path: _Path) -> None:
     cfg.privacy.tier = "cloud"
     with (
         patch("dbsprout.cli.commands.train.load_config", return_value=cfg),
-        patch("dbsprout.train.extractor.SampleExtractor") as fake,
+        patch("dbsprout.cli.commands.train._default_components") as fake,
     ):
         result = runner.invoke(app, ["train", "--db", "sqlite:///x.db"])
     assert result.exit_code == 2
@@ -139,8 +164,8 @@ def test_pipeline_runs_all_stages_in_order(tmp_path: _Path) -> None:
     exporter = MagicMock()
     exporter.to_gguf_result.return_value = _export_result(out)
 
-    p_cfg, p_ext, p_prep, p_sel, p_exp = _patches(cfg, extractor, preparer, trainer, exporter)
-    with p_cfg, p_ext, p_prep, p_sel, p_exp:
+    p_cfg, p_comps = _patches(cfg, extractor, preparer, trainer, exporter)
+    with p_cfg, p_comps:
         result = runner.invoke(
             app,
             ["train", "--db", "sqlite:///x.db", "--output", str(out)],
@@ -170,8 +195,8 @@ def test_pipeline_summary_reports_key_metrics(tmp_path: _Path) -> None:
     exporter = MagicMock()
     exporter.to_gguf_result.return_value = _export_result(out)
 
-    p_cfg, p_ext, p_prep, p_sel, p_exp = _patches(cfg, extractor, preparer, trainer, exporter)
-    with p_cfg, p_ext, p_prep, p_sel, p_exp:
+    p_cfg, p_comps = _patches(cfg, extractor, preparer, trainer, exporter)
+    with p_cfg, p_comps:
         result = runner.invoke(app, ["train", "--db", "sqlite:///x.db", "--output", str(out)])
     assert result.exit_code == 0, result.stdout
     out_text = result.stdout
@@ -198,8 +223,8 @@ def test_cli_epoch_flag_overrides_toml(tmp_path: _Path) -> None:
     exporter = MagicMock()
     exporter.to_gguf_result.return_value = _export_result(out)
 
-    p_cfg, p_ext, p_prep, p_sel, p_exp = _patches(cfg, extractor, preparer, trainer, exporter)
-    with p_cfg, p_ext, p_prep, p_sel, p_exp:
+    p_cfg, p_comps = _patches(cfg, extractor, preparer, trainer, exporter)
+    with p_cfg, p_comps:
         result = runner.invoke(
             app,
             ["train", "--db", "sqlite:///x.db", "--output", str(out), "--epochs", "9"],
@@ -222,8 +247,8 @@ def test_toml_epoch_used_when_no_cli_flag(tmp_path: _Path) -> None:
     exporter = MagicMock()
     exporter.to_gguf_result.return_value = _export_result(out)
 
-    p_cfg, p_ext, p_prep, p_sel, p_exp = _patches(cfg, extractor, preparer, trainer, exporter)
-    with p_cfg, p_ext, p_prep, p_sel, p_exp:
+    p_cfg, p_comps = _patches(cfg, extractor, preparer, trainer, exporter)
+    with p_cfg, p_comps:
         result = runner.invoke(app, ["train", "--db", "sqlite:///x.db", "--output", str(out)])
     assert result.exit_code == 0, result.stdout
     assert trainer.train.call_args.kwargs["config"].epochs == 5
@@ -241,8 +266,8 @@ def test_sample_rows_flag_threaded_to_extractor(tmp_path: _Path) -> None:
     exporter = MagicMock()
     exporter.to_gguf_result.return_value = _export_result(out)
 
-    p_cfg, p_ext, p_prep, p_sel, p_exp = _patches(cfg, extractor, preparer, trainer, exporter)
-    with p_cfg, p_ext, p_prep, p_sel, p_exp:
+    p_cfg, p_comps = _patches(cfg, extractor, preparer, trainer, exporter)
+    with p_cfg, p_comps:
         result = runner.invoke(
             app,
             [
@@ -271,16 +296,9 @@ def test_no_gpu_backend_exits_with_install_hint(tmp_path: _Path) -> None:
     preparer = MagicMock()
     preparer.prepare.return_value = _serialize_result(out)
     exporter = MagicMock()
-    with (
-        patch("dbsprout.cli.commands.train.load_config", return_value=cfg),
-        patch("dbsprout.train.extractor.SampleExtractor", return_value=extractor),
-        patch("dbsprout.train.serializer.DataPreparer", return_value=preparer),
-        patch(
-            "dbsprout.train.mlx_trainer.select_trainer",
-            side_effect=RuntimeError("MLX training requires Apple Silicon"),
-        ),
-        patch("dbsprout.train.exporter.Exporter", return_value=exporter),
-    ):
+    select = MagicMock(side_effect=RuntimeError("MLX training requires Apple Silicon"))
+    p_cfg, p_comps = _patches(cfg, extractor, preparer, MagicMock(), exporter, select=select)
+    with p_cfg, p_comps:
         result = runner.invoke(app, ["train", "--db", "sqlite:///x.db", "--output", str(out)])
     assert result.exit_code == 1
     assert "Apple Silicon" in result.stdout
@@ -296,10 +314,8 @@ def test_extractor_error_scrubs_db_password(tmp_path: _Path) -> None:
     extractor = MagicMock()
     secret_url = "postgresql://user:supersecret@host:5432/db"  # noqa: S105 - test DSN, not a real credential
     extractor.extract.side_effect = RuntimeError(f"could not connect to server {secret_url}")
-    with (
-        patch("dbsprout.cli.commands.train.load_config", return_value=cfg),
-        patch("dbsprout.train.extractor.SampleExtractor", return_value=extractor),
-    ):
+    p_cfg, p_comps = _patches(cfg, extractor, MagicMock(), MagicMock(), MagicMock())
+    with p_cfg, p_comps:
         result = runner.invoke(app, ["train", "--db", secret_url, "--output", str(out)])
     assert result.exit_code == 1
     assert "supersecret" not in result.stdout
@@ -312,11 +328,8 @@ def test_serializer_filenotfound_exits_one(tmp_path: _Path) -> None:
     extractor.extract.return_value = _sample_result(out)
     preparer = MagicMock()
     preparer.prepare.side_effect = FileNotFoundError("no samples directory")
-    with (
-        patch("dbsprout.cli.commands.train.load_config", return_value=cfg),
-        patch("dbsprout.train.extractor.SampleExtractor", return_value=extractor),
-        patch("dbsprout.train.serializer.DataPreparer", return_value=preparer),
-    ):
+    p_cfg, p_comps = _patches(cfg, extractor, preparer, MagicMock(), MagicMock())
+    with p_cfg, p_comps:
         result = runner.invoke(app, ["train", "--db", "sqlite:///x.db", "--output", str(out)])
     assert result.exit_code == 1
     assert "no samples directory" in result.stdout
@@ -337,8 +350,8 @@ def test_quiet_threads_to_stages_but_keeps_summary(tmp_path: _Path) -> None:
     exporter = MagicMock()
     exporter.to_gguf_result.return_value = _export_result(out)
 
-    p_cfg, p_ext, p_prep, p_sel, p_exp = _patches(cfg, extractor, preparer, trainer, exporter)
-    with p_cfg, p_ext, p_prep, p_sel, p_exp:
+    p_cfg, p_comps = _patches(cfg, extractor, preparer, trainer, exporter)
+    with p_cfg, p_comps:
         result = runner.invoke(
             app,
             ["train", "--db", "sqlite:///x.db", "--output", str(out), "--quiet"],
@@ -364,8 +377,8 @@ def test_trainer_runtime_error_exits_one(tmp_path: _Path) -> None:
     trainer.train.side_effect = RuntimeError("CUDA out of memory")
     exporter = MagicMock()
 
-    p_cfg, p_ext, p_prep, p_sel, p_exp = _patches(cfg, extractor, preparer, trainer, exporter)
-    with p_cfg, p_ext, p_prep, p_sel, p_exp:
+    p_cfg, p_comps = _patches(cfg, extractor, preparer, trainer, exporter)
+    with p_cfg, p_comps:
         result = runner.invoke(app, ["train", "--db", "sqlite:///x.db", "--output", str(out)])
     assert result.exit_code == 1
     assert "CUDA out of memory" in result.stdout
@@ -384,8 +397,90 @@ def test_export_failure_exits_one(tmp_path: _Path) -> None:
     exporter = MagicMock()
     exporter.to_gguf_result.side_effect = FileNotFoundError("base model not found")
 
-    p_cfg, p_ext, p_prep, p_sel, p_exp = _patches(cfg, extractor, preparer, trainer, exporter)
-    with p_cfg, p_ext, p_prep, p_sel, p_exp:
+    p_cfg, p_comps = _patches(cfg, extractor, preparer, trainer, exporter)
+    with p_cfg, p_comps:
         result = runner.invoke(app, ["train", "--db", "sqlite:///x.db", "--output", str(out)])
     assert result.exit_code == 1
     assert "base model not found" in result.stdout
+
+
+# --------------------------------------------------------------------------- #
+# Review #16 — injectable seam works without [data]; #17 — uniform scrubbing
+# --------------------------------------------------------------------------- #
+def test_train_command_module_import_is_lazy_no_polars() -> None:
+    # Importing the train CLI command module must NOT pull polars/torch/mlx
+    # (the heavy deps are imported lazily inside _default_components, called
+    # only when the pipeline actually runs). This is what lets the suite run
+    # under a dev-only env without the [data]/[stats] extras (review #16).
+    import importlib  # noqa: PLC0415
+    import subprocess  # noqa: PLC0415
+    import sys  # noqa: PLC0415
+
+    importlib.import_module("dbsprout.cli.commands.train")
+    probe = (
+        "import sys, dbsprout.cli.commands.train as t;"
+        "assert 'polars' not in sys.modules;"
+        "assert hasattr(t, '_default_components');"
+        "assert {'make_extractor','make_preparer','select_trainer','make_exporter'}"
+        " <= set(t._PipelineComponents.__dataclass_fields__);"
+        "print('ok')"
+    )
+    out = subprocess.run(  # noqa: S603 - fixed argv, trusted interpreter
+        [sys.executable, "-c", probe],
+        capture_output=True,
+        text=True,
+        check=True,
+        timeout=60,
+    )
+    assert out.stdout.strip() == "ok"
+
+
+_SECRET = "postgresql://u:topsecretpw@h:5432/d"  # noqa: S105 - test DSN
+
+
+def test_serializer_error_scrubs_secret(tmp_path: _Path) -> None:
+    cfg = _local_cfg()
+    out = tmp_path / ".dbsprout"
+    extractor = MagicMock()
+    extractor.extract.return_value = _sample_result(out)
+    preparer = MagicMock()
+    preparer.prepare.side_effect = ValueError(f"bad parquet for {_SECRET}")
+    p_cfg, p_comps = _patches(cfg, extractor, preparer, MagicMock(), MagicMock())
+    with p_cfg, p_comps:
+        result = runner.invoke(app, ["train", "--db", _SECRET, "--output", str(out)])
+    assert result.exit_code == 1
+    assert "topsecretpw" not in result.stdout
+
+
+def test_trainer_error_scrubs_secret(tmp_path: _Path) -> None:
+    cfg = _local_cfg()
+    out = tmp_path / ".dbsprout"
+    extractor = MagicMock()
+    extractor.extract.return_value = _sample_result(out)
+    preparer = MagicMock()
+    preparer.prepare.return_value = _serialize_result(out)
+    trainer = MagicMock()
+    trainer.train.side_effect = RuntimeError(f"train failed connecting {_SECRET}")
+    p_cfg, p_comps = _patches(cfg, extractor, preparer, trainer, MagicMock())
+    with p_cfg, p_comps:
+        result = runner.invoke(app, ["train", "--db", _SECRET, "--output", str(out)])
+    assert result.exit_code == 1
+    assert "topsecretpw" not in result.stdout
+
+
+def test_export_error_scrubs_secret(tmp_path: _Path) -> None:
+    cfg = _local_cfg()
+    out = tmp_path / ".dbsprout"
+    extractor = MagicMock()
+    extractor.extract.return_value = _sample_result(out)
+    preparer = MagicMock()
+    preparer.prepare.return_value = _serialize_result(out)
+    trainer = MagicMock()
+    trainer.train.return_value = _adapter(out)
+    exporter = MagicMock()
+    exporter.to_gguf_result.side_effect = FileNotFoundError(f"missing for {_SECRET}")
+    p_cfg, p_comps = _patches(cfg, extractor, preparer, trainer, exporter)
+    with p_cfg, p_comps:
+        result = runner.invoke(app, ["train", "--db", _SECRET, "--output", str(out)])
+    assert result.exit_code == 1
+    assert "topsecretpw" not in result.stdout
