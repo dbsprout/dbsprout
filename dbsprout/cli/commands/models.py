@@ -19,15 +19,16 @@ models_app = typer.Typer(
 
 
 _BINARY_STEP = 1024.0
+_UNITS = ("B", "KB", "MB", "GB", "TB")
 
 
 def _fmt_size(num: int) -> str:
     size = float(num)
-    for unit in ("B", "KB", "MB", "GB", "TB"):
-        if size < _BINARY_STEP or unit == "TB":
+    for unit in _UNITS:
+        if size < _BINARY_STEP or unit == _UNITS[-1]:
             return f"{int(size)} B" if unit == "B" else f"{size:.1f} {unit}"
         size /= _BINARY_STEP
-    return f"{size:.1f} TB"
+    raise AssertionError  # pragma: no cover - loop always returns at TB
 
 
 @models_app.command("list")

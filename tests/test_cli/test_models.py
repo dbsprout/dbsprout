@@ -363,3 +363,70 @@ class TestMakeClient:
             assert isinstance(client, httpx.Client)
         finally:
             client.close()
+
+
+class TestFmtSize:
+    @pytest.mark.parametrize(
+        ("num", "expected"),
+        [
+            (512, "512 B"),
+            (2048, "2.0 KB"),
+            (5 * 1024 * 1024, "5.0 MB"),
+            (3 * 1024**3, "3.0 GB"),
+            (2 * 1024**4, "2.0 TB"),
+            (5 * 1024**5, "5120.0 TB"),
+        ],
+    )
+    def test_fmt_size_units(self, num: int, expected: str) -> None:
+        assert models_mod._fmt_size(num) == expected
+
+
+class TestListInstalledBaseRow:
+    def test_list_with_installed_base_model_skips_custom_loop_branch(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # An installed *base* model exercises the `im.kind != "custom"`
+        # branch of the second loop in `list_models`.
+        monkeypatch.chdir(tmp_path)
+        entry = next(e for e in load_registry() if e.default)
+        mgr = ModelManager()
+        mgr.install_path(entry).parent.mkdir(parents=True, exist_ok=True)
+        mgr.install_path(entry).write_bytes(b"b" * 9)
+
+        result = runner.invoke(app, ["models", "list"])
+        out = _strip_ansi(result.output)
+        assert result.exit_code == 0
+        assert "yes" in out.lower()
+
+
+class TestDownloadOwnsClient:
+    def test_download_default_client_closed(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # client=None -> ModelManager builds (and must close) its own client.
+        # Patch httpx.Client so the owned client uses a mock transport
+        # (no real network) while still exercising the close() path.
+        entry = next(e for e in load_registry() if e.default)
+        body = b"OWNED-CLIENT-BYTES"
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(200, content=body, headers={"Content-Length": str(len(body))})
+
+        closed: list[bool] = []
+        real_client_cls = httpx.Client
+
+        class TrackingClient(real_client_cls):  # type: ignore[misc, valid-type]
+            def __init__(self, *args: object, **kwargs: object) -> None:
+                kwargs.pop("timeout", None)
+                super().__init__(transport=httpx.MockTransport(handler))
+
+            def close(self) -> None:
+                closed.append(True)
+                super().close()
+
+        monkeypatch.setattr(httpx, "Client", TrackingClient)
+
+        mgr = ModelManager(root=tmp_path / ".dbsprout" / "models")
+        dest = mgr.download(entry)
+        assert dest.read_bytes() == body
+        assert closed == [True]
