@@ -138,7 +138,7 @@ def _run_pipeline(  # noqa: PLR0913 - one knob per pipeline stage
         console.print(f"[red]Error:[/red] {exc}")
         raise typer.Exit(code=1) from exc
     try:
-        adapter = trainer.train(  # type: ignore[attr-defined]
+        adapter = trainer.train(
             corpus_path=serialize_result.output_path,
             config=train_config,
             output_dir=adapter_dir,
