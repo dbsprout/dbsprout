@@ -26,10 +26,12 @@ from dbsprout.train.config import LoRAAdapter
 from dbsprout.train.exporter import (
     _QUANT_TYPE,
     _detect_adapter_format,
-    _load_convert,
     _load_merge_deps,
     _merge_adapter,
     _quantize_to_gguf,
+    _resolve_converter,
+    _resolve_quantizer,
+    _safe_adapter_stem,
 )
 
 if TYPE_CHECKING:
@@ -108,18 +110,59 @@ def test_load_merge_deps_mlx_missing_raises(monkeypatch: pytest.MonkeyPatch) -> 
         _load_merge_deps("mlx")
 
 
-def test_load_convert_missing_raises(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setitem(sys.modules, "llama_cpp", None)
-    with pytest.raises(RuntimeError, match=r"dbsprout\[llm\]"):
-        _load_convert()
+# --- Review #9: real llama.cpp converter/quantizer resolution --------------
 
 
-def test_load_convert_returns_converter(monkeypatch: pytest.MonkeyPatch) -> None:
-    conv = mock.MagicMock(name="convert_hf_to_gguf")
-    llama_mod = types.ModuleType("llama_cpp")
-    llama_mod.convert_hf_to_gguf = conv  # type: ignore[attr-defined]
-    monkeypatch.setitem(sys.modules, "llama_cpp", llama_mod)
-    assert _load_convert() is conv
+def test_resolve_converter_uses_env_override(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    script = tmp_path / "convert_hf_to_gguf.py"
+    script.write_text("# converter", encoding="utf-8")
+    monkeypatch.setenv("DBSPROUT_LLAMA_CONVERT", str(script))
+    assert _resolve_converter() == script.resolve()
+
+
+def test_resolve_converter_missing_raises_actionable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("DBSPROUT_LLAMA_CONVERT", str(tmp_path / "nope.py"))
+    with pytest.raises(RuntimeError, match="DBSPROUT_LLAMA_CONVERT"):
+        _resolve_converter()
+
+
+def test_resolve_quantizer_uses_env_override(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    binary = tmp_path / "llama-quantize"
+    binary.write_text("#!/bin/sh\n", encoding="utf-8")
+    monkeypatch.setenv("DBSPROUT_LLAMA_QUANTIZE", str(binary))
+    assert _resolve_quantizer() == binary.resolve()
+
+
+def test_resolve_quantizer_missing_raises_actionable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("DBSPROUT_LLAMA_QUANTIZE", str(tmp_path / "nope"))
+    monkeypatch.setattr(exporter_mod.shutil, "which", lambda _name: None)
+    with pytest.raises(RuntimeError, match="DBSPROUT_LLAMA_QUANTIZE"):
+        _resolve_quantizer()
+
+
+# --- Review #11: output-path containment + filename sanitization -----------
+
+
+def test_safe_adapter_stem_rejects_path_separators() -> None:
+    with pytest.raises(ValueError, match="adapter"):
+        _safe_adapter_stem("../evil")
+    with pytest.raises(ValueError, match="adapter"):
+        _safe_adapter_stem("a/b")
+    with pytest.raises(ValueError, match="adapter"):
+        _safe_adapter_stem("a\\b")
+
+
+def test_safe_adapter_stem_accepts_portable_name() -> None:
+    assert _safe_adapter_stem("abc123") == "abc123"
+    assert _safe_adapter_stem("schema_deadbeef-1") == "schema_deadbeef-1"
 
 
 def test_load_verifier_missing_raises(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -204,15 +247,40 @@ def fake_merge_deps(monkeypatch: pytest.MonkeyPatch) -> Iterator[dict[str, mock.
 
 
 @pytest.fixture
-def fake_convert(monkeypatch: pytest.MonkeyPatch) -> mock.MagicMock:
-    """Patch the converter seam so quantization is a no-op recording call."""
-    conv = mock.MagicMock(name="convert_hf_to_gguf")
+def fake_subprocess(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> mock.MagicMock:
+    """Mock ``subprocess.run`` at the real seam + stub tool resolution.
 
-    def _fake_load_convert() -> mock.MagicMock:
-        return conv
+    The conversion is now a real ``subprocess.run([...], check=True)`` call to
+    llama.cpp's ``convert_hf_to_gguf.py`` + ``llama-quantize`` — no fabricated
+    ``llama_cpp`` symbol. Tests assert the argv (list args, no shell) instead
+    of a fake function.
+    """
+    conv = tmp_path / "convert_hf_to_gguf.py"
+    conv.write_text("# converter", encoding="utf-8")
+    quant = tmp_path / "llama-quantize"
+    quant.write_text("#!/bin/sh\n", encoding="utf-8")
+    monkeypatch.setattr("dbsprout.train.exporter._resolve_converter", conv.resolve)
+    monkeypatch.setattr("dbsprout.train.exporter._resolve_quantizer", quant.resolve)
 
-    monkeypatch.setattr("dbsprout.train.exporter._load_convert", _fake_load_convert)
-    return conv
+    run = mock.MagicMock(name="subprocess.run")
+
+    def _run(argv: list[str], **_kw: object) -> mock.MagicMock:
+        run(argv, **_kw)
+        # Materialize whatever output file the stage expects so the pipeline
+        # proceeds (converter -> f16 gguf; quantizer -> final gguf).
+        # converter: `... --outfile <f16.gguf> --outtype f16`
+        # quantizer: `<bin> <in.gguf> <out.gguf> Q4_K_M`
+        out = next(
+            (a for a in reversed(argv) if isinstance(a, str) and a.endswith(".gguf")),
+            None,
+        )
+        if out is not None:
+            Path(out).parent.mkdir(parents=True, exist_ok=True)
+            Path(out).write_bytes(b"\x00" * 17)
+        return mock.MagicMock(returncode=0, stderr="")
+
+    monkeypatch.setattr(exporter_mod.subprocess, "run", _run)
+    return run
 
 
 # --- Task 4: merge stage ----------------------------------------------------
@@ -256,17 +324,52 @@ def test_merge_adapter_mlx_path(
 # --- Task 5: quantize stage -------------------------------------------------
 
 
-def test_quantize_to_gguf_uses_q4_k_m(tmp_path: Path, fake_convert: mock.MagicMock) -> None:
+def test_quantize_to_gguf_invokes_convert_then_quantize_no_shell(
+    tmp_path: Path, fake_subprocess: mock.MagicMock
+) -> None:
     merged = tmp_path / "merged"
     merged.mkdir()
     out = tmp_path / "models" / "custom" / "x.gguf"
     result = _quantize_to_gguf(merged, out)
     assert result == out
     assert out.parent.is_dir()
-    kwargs = fake_convert.call_args.kwargs
-    args = fake_convert.call_args.args
     assert _QUANT_TYPE == "Q4_K_M"
-    assert _QUANT_TYPE in (kwargs.get("outtype"), kwargs.get("quantization"), *args)
+
+    # Two subprocess.run calls: HF->GGUF f16 convert, then llama-quantize.
+    assert fake_subprocess.call_count == 2
+    convert_call, quant_call = fake_subprocess.call_args_list
+    convert_argv = convert_call.args[0]
+    quant_argv = quant_call.args[0]
+    # list-args (not a shell string) + no shell=True anywhere.
+    assert isinstance(convert_argv, list)
+    assert isinstance(quant_argv, list)
+    for call in (convert_call, quant_call):
+        assert call.kwargs.get("shell", False) is False
+        assert call.kwargs.get("check") is True
+        assert call.kwargs.get("capture_output") is True
+    # llama-quantize CLI is `<bin> <in.gguf> <out.gguf> <TYPE>`.
+    assert quant_argv[-1] == _QUANT_TYPE
+    assert quant_argv[-2] == str(out)
+
+
+def test_quantize_to_gguf_subprocess_failure_raises_runtime(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import subprocess  # noqa: PLC0415
+
+    conv = tmp_path / "convert_hf_to_gguf.py"
+    conv.write_text("x", encoding="utf-8")
+    quant = tmp_path / "llama-quantize"
+    quant.write_text("x", encoding="utf-8")
+    monkeypatch.setattr("dbsprout.train.exporter._resolve_converter", conv.resolve)
+    monkeypatch.setattr("dbsprout.train.exporter._resolve_quantizer", quant.resolve)
+
+    def _boom(argv: list[str], **_kw: object) -> None:
+        raise subprocess.CalledProcessError(1, argv, stderr="convert exploded")
+
+    monkeypatch.setattr(exporter_mod.subprocess, "run", _boom)
+    with pytest.raises(RuntimeError, match="convert exploded"):
+        _quantize_to_gguf(tmp_path / "merged", tmp_path / "o.gguf")
 
 
 # --- Task 6: load-verify seam ----------------------------------------------
@@ -337,9 +440,15 @@ def test_to_gguf_runs_pipeline_in_order(
     out_dir = tmp_path / "models" / "custom"
     path = Exporter().to_gguf(peft_adapter, base_model_dir, output_dir=out_dir, quiet=True)
     assert path.suffix == ".gguf"
-    assert path.parent == out_dir
+    assert path.parent == out_dir.resolve()
     assert stubbed_exporter["calls"] == ["merge", "quant", "verify"]  # type: ignore[comparison-overlap]
-    stubbed_exporter["verify"].assert_called_once_with(path)
+    # Verify runs on the STAGED tmp file (atomic export, finding #10), then the
+    # file is moved into the real destination — so it is verified exactly once
+    # and on a different (temp) path than the final one.
+    stubbed_exporter["verify"].assert_called_once()
+    verified = stubbed_exporter["verify"].call_args.args[0]
+    assert verified.name == path.name
+    assert verified != path
 
 
 def test_to_gguf_filename_is_deterministic(
@@ -443,3 +552,121 @@ def test_exporter_exported_from_package() -> None:
     assert "ExportResult" in train_pkg.__all__
     assert train_pkg.Exporter is exporter_mod.Exporter
     assert train_pkg.ExportResult is exporter_mod.ExportResult
+
+
+# --- Review #10: atomic output / partial-leak cleanup ----------------------
+
+
+def test_to_gguf_no_partial_file_on_verify_failure(
+    peft_adapter: LoRAAdapter,
+    base_model_dir: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # merge+quant succeed but verify fails: the final output dir must NOT
+    # contain a half-written .gguf (it was built in a TemporaryDirectory and
+    # only moved into place AFTER verify passed).
+    def _merge(adapter, base, work, fmt):  # type: ignore[no-untyped-def]
+        d = work / "merged"
+        d.mkdir(parents=True, exist_ok=True)
+        return d
+
+    def _quant(merged, out):  # type: ignore[no-untyped-def]
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_bytes(b"\x00" * 17)
+        return out
+
+    monkeypatch.setattr(exporter_mod, "_merge_adapter", _merge)
+    monkeypatch.setattr(exporter_mod, "_quantize_to_gguf", _quant)
+    monkeypatch.setattr(
+        exporter_mod,
+        "_verify_gguf",
+        mock.MagicMock(side_effect=RuntimeError("bad gguf")),
+    )
+
+    out_dir = tmp_path / "models" / "custom"
+    with pytest.raises(RuntimeError, match="bad gguf"):
+        Exporter().to_gguf(peft_adapter, base_model_dir, output_dir=out_dir, quiet=True)
+    # No partial leak in the real destination.
+    assert list(out_dir.glob("*.gguf")) == [] if out_dir.exists() else True
+
+
+def test_to_gguf_output_lands_in_destination_after_success(
+    peft_adapter: LoRAAdapter,
+    base_model_dir: Path,
+    tmp_path: Path,
+    stubbed_exporter: dict[str, mock.MagicMock],
+) -> None:
+    out_dir = tmp_path / "models" / "custom"
+    path = Exporter().to_gguf(peft_adapter, base_model_dir, output_dir=out_dir, quiet=True)
+    assert path.parent == out_dir
+    assert path.is_file()
+    assert path.stat().st_size == 17
+
+
+# --- Review #11: output-path containment -----------------------------------
+
+
+def test_to_gguf_rejects_nonportable_adapter_name(
+    base_model_dir: Path,
+    tmp_path: Path,
+    stubbed_exporter: dict[str, mock.MagicMock],
+) -> None:
+    # An adapter dir whose *name* has a non-portable char (space) must be
+    # rejected before being interpolated into the output .gguf filename.
+    evil_dir = tmp_path / "adapters" / "evil name"
+    evil_dir.mkdir(parents=True)
+    (evil_dir / "adapter_config.json").write_text("{}", encoding="utf-8")
+    bad = LoRAAdapter(
+        adapter_path=evil_dir,
+        base_model="b",
+        epochs=1,
+        train_samples=1,
+        final_loss=None,
+        duration_seconds=0.0,
+    )
+    with pytest.raises(ValueError, match="adapter"):
+        Exporter().to_gguf(bad, base_model_dir, output_dir=tmp_path / "c", quiet=True)
+
+
+# --- Review #12: narrowed verify exception handling ------------------------
+
+
+def test_verify_gguf_logs_and_reraises_on_load_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    gguf = tmp_path / "m.gguf"
+    gguf.write_bytes(b"\x00")
+
+    def _boom(_: Path) -> None:
+        raise ValueError("could not load gguf")
+
+    monkeypatch.setattr(exporter_mod, "_load_verifier", lambda: _boom)
+    with caplog.at_level("ERROR"), pytest.raises(RuntimeError, match="verif"):
+        exporter_mod._verify_gguf(gguf)
+    assert "verification" in caplog.text.lower()
+
+
+# --- Review #9: real llama.cpp toolchain resolution (integration) ----------
+
+
+@pytest.mark.integration
+def test_real_llama_cpp_toolchain_resolves() -> None:
+    """Pin the real converter/quantizer resolution contract.
+
+    Skipped unless a real llama.cpp toolchain is reachable (env override or
+    on PATH) — so a unit run on a runner without the toolchain never hides a
+    regression. Real conversion remains toolchain-validation-pending.
+    """
+    import os  # noqa: PLC0415
+    import shutil as _shutil  # noqa: PLC0415
+
+    if (
+        os.environ.get(exporter_mod._ENV_CONVERT) is None
+        and _shutil.which("llama-quantize") is None
+    ):
+        pytest.skip("requires a real llama.cpp toolchain (toolchain-validation-pending)")
+    converter = _resolve_converter()
+    quantizer = _resolve_quantizer()
+    assert converter.is_file()
+    assert quantizer.is_file()
