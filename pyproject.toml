@@ -34,6 +34,7 @@ dependencies = [
     "diskcache>=5.6",
     "defusedxml>=0.7",
     "pydbml>=1.0",
+    "httpx>=0.27",
 ]
 
 [project.urls]
@@ -229,7 +230,7 @@ module = "tests.*"
 disallow_untyped_defs = false
 
 [[tool.mypy.overrides]]
-module = ["polars", "polars.*", "alembic", "alembic.*", "psycopg", "psycopg.*", "unsloth", "unsloth.*", "trl", "trl.*", "datasets", "datasets.*", "torch", "torch.*", "litellm", "litellm.*", "instructor", "instructor.*", "llama_cpp", "llama_cpp.*", "huggingface_hub", "huggingface_hub.*"]
+module = ["polars", "polars.*", "alembic", "alembic.*", "psycopg", "psycopg.*", "unsloth", "unsloth.*", "trl", "trl.*", "datasets", "datasets.*", "torch", "torch.*", "litellm", "litellm.*", "instructor", "instructor.*", "llama_cpp", "llama_cpp.*", "huggingface_hub", "huggingface_hub.*", "httpx", "httpx.*"]
 ignore_missing_imports = true
 
 # ─── Bandit ────────────────────────────────────────────────────────────
