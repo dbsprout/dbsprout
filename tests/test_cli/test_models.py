@@ -7,10 +7,14 @@ from pathlib import Path
 
 import httpx
 import pytest
+from typer.testing import CliRunner
 
+from dbsprout.cli.app import app
 from dbsprout.models import InstalledModel, ModelEntry, ModelManager, load_registry
 from dbsprout.models import manager as manager_mod
 from dbsprout.models.manager import DownloadError, _resolve_hf_url
+
+runner = CliRunner()
 
 
 def _strip_ansi(text: str) -> str:
@@ -210,3 +214,58 @@ class TestDownload:
         mgr.install_path(entry).parent.mkdir(parents=True, exist_ok=True)
         mgr.install_path(entry).write_bytes(b"x")
         assert mgr.download(entry).read_bytes() == b"x"
+
+
+class TestModelsCLIListInfo:
+    def test_list_shows_registry_and_custom(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.chdir(tmp_path)
+        root = tmp_path / ".dbsprout" / "models"
+        (root / "custom").mkdir(parents=True)
+        (root / "custom" / "my-ft.gguf").write_bytes(b"q" * 7)
+
+        result = runner.invoke(app, ["models", "list"])
+        out = _strip_ansi(result.output)
+        assert result.exit_code == 0
+        assert "qwen2.5-1.5b-instruct" in out
+        assert "my-ft" in out
+        assert "Q4_K_M" in out
+
+    def test_info_known_model(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.chdir(tmp_path)
+        result = runner.invoke(app, ["models", "info", "qwen2.5-1.5b-instruct"])
+        out = _strip_ansi(result.output)
+        assert result.exit_code == 0
+        assert "1.5B" in out
+        assert "Q4_K_M" in out
+        assert "Qwen/Qwen2.5-1.5B-Instruct-GGUF" in out
+
+    def test_info_unknown_model_exits_nonzero(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.chdir(tmp_path)
+        result = runner.invoke(app, ["models", "info", "nope"])
+        out = _strip_ansi(result.output)
+        assert result.exit_code != 0
+        assert "unknown model" in out.lower()
+
+    def test_info_known_model_installed_shows_path(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.chdir(tmp_path)
+        entry = next(e for e in load_registry() if e.default)
+        mgr = ModelManager()
+        mgr.install_path(entry).parent.mkdir(parents=True, exist_ok=True)
+        mgr.install_path(entry).write_bytes(b"installed")
+        result = runner.invoke(app, ["models", "info", entry.name])
+        out = _strip_ansi(result.output)
+        assert result.exit_code == 0
+        assert "yes" in out.lower()
+
+    def test_models_help(self) -> None:
+        result = runner.invoke(app, ["models", "--help"])
+        assert result.exit_code == 0
+        assert "list" in result.output
+        assert "download" in result.output
+        assert "info" in result.output
