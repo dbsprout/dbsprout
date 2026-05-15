@@ -149,8 +149,6 @@ class DataPreparer:
         (the CLI maps this to exit code 1). The output file always ends with a
         trailing newline; an all-empty corpus produces an empty file.
         """
-        import polars as pl  # noqa: PLC0415 - lazy: keep polars off CLI startup path
-
         start = time.perf_counter()
         parquet_files = sorted((input_dir / "samples").glob("*.parquet"))
         if not parquet_files:
@@ -159,8 +157,34 @@ class DataPreparer:
                 f"Run 'dbsprout train extract' first."
             )
 
-        table_results: list[TableSerializationResult] = []
+        all_lines, table_results = self._collect(
+            parquet_files, seed=seed, null_policy=null_policy, quiet=quiet
+        )
+
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        payload = "".join(line + "\n" for line in all_lines)
+        output_path.write_text(payload, encoding="utf-8")
+
+        return SerializationResult(
+            output_path=output_path,
+            tables=tuple(table_results),
+            total_rows=sum(r.rows_serialized for r in table_results),
+            duration_seconds=time.perf_counter() - start,
+        )
+
+    def _collect(
+        self,
+        parquet_files: list[Path],
+        *,
+        seed: int,
+        null_policy: NullPolicy,
+        quiet: bool,
+    ) -> tuple[list[str], list[TableSerializationResult]]:
+        """Read each Parquet file and serialize it, driving a Rich progress bar."""
+        import polars as pl  # noqa: PLC0415 - lazy: keep polars off CLI startup path
+
         all_lines: list[str] = []
+        table_results: list[TableSerializationResult] = []
         with Progress(
             SpinnerColumn(),
             TextColumn("[bold blue]{task.description}"),
@@ -183,17 +207,7 @@ class DataPreparer:
                     )
                 )
                 progress.update(overall, advance=1, description=f"Serializing {table}")
-
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        payload = "".join(line + "\n" for line in all_lines)
-        output_path.write_text(payload, encoding="utf-8")
-
-        return SerializationResult(
-            output_path=output_path,
-            tables=tuple(table_results),
-            total_rows=sum(r.rows_serialized for r in table_results),
-            duration_seconds=time.perf_counter() - start,
-        )
+        return all_lines, table_results
 
     def _serialize_table(
         self,
