@@ -5,10 +5,12 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+import httpx
 import pytest
 
 from dbsprout.models import InstalledModel, ModelEntry, ModelManager, load_registry
 from dbsprout.models import manager as manager_mod
+from dbsprout.models.manager import DownloadError, _resolve_hf_url
 
 
 def _strip_ansi(text: str) -> str:
@@ -101,3 +103,110 @@ class TestModelManagerDiscovery:
         mgr = ModelManager(root=tmp_path)
         with pytest.raises(KeyError):
             mgr.resolve_entry("does-not-exist")
+
+
+def _mock_client(handler: object) -> httpx.Client:
+    return httpx.Client(transport=httpx.MockTransport(handler))  # type: ignore[arg-type]
+
+
+class TestDownload:
+    def test_resolve_hf_url(self) -> None:
+        url = _resolve_hf_url("Org/Repo-GGUF", "model.gguf")
+        assert url == "https://huggingface.co/Org/Repo-GGUF/resolve/main/model.gguf"
+
+    def test_download_happy_path(self, tmp_path: Path) -> None:
+        entry = next(e for e in load_registry() if e.default)
+        body = b"GGUFDATA" * 4
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            assert "resolve/main" in str(request.url)
+            return httpx.Response(200, content=body, headers={"Content-Length": str(len(body))})
+
+        progress: list[tuple[int, int]] = []
+        mgr = ModelManager(root=tmp_path / ".dbsprout" / "models")
+        dest = mgr.download(
+            entry,
+            client=_mock_client(handler),
+            progress_cb=lambda done, total: progress.append((done, total)),
+        )
+        assert dest == mgr.install_path(entry)
+        assert dest.read_bytes() == body
+        assert not dest.with_suffix(dest.suffix + ".part").exists()
+        assert progress
+        assert progress[-1][0] == len(body)
+
+    def test_download_resume_206(self, tmp_path: Path) -> None:
+        entry = next(e for e in load_registry() if e.default)
+        full = b"0123456789ABCDEF"
+        mgr = ModelManager(root=tmp_path / ".dbsprout" / "models")
+        part = mgr.install_path(entry).with_suffix(mgr.install_path(entry).suffix + ".part")
+        part.parent.mkdir(parents=True, exist_ok=True)
+        part.write_bytes(full[:6])
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            assert request.headers.get("Range") == "bytes=6-"
+            return httpx.Response(
+                206, content=full[6:], headers={"Content-Length": str(len(full) - 6)}
+            )
+
+        dest = mgr.download(entry, client=_mock_client(handler))
+        assert dest.read_bytes() == full
+
+    def test_download_restart_200_ignores_range(self, tmp_path: Path) -> None:
+        entry = next(e for e in load_registry() if e.default)
+        mgr = ModelManager(root=tmp_path / ".dbsprout" / "models")
+        part = mgr.install_path(entry).with_suffix(mgr.install_path(entry).suffix + ".part")
+        part.parent.mkdir(parents=True, exist_ok=True)
+        part.write_bytes(b"STALE")
+        full = b"FRESHCONTENT"
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(200, content=full)
+
+        dest = mgr.download(entry, client=_mock_client(handler))
+        assert dest.read_bytes() == full
+
+    def test_download_network_error_keeps_part(self, tmp_path: Path) -> None:
+        entry = next(e for e in load_registry() if e.default)
+        mgr = ModelManager(root=tmp_path / ".dbsprout" / "models")
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            raise httpx.ConnectError("boom")
+
+        with pytest.raises(DownloadError, match="resume"):
+            mgr.download(entry, client=_mock_client(handler))
+
+    def test_download_skip_when_installed(self, tmp_path: Path) -> None:
+        entry = next(e for e in load_registry() if e.default)
+        mgr = ModelManager(root=tmp_path / ".dbsprout" / "models")
+        mgr.install_path(entry).parent.mkdir(parents=True, exist_ok=True)
+        mgr.install_path(entry).write_bytes(b"already")
+
+        dest = mgr.download(entry, client=None, force=False)
+        assert dest.read_bytes() == b"already"
+
+    def test_download_indeterminate_no_content_length(self, tmp_path: Path) -> None:
+        entry = next(e for e in load_registry() if e.default)
+        body = b"NOLEN"
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(200, content=body)
+
+        seen: list[tuple[int, int]] = []
+        mgr = ModelManager(root=tmp_path / ".dbsprout" / "models")
+        dest = mgr.download(
+            entry,
+            client=_mock_client(handler),
+            progress_cb=lambda d, t: seen.append((d, t)),
+        )
+        assert dest.read_bytes() == body
+        assert seen[-1] == (len(body), len(body))
+
+    def test_download_creates_real_client_when_none(self, tmp_path: Path) -> None:
+        # force=False + already installed avoids any network: exercises the
+        # client=None branch without opening a real connection.
+        entry = next(e for e in load_registry() if e.default)
+        mgr = ModelManager(root=tmp_path / ".dbsprout" / "models")
+        mgr.install_path(entry).parent.mkdir(parents=True, exist_ok=True)
+        mgr.install_path(entry).write_bytes(b"x")
+        assert mgr.download(entry).read_bytes() == b"x"
