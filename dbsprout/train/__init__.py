@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dbsprout.train.config import LoRAAdapter, TrainConfig
 from dbsprout.train.models import (
     ClosureReport,
     ExtractorConfig,
@@ -14,11 +15,14 @@ from dbsprout.train.models import (
     TableExtractionResult,
     TableSerializationResult,
 )
+from dbsprout.train.trainer import QLoRATrainer
 
 __all__ = [
     "ClosureReport",
     "ExtractorConfig",
+    "LoRAAdapter",
     "NullPolicy",
+    "QLoRATrainer",
     "SampleAllocation",
     "SampleManifest",
     "SampleResult",
@@ -26,4 +30,5 @@ __all__ = [
     "SerializerConfig",
     "TableExtractionResult",
     "TableSerializationResult",
+    "TrainConfig",
 ]

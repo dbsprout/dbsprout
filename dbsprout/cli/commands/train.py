@@ -136,3 +136,80 @@ def serialize(
         f"{result.duration_seconds:.2f} s.\n"
         f"Corpus: [cyan]{result.output_path}[/cyan]"
     )
+
+
+@train_app.command("run")
+def run(  # noqa: PLR0913 - CLI flags are inherently positional/named
+    corpus: Path = typer.Option(
+        Path(".dbsprout/training/data.jsonl"),
+        "--corpus",
+        "-c",
+        help="JSONL corpus produced by 'dbsprout train serialize'.",
+    ),
+    output: Path = typer.Option(
+        Path(".dbsprout/models/adapters"),
+        "--output",
+        "-o",
+        help="Directory to write the LoRA adapter into.",
+    ),
+    schema_hash: str | None = typer.Option(
+        None, "--schema-hash", help="Subdirectory name for this schema's adapter."
+    ),
+    epochs: int | None = typer.Option(None, "--epochs", min=1),
+    learning_rate: float | None = typer.Option(None, "--learning-rate", min=0.0),
+    lora_rank: int | None = typer.Option(None, "--lora-rank", min=1),
+    lora_alpha: int | None = typer.Option(None, "--lora-alpha", min=1),
+    batch_size: int | None = typer.Option(None, "--batch-size", min=1),
+    quiet: bool = typer.Option(False, "--quiet"),
+) -> None:
+    """Fine-tune a QLoRA adapter on a serialized training corpus.
+
+    Auto-detects CUDA and uses the Unsloth backend. Requires an NVIDIA GPU
+    and ``pip install dbsprout[train-cuda]``.
+    """
+    config = load_config()
+    if config.privacy.tier != "local":
+        console.print(
+            f"[red]Error:[/red] train run requires privacy tier 'local' "
+            f"(current: {config.privacy.tier}). "
+            f'Set [privacy] tier = "local" in dbsprout.toml.',
+            style="bold",
+        )
+        raise typer.Exit(code=2)
+
+    # Lazy import: keeps torch/unsloth off the <500 ms CLI startup path.
+    from dbsprout.train.trainer import QLoRATrainer  # noqa: PLC0415
+
+    overrides = {
+        k: v
+        for k, v in {
+            "epochs": epochs,
+            "learning_rate": learning_rate,
+            "lora_rank": lora_rank,
+            "lora_alpha": lora_alpha,
+            "batch_size": batch_size,
+        }.items()
+        if v is not None
+    }
+    train_config = config.train.model_copy(update=overrides)
+
+    trainer = QLoRATrainer()
+    try:
+        adapter = trainer.train(
+            corpus_path=corpus,
+            config=train_config,
+            output_dir=output,
+            schema_hash=schema_hash,
+            quiet=quiet,
+        )
+    except (RuntimeError, FileNotFoundError, ValueError) as exc:
+        console.print(f"[red]Error:[/red] {exc}")
+        raise typer.Exit(code=1) from exc
+
+    loss = f"{adapter.final_loss:.4f}" if adapter.final_loss is not None else "n/a"
+    console.print(
+        f"[green bold]Trained[/green bold] QLoRA adapter on "
+        f"{adapter.train_samples} samples ({adapter.epochs} epochs, "
+        f"final loss {loss}) in {adapter.duration_seconds:.1f} s.\n"
+        f"Adapter: [cyan]{adapter.adapter_path}[/cyan]"
+    )

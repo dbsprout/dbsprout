@@ -15,6 +15,7 @@ from dbsprout.config.models import (
     SchemaConfig,
     TableOverride,
 )
+from dbsprout.train.config import TrainConfig
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -70,6 +71,40 @@ class TestDefaultConfig:
         cfg = DBSproutConfig()
         with pytest.raises(ValidationError):
             cfg.tables = {}  # type: ignore[misc]
+
+    def test_train_section_defaults(self) -> None:
+        cfg = DBSproutConfig()
+        assert isinstance(cfg.train, TrainConfig)
+        assert cfg.train == TrainConfig()
+        assert cfg.train.epochs == 3
+        assert cfg.train.completion_only_loss is True
+
+
+class TestTrainSection:
+    def test_train_overrides_round_trip(self, tmp_path: Path) -> None:
+        toml = """\
+[train]
+epochs = 5
+learning_rate = 0.001
+lora_rank = 8
+lora_alpha = 16
+lora_dropout = 0.0
+batch_size = 4
+base_model = "some/model"
+"""
+        path = tmp_path / "dbsprout.toml"
+        path.write_text(toml)
+        cfg = load_config(path)
+        assert cfg.train.epochs == 5
+        assert cfg.train.learning_rate == pytest.approx(0.001)
+        assert cfg.train.lora_rank == 8
+        assert cfg.train.base_model == "some/model"
+
+    def test_train_section_rejects_unknown_key(self, tmp_path: Path) -> None:
+        path = tmp_path / "dbsprout.toml"
+        path.write_text("[train]\nbogus = 1\n")
+        with pytest.raises(ValidationError):
+            load_config(path)
 
 
 class TestSchemaConfig:
