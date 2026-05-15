@@ -10,10 +10,14 @@ from pydantic import ValidationError
 
 from dbsprout.train.models import (
     ExtractorConfig,
+    NullPolicy,
     SampleAllocation,
     SampleManifest,
     SampleResult,
+    SerializationResult,
+    SerializerConfig,
     TableExtractionResult,
+    TableSerializationResult,
 )
 
 if TYPE_CHECKING:
@@ -96,3 +100,60 @@ def test_sample_result_holds_tuple_of_results(tmp_path: Path) -> None:
         duration_seconds=0.0,
     )
     assert r.tables == ()
+
+
+def test_null_policy_values() -> None:
+    assert NullPolicy("skip") is NullPolicy.SKIP
+    assert NullPolicy("literal") is NullPolicy.LITERAL
+    with pytest.raises(ValueError, match=r"not a valid NullPolicy"):
+        NullPolicy("omit")
+
+
+def test_serializer_config_defaults(tmp_path: Path) -> None:
+    cfg = SerializerConfig(
+        input_dir=tmp_path,
+        output_path=tmp_path / "data.jsonl",
+    )
+    assert cfg.seed == 0
+    assert cfg.null_policy is NullPolicy.SKIP
+    assert cfg.quiet is False
+
+
+def test_serializer_config_is_frozen(tmp_path: Path) -> None:
+    cfg = SerializerConfig(
+        input_dir=tmp_path,
+        output_path=tmp_path / "data.jsonl",
+    )
+    with pytest.raises(ValidationError):
+        cfg.seed = 5  # type: ignore[misc]
+
+
+def test_table_serialization_result_defaults() -> None:
+    r = TableSerializationResult(table="users", rows_serialized=10)
+    assert r.nulls_skipped == 0
+
+
+def test_table_serialization_result_rejects_negative() -> None:
+    with pytest.raises(ValidationError):
+        TableSerializationResult(table="users", rows_serialized=-1)
+
+
+def test_serialization_result_round_trip(tmp_path: Path) -> None:
+    r = SerializationResult(
+        output_path=tmp_path / "data.jsonl",
+        tables=(TableSerializationResult(table="users", rows_serialized=2),),
+        total_rows=2,
+        duration_seconds=0.01,
+    )
+    assert r.total_rows == 2
+    assert r.tables[0].table == "users"
+
+
+def test_serialization_result_rejects_negative_total(tmp_path: Path) -> None:
+    with pytest.raises(ValidationError):
+        SerializationResult(
+            output_path=tmp_path / "data.jsonl",
+            tables=(),
+            total_rows=-1,
+            duration_seconds=0.0,
+        )

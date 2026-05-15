@@ -23,8 +23,10 @@ from dbsprout.migrate.parsers import MigrationParser
 from dbsprout.spec.providers.base import SpecProvider
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from dbsprout.schema.models import DatabaseSchema
-    from dbsprout.train.models import ExtractorConfig, SampleResult
+    from dbsprout.train.models import ExtractorConfig, NullPolicy, SampleResult, SerializationResult
 
 
 @runtime_checkable
@@ -82,6 +84,27 @@ class TrainExtractor(Protocol):
     def extract(self, *, source: str, config: ExtractorConfig) -> SampleResult: ...
 
 
+@runtime_checkable
+class TrainSerializer(Protocol):
+    """Serializes extracted samples into a fine-tuning corpus.
+
+    The built-in ``great`` serializer renders GReaT-style
+    ``[<table>] col is value, ...`` JSONL. Alternative formats (e.g. a
+    key-value JSON or CSV-style corpus) can register under the
+    ``dbsprout.train_serializers`` entry-point group without a new Protocol.
+    """
+
+    def prepare(
+        self,
+        *,
+        input_dir: Path,
+        output_path: Path,
+        seed: int,
+        null_policy: NullPolicy,
+        quiet: bool,
+    ) -> SerializationResult: ...
+
+
 __all__ = [
     "GenerationEngine",
     "MigrationParser",
@@ -89,4 +112,5 @@ __all__ = [
     "SchemaParser",
     "SpecProvider",
     "TrainExtractor",
+    "TrainSerializer",
 ]
