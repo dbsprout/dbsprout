@@ -10,6 +10,8 @@ from typing import TYPE_CHECKING, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from dbsprout.train.config import TrainConfig
+
 if TYPE_CHECKING:
     from pathlib import Path
 
@@ -61,6 +63,7 @@ class DBSproutConfig(BaseModel):
     schema_: SchemaConfig = Field(default_factory=SchemaConfig, alias="schema")
     generation: GenerationConfig = Field(default_factory=GenerationConfig)
     privacy: PrivacyConfig = Field(default_factory=PrivacyConfig)
+    train: TrainConfig = Field(default_factory=TrainConfig)
     tables: dict[str, TableOverride] = Field(default_factory=dict)
 
     @classmethod

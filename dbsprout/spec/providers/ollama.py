@@ -71,7 +71,7 @@ class OllamaProvider:
     def _call_llm(self, schema: DatabaseSchema) -> DataSpec:  # pragma: no cover
         """Call Ollama via LiteLLM and parse response as DataSpec."""
         try:
-            import litellm  # type: ignore[import-not-found]  # noqa: PLC0415
+            import litellm  # noqa: PLC0415
         except ImportError:
             msg = (
                 "litellm is required for Ollama provider. Install with: pip install dbsprout[cloud]"
