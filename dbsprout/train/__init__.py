@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dbsprout.train.config import LoRAAdapter, TrainConfig
+from dbsprout.train.mlx_trainer import MLXTrainer, select_trainer
 from dbsprout.train.models import (
     ClosureReport,
     ExtractorConfig,
@@ -21,6 +22,7 @@ __all__ = [
     "ClosureReport",
     "ExtractorConfig",
     "LoRAAdapter",
+    "MLXTrainer",
     "NullPolicy",
     "QLoRATrainer",
     "SampleAllocation",
@@ -31,4 +33,5 @@ __all__ = [
     "TableExtractionResult",
     "TableSerializationResult",
     "TrainConfig",
+    "select_trainer",
 ]
