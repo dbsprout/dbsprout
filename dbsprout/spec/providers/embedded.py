@@ -90,7 +90,7 @@ class EmbeddedProvider:
         grammar_str = generate_dataspec_grammar()
 
         try:
-            from llama_cpp import LlamaGrammar  # type: ignore[import-not-found]  # noqa: PLC0415
+            from llama_cpp import LlamaGrammar  # noqa: PLC0415
         except ImportError:
             msg = (
                 "llama-cpp-python is required for embedded LLM inference. "
@@ -157,7 +157,7 @@ class EmbeddedProvider:
 def _import_hf_hub_download() -> Any:
     """Import hf_hub_download with a clear error on missing dependency."""
     try:
-        from huggingface_hub import hf_hub_download  # type: ignore[import-not-found]  # noqa: PLC0415, I001
+        from huggingface_hub import hf_hub_download  # noqa: PLC0415
     except ImportError:
         msg = (
             "huggingface-hub is required for model download. "

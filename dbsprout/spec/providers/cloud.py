@@ -59,8 +59,8 @@ class CloudProvider:
         Requires ``litellm`` and ``instructor`` packages.
         """
         try:
-            import instructor  # type: ignore[import-not-found]  # noqa: PLC0415
-            import litellm  # type: ignore[import-not-found]  # noqa: PLC0415
+            import instructor  # noqa: PLC0415
+            import litellm  # noqa: PLC0415
         except ImportError:
             msg = (
                 "litellm and instructor are required for cloud LLM. "
