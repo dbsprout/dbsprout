@@ -10,6 +10,8 @@ import pytest
 from typer.testing import CliRunner
 
 from dbsprout.cli.app import app
+from dbsprout.cli.commands import models as models_mod
+from dbsprout.cli.commands.models import _make_client
 from dbsprout.models import InstalledModel, ModelEntry, ModelManager, load_registry
 from dbsprout.models import manager as manager_mod
 from dbsprout.models.manager import DownloadError, _resolve_hf_url
@@ -269,3 +271,95 @@ class TestModelsCLIListInfo:
         assert "list" in result.output
         assert "download" in result.output
         assert "info" in result.output
+
+
+class TestModelsCLIDownload:
+    def test_download_unknown_model(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.chdir(tmp_path)
+        result = runner.invoke(app, ["models", "download", "nope"])
+        assert result.exit_code != 0
+        assert "unknown model" in _strip_ansi(result.output).lower()
+
+    def test_download_already_installed_skips(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.chdir(tmp_path)
+        entry = next(e for e in load_registry() if e.default)
+        mgr = ModelManager()
+        mgr.install_path(entry).parent.mkdir(parents=True, exist_ok=True)
+        mgr.install_path(entry).write_bytes(b"installed")
+
+        result = runner.invoke(app, ["models", "download", entry.name])
+        out = _strip_ansi(result.output)
+        assert result.exit_code == 0
+        assert "already installed" in out.lower()
+
+    def test_download_success(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.chdir(tmp_path)
+        body = b"GGUF-BYTES" * 3
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(200, content=body, headers={"Content-Length": str(len(body))})
+
+        monkeypatch.setattr(
+            models_mod,
+            "_make_client",
+            lambda: httpx.Client(transport=httpx.MockTransport(handler)),
+        )
+
+        entry = next(e for e in load_registry() if e.default)
+        result = runner.invoke(app, ["models", "download", entry.name])
+        out = _strip_ansi(result.output)
+        assert result.exit_code == 0, out
+        assert ModelManager().install_path(entry).read_bytes() == body
+        assert "downloaded" in out.lower()
+
+    def test_download_force_redownloads(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.chdir(tmp_path)
+        entry = next(e for e in load_registry() if e.default)
+        mgr = ModelManager()
+        mgr.install_path(entry).parent.mkdir(parents=True, exist_ok=True)
+        mgr.install_path(entry).write_bytes(b"old")
+        fresh = b"NEWMODELBYTES"
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(200, content=fresh, headers={"Content-Length": str(len(fresh))})
+
+        monkeypatch.setattr(
+            models_mod,
+            "_make_client",
+            lambda: httpx.Client(transport=httpx.MockTransport(handler)),
+        )
+
+        result = runner.invoke(app, ["models", "download", entry.name, "--force"])
+        assert result.exit_code == 0, _strip_ansi(result.output)
+        assert mgr.install_path(entry).read_bytes() == fresh
+
+    def test_download_network_error(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.chdir(tmp_path)
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            raise httpx.ConnectError("no network")
+
+        monkeypatch.setattr(
+            models_mod,
+            "_make_client",
+            lambda: httpx.Client(transport=httpx.MockTransport(handler)),
+        )
+
+        entry = next(e for e in load_registry() if e.default)
+        result = runner.invoke(app, ["models", "download", entry.name])
+        out = _strip_ansi(result.output)
+        assert result.exit_code != 0
+        assert "resume" in out.lower()
+
+
+class TestMakeClient:
+    def test_make_client_returns_httpx_client(self) -> None:
+        client = _make_client()
+        try:
+            assert isinstance(client, httpx.Client)
+        finally:
+            client.close()

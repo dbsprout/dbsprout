@@ -2,9 +2,14 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import typer
 
 from dbsprout.cli.console import console
+
+if TYPE_CHECKING:
+    import httpx
 
 models_app = typer.Typer(
     name="models",
@@ -94,3 +99,66 @@ def model_info(name: str = typer.Argument(..., help="Registry model name.")) -> 
         f"Installed   : {install_line}"
     )
     console.print(Panel(body, title=f"Model: {entry.name}"))
+
+
+def _make_client() -> httpx.Client:
+    """Create the httpx client (own seam so tests can swap the transport)."""
+    import httpx  # noqa: PLC0415 - keep httpx off the <500ms CLI startup path
+
+    return httpx.Client(timeout=600.0, follow_redirects=True)
+
+
+@models_app.command("download")
+def download_model(
+    name: str = typer.Argument(..., help="Registry model name to download."),
+    force: bool = typer.Option(False, "--force", help="Re-download if installed."),
+) -> None:
+    """Download a registry model's GGUF into .dbsprout/models/base/."""
+    from rich.progress import (  # noqa: PLC0415
+        BarColumn,
+        DownloadColumn,
+        Progress,
+        TextColumn,
+        TimeRemainingColumn,
+        TransferSpeedColumn,
+    )
+
+    from dbsprout.models import ModelManager  # noqa: PLC0415
+    from dbsprout.models.manager import DownloadError  # noqa: PLC0415
+
+    mgr = ModelManager()
+    try:
+        entry = mgr.resolve_entry(name)
+    except KeyError:
+        valid = ", ".join(e.name for e in mgr.registry())
+        console.print(f"[red]Error:[/red] unknown model {name!r}. Valid models: {valid}")
+        raise typer.Exit(code=1) from None
+
+    if mgr.is_installed(entry) and not force:
+        console.print(
+            f"[yellow]{entry.name} is already installed[/yellow] at "
+            f"[cyan]{mgr.install_path(entry)}[/cyan] (use --force to re-download)."
+        )
+        return
+
+    client = _make_client()
+    with Progress(
+        TextColumn("[bold blue]{task.description}"),
+        BarColumn(),
+        DownloadColumn(),
+        TransferSpeedColumn(),
+        TimeRemainingColumn(),
+        console=console,
+    ) as progress:
+        task_id = progress.add_task(entry.name, total=entry.size_bytes or None)
+
+        def _cb(done: int, total: int) -> None:
+            progress.update(task_id, completed=done, total=total or None)
+
+        try:
+            dest = mgr.download(entry, client=client, progress_cb=_cb, force=force)
+        except DownloadError as exc:
+            console.print(f"[red]Error:[/red] {exc}")
+            raise typer.Exit(code=1) from exc
+
+    console.print(f"[green bold]Downloaded[/green bold] {entry.name} -> [cyan]{dest}[/cyan]")
