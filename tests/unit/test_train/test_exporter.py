@@ -113,6 +113,32 @@ def test_load_merge_deps_mlx_missing_raises(monkeypatch: pytest.MonkeyPatch) -> 
 # --- Review #9: real llama.cpp converter/quantizer resolution --------------
 
 
+def test_resolve_converter_no_env_known_locations_miss_raises(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv(exporter_mod._ENV_CONVERT, raising=False)
+    monkeypatch.setattr(exporter_mod, "_KNOWN_CONVERTERS", ())
+    with pytest.raises(RuntimeError, match="DBSPROUT_LLAMA_CONVERT"):
+        _resolve_converter()
+
+
+def test_resolve_quantizer_no_env_not_on_path_raises(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv(exporter_mod._ENV_QUANTIZE, raising=False)
+    monkeypatch.setattr(exporter_mod.shutil, "which", lambda _n: None)
+    with pytest.raises(RuntimeError, match="DBSPROUT_LLAMA_QUANTIZE"):
+        _resolve_quantizer()
+
+
+def test_resolve_quantizer_found_on_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    binary = tmp_path / "llama-quantize"
+    binary.write_text("#!/bin/sh\n", encoding="utf-8")
+    monkeypatch.delenv(exporter_mod._ENV_QUANTIZE, raising=False)
+    monkeypatch.setattr(exporter_mod.shutil, "which", lambda _n: str(binary))
+    assert _resolve_quantizer() == binary.resolve()
+
+
 def test_resolve_converter_uses_env_override(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
