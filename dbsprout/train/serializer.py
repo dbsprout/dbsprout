@@ -128,14 +128,10 @@ class DataPreparer:
         """
         lines: list[str] = []
         for table in sorted(samples):
-            df = samples[table]
-            columns = list(df.columns)
-            for row_index, row in enumerate(df.iter_rows(named=True)):
-                order = _shuffled_columns(columns, seed=seed, table=table, row_index=row_index)
-                sentence = serialize_row(
-                    row, table=table, column_order=order, null_policy=null_policy
-                )
-                lines.append(json.dumps({"text": sentence, "table": table}, ensure_ascii=False))
+            table_lines, _ = self._serialize_table(
+                table, samples[table], seed=seed, null_policy=null_policy
+            )
+            lines.extend(table_lines)
         return lines
 
     def prepare(
