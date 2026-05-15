@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from dbsprout.models import InstalledModel, ModelEntry, load_registry
+from dbsprout.models import InstalledModel, ModelEntry, ModelManager, load_registry
 from dbsprout.models import manager as manager_mod
 
 
@@ -66,3 +66,38 @@ class TestLoadRegistry:
         bad.write_text("not json", encoding="utf-8")
         with pytest.raises(ValueError, match="invalid model registry"):
             manager_mod.load_registry(bad)
+
+
+class TestModelManagerDiscovery:
+    def test_discover_empty(self, tmp_path: Path) -> None:
+        mgr = ModelManager(root=tmp_path / ".dbsprout" / "models")
+        assert mgr.list_installed() == []
+
+    def test_discover_base_and_custom(self, tmp_path: Path) -> None:
+        root = tmp_path / ".dbsprout" / "models"
+        (root / "base").mkdir(parents=True)
+        (root / "custom").mkdir(parents=True)
+        (root / "base" / "qwen2.5-1.5b-instruct-q4_k_m.gguf").write_bytes(b"x" * 10)
+        (root / "custom" / "my-ft.gguf").write_bytes(b"y" * 20)
+
+        mgr = ModelManager(root=root)
+        installed = {im.name: im for im in mgr.list_installed()}
+        assert installed["qwen2.5-1.5b-instruct-q4_k_m.gguf"].kind == "base"
+        assert installed["qwen2.5-1.5b-instruct-q4_k_m.gguf"].size_bytes == 10
+        assert installed["my-ft"].kind == "custom"
+        assert installed["my-ft"].size_bytes == 20
+
+    def test_is_installed_matches_registry_filename(self, tmp_path: Path) -> None:
+        root = tmp_path / ".dbsprout" / "models"
+        (root / "base").mkdir(parents=True)
+        entry = next(e for e in load_registry() if e.default)
+        (root / "base" / entry.filename).write_bytes(b"z" * 5)
+
+        mgr = ModelManager(root=root)
+        assert mgr.is_installed(entry) is True
+        assert mgr.install_path(entry) == root / "base" / entry.filename
+
+    def test_resolve_entry_unknown_raises_keyerror(self, tmp_path: Path) -> None:
+        mgr = ModelManager(root=tmp_path)
+        with pytest.raises(KeyError):
+            mgr.resolve_entry("does-not-exist")
