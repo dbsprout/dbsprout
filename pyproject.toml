@@ -230,7 +230,7 @@ module = "tests.*"
 disallow_untyped_defs = false
 
 [[tool.mypy.overrides]]
-module = ["polars", "polars.*", "alembic", "alembic.*", "psycopg", "psycopg.*", "unsloth", "unsloth.*", "trl", "trl.*", "datasets", "datasets.*", "torch", "torch.*", "litellm", "litellm.*", "instructor", "instructor.*", "llama_cpp", "llama_cpp.*", "huggingface_hub", "huggingface_hub.*", "httpx", "httpx.*"]
+module = ["polars", "polars.*", "alembic", "alembic.*", "psycopg", "psycopg.*", "unsloth", "unsloth.*", "trl", "trl.*", "datasets", "datasets.*", "torch", "torch.*", "litellm", "litellm.*", "instructor", "instructor.*", "llama_cpp", "llama_cpp.*", "huggingface_hub", "huggingface_hub.*", "httpx", "httpx.*", "peft", "peft.*", "transformers", "transformers.*", "mlx_lm", "mlx_lm.*"]
 ignore_missing_imports = true
 
 # ─── Bandit ────────────────────────────────────────────────────────────

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dbsprout.train.config import LoRAAdapter, TrainConfig
+from dbsprout.train.exporter import Exporter, ExportResult
 from dbsprout.train.models import (
     ClosureReport,
     ExtractorConfig,
@@ -19,6 +20,8 @@ from dbsprout.train.trainer import QLoRATrainer
 
 __all__ = [
     "ClosureReport",
+    "ExportResult",
+    "Exporter",
     "ExtractorConfig",
     "LoRAAdapter",
     "NullPolicy",
