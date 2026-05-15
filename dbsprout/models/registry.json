@@ -1,0 +1,26 @@
+[
+  {
+    "name": "qwen2.5-1.5b-instruct",
+    "description": "Qwen2.5 1.5B Instruct, Q4_K_M GGUF - DBSprout default embedded model.",
+    "repo": "Qwen/Qwen2.5-1.5B-Instruct-GGUF",
+    "filename": "qwen2.5-1.5b-instruct-q4_k_m.gguf",
+    "size_bytes": 1117320832,
+    "quantization": "Q4_K_M",
+    "parameters": "1.5B",
+    "training": "base",
+    "license": "Apache-2.0",
+    "default": true
+  },
+  {
+    "name": "qwen2.5-0.5b-instruct",
+    "description": "Qwen2.5 0.5B Instruct, Q4_K_M GGUF - smallest fast option.",
+    "repo": "Qwen/Qwen2.5-0.5B-Instruct-GGUF",
+    "filename": "qwen2.5-0.5b-instruct-q4_k_m.gguf",
+    "size_bytes": 491508224,
+    "quantization": "Q4_K_M",
+    "parameters": "0.5B",
+    "training": "base",
+    "license": "Apache-2.0",
+    "default": false
+  }
+]
