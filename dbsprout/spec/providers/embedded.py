@@ -7,11 +7,10 @@ constraints for guaranteed valid JSON output. No API keys needed.
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from pathlib import Path
-
     from dbsprout.schema.models import DatabaseSchema
     from dbsprout.spec.models import DataSpec
 
@@ -42,6 +41,7 @@ class EmbeddedProvider:
         cache_dir: Path | str = ".dbsprout/cache",
         model_repo: str = _DEFAULT_MODEL_REPO,
         model_file: str = _DEFAULT_MODEL_FILE,
+        lora_path: Path | str | None = None,
     ) -> None:
         from dbsprout.spec.cache import SpecCache  # noqa: PLC0415
 
@@ -49,6 +49,29 @@ class EmbeddedProvider:
         self._model_repo = model_repo
         self._model_file = model_file
         self._llm: Any = None
+        # S-067 LoRA hot-swap: when a ``lora_path`` is in use the ``Llama``
+        # handle is owned by a ``ModelLoader`` (LRU cache + restart-free swap).
+        # When ``lora_path`` is ``None`` the loader is never created and the
+        # original S-025 direct-``Llama`` path is preserved unchanged.
+        self._lora_path: Path | None = Path(lora_path) if lora_path is not None else None
+        self._loader: Any = None
+
+    @property
+    def lora_path(self) -> Path | None:
+        """The active LoRA adapter path, or ``None`` for the base model."""
+        return self._lora_path
+
+    def set_lora(self, lora_path: Path | str | None) -> None:
+        """Hot-swap the LoRA adapter used for subsequent inference.
+
+        Sets the adapter and drops the cached ``Llama`` handle so the next
+        :meth:`_run_inference` reloads via the :class:`ModelLoader` (which
+        unloads the previous handle before constructing the new one — no
+        process restart). Passing ``None`` reverts to the base model.
+        """
+        self._lora_path = Path(lora_path) if lora_path is not None else None
+        # Force the next _ensure_llm() to (re)load through the loader.
+        self._llm = None
 
     def generate_spec(self, schema: DatabaseSchema) -> DataSpec:
         """Generate a DataSpec from a database schema.
@@ -113,12 +136,22 @@ class EmbeddedProvider:
         content: str = response["choices"][0]["message"]["content"]
         return content
 
-    def _ensure_llm(self) -> Any:  # pragma: no cover
-        """Lazy-load the LLM model. Requires llama-cpp-python."""
+    def _ensure_llm(self) -> Any:
+        """Lazy-load the LLM model. Requires llama-cpp-python.
+
+        When a LoRA adapter is active (S-067) the ``Llama`` handle is loaded
+        and cached by a :class:`~dbsprout.train.loader.ModelLoader`, enabling
+        restart-free hot-swap between adapters. Without an adapter the original
+        S-025 direct-``Llama`` construction path is used unchanged.
+        """
         if self._llm is not None:
             return self._llm
 
         model_path = self._download_model()
+
+        if self._lora_path is not None:
+            self._llm = self._load_via_loader(model_path)
+            return self._llm
 
         try:
             from llama_cpp import Llama  # noqa: PLC0415
@@ -130,12 +163,21 @@ class EmbeddedProvider:
             raise ImportError(msg) from None
 
         logger.info("Loading model from %s", model_path)
-        self._llm = Llama(
+        self._llm = Llama(  # pragma: no cover - real model load, never in CI
             model_path=str(model_path),
             n_ctx=_DEFAULT_N_CTX,
             verbose=False,
         )
         return self._llm
+
+    def _load_via_loader(self, model_path: Path) -> Any:
+        """Load (or hot-swap) the model+adapter through the ModelLoader."""
+        from dbsprout.train.loader import ModelLoader  # noqa: PLC0415
+
+        if self._loader is None:
+            self._loader = ModelLoader()
+        self._loader.load(model_path, lora_path=self._lora_path)
+        return self._loader.get_handle(model_path, self._lora_path)
 
     def _download_model(self) -> Path:  # pragma: no cover
         """Download the model from Hugging Face if not cached."""

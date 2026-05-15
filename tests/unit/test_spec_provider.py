@@ -196,3 +196,65 @@ class TestEnsureLlm:
             else:
                 sys.modules.pop("llama_cpp", None)
             provider.close()
+
+
+class TestLoRAHotSwap:
+    """S-067: additive LoRA hot-swap support on the embedded provider."""
+
+    def test_default_lora_path_none_behaviour_unchanged(self, tmp_path: Path) -> None:
+        """No lora_path -> identical S-025 behaviour, no ModelLoader created."""
+        provider = EmbeddedProvider(cache_dir=tmp_path / "cache")
+        assert provider.lora_path is None
+        assert provider._loader is None
+        provider.close()
+
+    def test_ctor_accepts_lora_path(self, tmp_path: Path) -> None:
+        adapter = tmp_path / "myschema.gguf"
+        adapter.write_bytes(b"\x00")
+        provider = EmbeddedProvider(cache_dir=tmp_path / "cache", lora_path=adapter)
+        assert provider.lora_path == adapter
+        provider.close()
+
+    def test_set_lora_swaps_via_loader(self, tmp_path: Path) -> None:
+        """set_lora() routes the next inference load through ModelLoader."""
+        from unittest.mock import MagicMock, patch  # noqa: PLC0415
+
+        adapter = tmp_path / "myschema.gguf"
+        adapter.write_bytes(b"\x00")
+        provider = EmbeddedProvider(cache_dir=tmp_path / "cache")
+        provider._download_model = MagicMock(  # type: ignore[assignment]
+            return_value=tmp_path / "base.gguf"
+        )
+
+        with patch("dbsprout.train.loader.ModelLoader") as loader_cls:
+            handle = MagicMock(name="LlamaHandle")
+            loader_cls.return_value.load.return_value = MagicMock()
+            loader_cls.return_value.get_handle.return_value = handle
+
+            provider.set_lora(adapter)
+            assert provider.lora_path == adapter
+            llm = provider._ensure_llm()
+
+            loader_cls.return_value.load.assert_called_once()
+            _, kwargs = loader_cls.return_value.load.call_args
+            assert kwargs["lora_path"] == adapter
+            assert llm is handle
+        provider.close()
+
+    def test_set_lora_none_clears_adapter(self, tmp_path: Path) -> None:
+        adapter = tmp_path / "myschema.gguf"
+        adapter.write_bytes(b"\x00")
+        provider = EmbeddedProvider(cache_dir=tmp_path / "cache", lora_path=adapter)
+        provider.set_lora(None)
+        assert provider.lora_path is None
+        provider.close()
+
+    def test_set_lora_resets_cached_llm(self, tmp_path: Path) -> None:
+        """Swapping adapters drops the previously cached handle (hot-swap)."""
+        from unittest.mock import MagicMock  # noqa: PLC0415
+
+        provider = EmbeddedProvider(cache_dir=tmp_path / "cache")
+        provider._llm = MagicMock(name="stale")
+        provider.set_lora(tmp_path / "new.gguf")
+        assert provider._llm is None
+        provider.close()

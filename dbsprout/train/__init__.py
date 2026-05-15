@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dbsprout.train.config import LoRAAdapter, TrainConfig
 from dbsprout.train.exporter import Exporter, ExportResult
+from dbsprout.train.loader import LoadedModel, ModelLoader
 from dbsprout.train.mlx_trainer import MLXTrainer, select_trainer
 from dbsprout.train.models import (
     ClosureReport,
@@ -25,7 +26,9 @@ __all__ = [
     "Exporter",
     "ExtractorConfig",
     "LoRAAdapter",
+    "LoadedModel",
     "MLXTrainer",
+    "ModelLoader",
     "NullPolicy",
     "QLoRATrainer",
     "SampleAllocation",
