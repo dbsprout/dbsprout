@@ -80,6 +80,9 @@ prisma = "dbsprout.migrate.parsers.prisma:PrismaMigrationParser"
 [project.entry-points."dbsprout.train_extractors"]
 live_db = "dbsprout.train.extractor:SampleExtractor"
 
+[project.entry-points."dbsprout.train_serializers"]
+great = "dbsprout.train.serializer:DataPreparer"
+
 [project.optional-dependencies]
 dev = [
     "pytest>=8.0",
