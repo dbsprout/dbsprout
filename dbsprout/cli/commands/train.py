@@ -9,7 +9,196 @@ import typer
 from dbsprout.cli.console import console
 from dbsprout.config import load_config
 
-train_app = typer.Typer(name="train", help="Training pipeline subcommands.", no_args_is_help=True)
+# NOTE: no_args_is_help is intentionally NOT set — the `pipeline` callback below
+# uses invoke_without_command=True and renders help itself for the bare
+# `dbsprout train` case (the two options are mutually exclusive in Typer).
+train_app = typer.Typer(name="train", help="Training pipeline subcommands.")
+
+
+def _privacy_gate(stage: str) -> None:
+    """Refuse to run *stage* unless the privacy tier is ``local``.
+
+    Training on real database rows must stay on the local machine. Mirrors the
+    gate in ``extract``/``serialize``/``run`` so the end-to-end pipeline is
+    held to the same bar. Exits with code 2 (config error) on a violation.
+    """
+    config = load_config()
+    if config.privacy.tier != "local":
+        console.print(
+            f"[red]Error:[/red] train {stage} requires privacy tier 'local' "
+            f"(current: {config.privacy.tier}). "
+            f'Set [privacy] tier = "local" in dbsprout.toml.',
+            style="bold",
+        )
+        raise typer.Exit(code=2)
+
+
+@train_app.callback(invoke_without_command=True)
+def pipeline(  # noqa: PLR0913 - CLI flags are inherently positional/named
+    ctx: typer.Context,
+    db: str | None = typer.Option(
+        None, "--db", envvar="DBSPROUT_TARGET_DB", help="Live database URL to sample from."
+    ),
+    sample_rows: int = typer.Option(1000, "--sample-rows", min=1),
+    epochs: int | None = typer.Option(None, "--epochs", min=1),
+    output: Path = typer.Option(
+        Path(".dbsprout"),
+        "--output",
+        "-o",
+        help="Base directory for training artifacts (samples, corpus, adapter, GGUF).",
+    ),
+    seed: int = typer.Option(0, "--seed"),
+    quiet: bool = typer.Option(False, "--quiet"),
+) -> None:
+    """Run the full fine-tuning pipeline: extract -> serialize -> train -> export.
+
+    Auto-detects the backend (CUDA -> Unsloth, Apple Silicon -> MLX) and writes
+    a quantized GGUF model ready for the embedded provider. Sub-commands
+    (``extract``/``serialize``/``run``) still work for running a single stage.
+    """
+    # A subcommand was given (e.g. `dbsprout train extract`): defer to it.
+    if ctx.invoked_subcommand is not None:
+        return
+    # Bare `dbsprout train` with no --db: fall through to Typer's help.
+    if db is None:
+        console.print(ctx.get_help())
+        return
+
+    _privacy_gate("pipeline")
+    _run_pipeline(
+        db=db,
+        sample_rows=sample_rows,
+        epochs=epochs,
+        output=output,
+        seed=seed,
+        quiet=quiet,
+    )
+
+
+def _run_pipeline(  # noqa: PLR0913 - one knob per pipeline stage
+    *,
+    db: str,
+    sample_rows: int,
+    epochs: int | None,
+    output: Path,
+    seed: int,
+    quiet: bool,
+) -> None:
+    """Glue the four pipeline stages together. All heavy deps lazy-imported."""
+    # Lazy import: keeps polars/torch/unsloth/mlx off the <500 ms startup path.
+    from dbsprout.cli._utils import scrub_secrets  # noqa: PLC0415
+    from dbsprout.train.exporter import Exporter  # noqa: PLC0415
+    from dbsprout.train.extractor import SampleExtractor  # noqa: PLC0415
+    from dbsprout.train.mlx_trainer import select_trainer  # noqa: PLC0415
+    from dbsprout.train.models import ExtractorConfig, NullPolicy  # noqa: PLC0415
+    from dbsprout.train.serializer import DataPreparer  # noqa: PLC0415
+
+    config = load_config()
+    train_overrides = {k: v for k, v in {"epochs": epochs}.items() if v is not None}
+    train_config = config.train.model_copy(update=train_overrides)
+
+    sample_dir = output / "training"
+    corpus_path = sample_dir / "data.jsonl"
+    adapter_dir = output / "models" / "adapters"
+    gguf_dir = output / "models" / "custom"
+
+    # Stage 1: extract a stratified sample from the live database.
+    console.print("[bold blue]\\[1/4][/bold blue] Extracting sample from database...")
+    try:
+        extract_result = SampleExtractor().extract(
+            source=db,
+            config=ExtractorConfig(
+                sample_rows=sample_rows, output_dir=sample_dir, seed=seed, quiet=quiet
+            ),
+        )
+    except Exception as exc:
+        console.print(f"[red]Error:[/red] {scrub_secrets(str(exc), db)}")
+        raise typer.Exit(code=1) from exc
+    samples = sum(t.sampled + t.fk_closure_added for t in extract_result.tables)
+
+    # Stage 2: serialize Parquet samples into GReaT-style JSONL.
+    console.print("[bold blue]\\[2/4][/bold blue] Serializing rows to JSONL corpus...")
+    try:
+        serialize_result = DataPreparer().prepare(
+            input_dir=sample_dir,
+            output_path=corpus_path,
+            seed=seed,
+            null_policy=NullPolicy.SKIP,
+            quiet=quiet,
+        )
+    except (FileNotFoundError, ValueError) as exc:
+        console.print(f"[red]Error:[/red] {exc}")
+        raise typer.Exit(code=1) from exc
+
+    # Stage 3: fine-tune a LoRA adapter (CUDA or MLX, auto-detected).
+    console.print("[bold blue]\\[3/4][/bold blue] Fine-tuning LoRA adapter...")
+    try:
+        trainer = select_trainer()
+    except RuntimeError as exc:
+        console.print(f"[red]Error:[/red] {exc}")
+        raise typer.Exit(code=1) from exc
+    try:
+        adapter = trainer.train(  # type: ignore[attr-defined]
+            corpus_path=serialize_result.output_path,
+            config=train_config,
+            output_dir=adapter_dir,
+            quiet=quiet,
+        )
+    except (RuntimeError, FileNotFoundError, ValueError) as exc:
+        console.print(f"[red]Error:[/red] {exc}")
+        raise typer.Exit(code=1) from exc
+
+    # Stage 4: merge + quantize to a GGUF model.
+    console.print("[bold blue]\\[4/4][/bold blue] Exporting GGUF model...")
+    try:
+        export_result = Exporter().to_gguf_result(
+            adapter,
+            Path(train_config.base_model),
+            output_dir=gguf_dir,
+            quiet=quiet,
+        )
+    except (RuntimeError, FileNotFoundError, ValueError) as exc:
+        console.print(f"[red]Error:[/red] {exc}")
+        raise typer.Exit(code=1) from exc
+
+    _print_summary(
+        samples=samples,
+        serialize_result=serialize_result,
+        adapter=adapter,
+        export_result=export_result,
+    )
+
+
+def _human_size(num: int) -> str:
+    """Format a byte count as a human-readable size (binary units)."""
+    size = float(num)
+    for unit in ("B", "KB", "MB", "GB", "TB"):
+        if size < 1024.0 or unit == "TB":
+            return f"{int(size)} B" if unit == "B" else f"{size:.1f} {unit}"
+        size /= 1024.0
+    raise AssertionError  # pragma: no cover - loop always returns at TB
+
+
+def _print_summary(
+    *,
+    samples: int,
+    serialize_result: object,
+    adapter: object,
+    export_result: object,
+) -> None:
+    """Print the final one-shot pipeline summary (always shown, even quiet)."""
+    rows = getattr(serialize_result, "total_rows", samples)
+    duration = getattr(adapter, "duration_seconds", 0.0)
+    gguf_path = getattr(export_result, "gguf_path", "")
+    size_bytes = getattr(export_result, "size_bytes", 0)
+    console.print(
+        f"[green bold]Pipeline complete.[/green bold]\n"
+        f"  Samples extracted : {samples} ({rows} serialized rows)\n"
+        f"  Training time     : {duration:.1f} s\n"
+        f"  Adapter           : [cyan]{getattr(adapter, 'adapter_path', '')}[/cyan]\n"
+        f"  GGUF model        : [cyan]{gguf_path}[/cyan] "
+        f"({_human_size(size_bytes)})"
+    )
 
 
 @train_app.command("extract")
