@@ -37,3 +37,43 @@ jobs:
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: "3.12"
+
+      - name: Cache llama.cpp toolchain
+        id: llama-cache
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ${{ runner.temp }}/llama-cpp
+          key: llama-cpp-${{ env.LLAMA_CPP_TAG }}-ubuntu-x64
+
+      - name: Provision llama.cpp toolchain (cache miss)
+        if: steps.llama-cache.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          tag="${LLAMA_CPP_TAG}"
+          dest="${RUNNER_TEMP}/llama-cpp"
+          mkdir -p "${dest}/bin" "${dest}/src"
+          bin_url="https://github.com/ggml-org/llama.cpp/releases/download/${tag}/llama-${tag}-bin-ubuntu-x64.tar.gz"
+          src_url="https://github.com/ggml-org/llama.cpp/archive/refs/tags/${tag}.tar.gz"
+          echo "Downloading prebuilt binary: ${bin_url}"
+          curl --fail --location --silent --show-error "${bin_url}" -o "${RUNNER_TEMP}/llama-bin.tar.gz"
+          tar -xzf "${RUNNER_TEMP}/llama-bin.tar.gz" -C "${dest}/bin" --strip-components=1
+          echo "Downloading matching source tarball: ${src_url}"
+          curl --fail --location --silent --show-error "${src_url}" -o "${RUNNER_TEMP}/llama-src.tar.gz"
+          tar -xzf "${RUNNER_TEMP}/llama-src.tar.gz" -C "${dest}/src" --strip-components=1
+          echo "Binary tree:"; find "${dest}/bin" -maxdepth 2 -name 'llama-quantize' -print
+          echo "Converter:"; find "${dest}/src" -maxdepth 2 -name 'convert_hf_to_gguf.py' -print
+
+      - name: Resolve toolchain paths
+        run: |
+          set -euo pipefail
+          dest="${RUNNER_TEMP}/llama-cpp"
+          quant="$(find "${dest}/bin" -maxdepth 3 -type f -name 'llama-quantize' | head -n1)"
+          conv="$(find "${dest}/src" -maxdepth 3 -type f -name 'convert_hf_to_gguf.py' | head -n1)"
+          test -x "${quant}" || { echo "llama-quantize not found/executable" >&2; exit 1; }
+          test -f "${conv}" || { echo "convert_hf_to_gguf.py not found" >&2; exit 1; }
+          quant_dir="$(dirname "${quant}")"
+          chmod +x "${quant}"
+          echo "DBSPROUT_LLAMA_QUANTIZE=${quant}" >> "${GITHUB_ENV}"
+          echo "DBSPROUT_LLAMA_CONVERT=${conv}" >> "${GITHUB_ENV}"
+          echo "${quant_dir}" >> "${GITHUB_PATH}"
+          echo "LD_LIBRARY_PATH=${quant_dir}:${LD_LIBRARY_PATH:-}" >> "${GITHUB_ENV}"
