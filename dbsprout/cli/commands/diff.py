@@ -1,4 +1,10 @@
-"""``dbsprout diff`` command — report schema changes since the last snapshot."""
+"""``dbsprout diff`` command — report schema changes since the last snapshot.
+
+Trust boundary: ``--output-dir`` (default ``.``) is read for ``dbsprout.toml``
+and ``.dbsprout/snapshots/``. Treat it as trusted input — run from a directory
+you control. ``--file`` rejects symlinks and resolves paths strictly;
+``--snapshot`` accepts only lowercase hex prefixes.
+"""
 
 from __future__ import annotations
 
@@ -188,28 +194,36 @@ def _change_prefix(ct: SchemaChangeType) -> str:
 
 
 def _format_change_line(c: SchemaChange) -> str:
-    """Format a single change into a human-readable line."""
+    """Format a single change into a human-readable line.
+
+    Dynamic values (table/column names, old/new values) are markup-escaped
+    so a hostile schema name like ``[blink]evil[blink]`` renders as literal
+    text rather than styled output (S-054a AC-7). The ``[green]+[/green]``
+    prefix markup is added by the caller, not here, so it stays intact.
+    """
+    from rich.markup import escape  # noqa: PLC0415
+
     from dbsprout.migrate.models import SchemaChangeType  # noqa: PLC0415
 
     ct = c.change_type
-    col_ref = f"{c.table_name}.{c.column_name}"
+    table = escape(str(c.table_name)) if c.table_name is not None else c.table_name
+    column = escape(str(c.column_name)) if c.column_name is not None else c.column_name
+    old_v = escape(str(c.old_value)) if c.old_value is not None else c.old_value
+    new_v = escape(str(c.new_value)) if c.new_value is not None else c.new_value
+    col_ref = f"{table}.{column}"
     formatters: dict[SchemaChangeType, str] = {
-        SchemaChangeType.ENUM_CHANGED: f"enum: {c.column_name or '<unknown>'}",
+        SchemaChangeType.ENUM_CHANGED: f"enum: {column or '<unknown>'}",
         SchemaChangeType.COLUMN_ADDED: col_ref,
         SchemaChangeType.COLUMN_REMOVED: col_ref,
-        SchemaChangeType.COLUMN_TYPE_CHANGED: f"{col_ref}: {c.old_value} → {c.new_value}",
-        SchemaChangeType.COLUMN_NULLABILITY_CHANGED: (
-            f"{col_ref}: nullable {c.old_value} → {c.new_value}"
-        ),
-        SchemaChangeType.COLUMN_DEFAULT_CHANGED: (
-            f"{col_ref}: default {c.old_value!r} → {c.new_value!r}"
-        ),
-        SchemaChangeType.FOREIGN_KEY_ADDED: f"{c.table_name} foreign key",
-        SchemaChangeType.FOREIGN_KEY_REMOVED: f"{c.table_name} foreign key",
-        SchemaChangeType.INDEX_ADDED: f"{c.table_name} index",
-        SchemaChangeType.INDEX_REMOVED: f"{c.table_name} index",
-        SchemaChangeType.TABLE_ADDED: c.table_name,
-        SchemaChangeType.TABLE_REMOVED: c.table_name,
+        SchemaChangeType.COLUMN_TYPE_CHANGED: f"{col_ref}: {old_v} → {new_v}",
+        SchemaChangeType.COLUMN_NULLABILITY_CHANGED: (f"{col_ref}: nullable {old_v} → {new_v}"),
+        SchemaChangeType.COLUMN_DEFAULT_CHANGED: (f"{col_ref}: default {old_v!r} → {new_v!r}"),
+        SchemaChangeType.FOREIGN_KEY_ADDED: f"{table} foreign key",
+        SchemaChangeType.FOREIGN_KEY_REMOVED: f"{table} foreign key",
+        SchemaChangeType.INDEX_ADDED: f"{table} index",
+        SchemaChangeType.INDEX_REMOVED: f"{table} index",
+        SchemaChangeType.TABLE_ADDED: table,
+        SchemaChangeType.TABLE_REMOVED: table,
     }
     return formatters.get(ct, str(ct.value))
 
@@ -223,7 +237,9 @@ def _load_old_schema(output_dir: Path, snapshot: str | None) -> DatabaseSchema:
     if snapshot is not None:
         old_schema = store.load_by_hash(snapshot)
         if old_schema is None:
-            console.print(f"[red]Error:[/red] Snapshot not found: {snapshot}")
+            from rich.markup import escape  # noqa: PLC0415
+
+            console.print(f"[red]Error:[/red] Snapshot not found: {escape(snapshot)}")
             raise typer.Exit(code=2)
         return old_schema
 
@@ -287,17 +303,38 @@ def _load_new_schema(
             raise typer.Exit(code=2) from None
         return new_schema, safe_new_source
 
-    # File source: parse the schema file and echo the path unmodified.
+    # File source: parse with symlink/traversal guards (see _parse_schema_file).
+    new_schema = _parse_schema_file(source_value)
+    return new_schema, source_value
+
+
+def _parse_schema_file(file_path: str) -> DatabaseSchema:
+    """Parse a schema file with symlink/traversal guards (S-054a).
+
+    Order matters: reject symlinks BEFORE ``resolve()`` (resolve follows
+    symlinks); ``resolve(strict=True)`` raises ``FileNotFoundError`` for
+    missing paths so the existing "File not found" exit-2 is preserved;
+    parser failures are sanitized so partial file text never leaks.
+    """
     from pathlib import Path  # noqa: PLC0415
 
+    from dbsprout.cli.console import console  # noqa: PLC0415
     from dbsprout.schema.parsers import parse_schema_file  # noqa: PLC0415
 
+    raw_path = Path(file_path)
+    if raw_path.is_symlink():
+        console.print(f"[red]Error:[/red] Refusing to read symlink: {file_path}")
+        raise typer.Exit(code=2)
     try:
-        new_schema = parse_schema_file(Path(source_value))
-    except (FileNotFoundError, ValueError, OSError) as exc:
-        console.print(f"[red]Error:[/red] {exc}")
+        resolved = raw_path.resolve(strict=True)
+    except (FileNotFoundError, OSError):
+        console.print(f"[red]Error:[/red] File not found: {file_path}")
         raise typer.Exit(code=2) from None
-    return new_schema, source_value
+    try:
+        return parse_schema_file(resolved)
+    except (ValueError, OSError) as exc:
+        console.print(f"[red]Error:[/red] {exc.__class__.__name__}: failed to parse {file_path}")
+        raise typer.Exit(code=2) from None
 
 
 def diff_command(

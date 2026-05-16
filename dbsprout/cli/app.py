@@ -12,6 +12,19 @@ from dbsprout.cli.commands.models import models_app
 from dbsprout.cli.commands.plugins import plugins_app
 from dbsprout.cli.commands.train import train_app
 
+
+def _validate_snapshot_hash(value: str | None) -> str | None:
+    """Typer callback: reject non-hex ``--snapshot`` prefixes (S-054a AC-4)."""
+    if value is None:
+        return None
+    import re  # noqa: PLC0415
+
+    if re.fullmatch(r"[0-9a-f]{1,64}", value) is None:
+        msg = "must be a lowercase hex prefix (1-64 chars of 0-9a-f)"
+        raise typer.BadParameter(msg)
+    return value
+
+
 app = typer.Typer(
     name="dbsprout",
     help="Generate realistic seed data from your database schema.",
@@ -170,11 +183,20 @@ def diff_proxy(
         None, "--file", "-f", help="Schema file (SQL/DBML/Mermaid/PlantUML/Prisma)."
     ),
     snapshot: str | None = typer.Option(
-        None, "--snapshot", help="Base snapshot hash prefix (default: latest)."
+        None,
+        "--snapshot",
+        help="Base snapshot hash prefix (default: latest).",
+        callback=_validate_snapshot_hash,
     ),
     output_format: str = typer.Option("rich", "--format", help="Output format: rich, json."),
     output_dir: str = typer.Option(
-        ".", "--output-dir", "-o", help="Project root containing .dbsprout/."
+        ".",
+        "--output-dir",
+        "-o",
+        help=(
+            "Project root containing .dbsprout/. Config and snapshots are read "
+            "from this directory — run from a trusted location."
+        ),
     ),
 ) -> None:
     """Report schema changes since the last snapshot."""

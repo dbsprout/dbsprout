@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -292,6 +293,26 @@ class TestSnapshotStoreLoadByHash:
         info = store.save(minimal_schema)
         loaded = store.load_by_hash(info.schema_hash[:4])
         assert loaded is not None
+
+    def test_load_by_hash_skips_symlink(
+        self,
+        tmp_path: Path,
+        minimal_schema: DatabaseSchema,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """_find_by_hash_prefix must skip symlinked snapshot files (AC-5)."""
+        store = SnapshotStore(base_dir=tmp_path)
+        info = store.save(minimal_schema)
+        prefix = info.schema_hash[:8]
+        real = info.path
+        # Move the real file aside, replace with a symlink at the same name.
+        moved = tmp_path / "real_target.json"
+        os.replace(real, moved)
+        real.symlink_to(moved)
+        with caplog.at_level(logging.WARNING):
+            result = store.load_by_hash(prefix)
+        assert result is None
+        assert any("symlink" in r.message.lower() for r in caplog.records)
 
 
 # ── SnapshotStore.resolve() tests (AC-7) ────────────────────────────────

@@ -167,6 +167,9 @@ class SnapshotStore:
         if not self._base_dir.exists():
             return None
         for p in self._base_dir.glob("*.json"):
+            if p.is_symlink():
+                logger.warning("Skipping symlink in snapshot directory: %s", p.name)
+                continue
             stem = p.stem  # e.g. "20260408T120000Z_a1b2c3d4"
             parts = stem.rsplit("_", 1)
             if len(parts) == 2 and parts[1].startswith(prefix):

@@ -65,6 +65,12 @@ class TestDiffHelp:
         assert "--output-dir" in output
         assert "Report schema changes" in output
 
+    def test_output_dir_help_documents_trust_boundary(self) -> None:
+        """AC-9: --output-dir help warns the directory is a trust boundary."""
+        result = runner.invoke(app, ["diff", "--help"])
+        out = _strip_ansi(result.output)
+        assert "trusted location" in out.lower()
+
 
 class TestDiffArgValidation:
     def test_db_and_file_both_provided_exits_2(self) -> None:
@@ -1712,3 +1718,206 @@ class TestDiffSchemaChangeTypeGrouping:
             f"SchemaChangeType variants not grouped in _render_rich_changes: {missing}. "
             "Update dbsprout/cli/commands/diff.py::_render_rich_changes to group these."
         )
+
+
+# ── S-054a security hardening (cohesive block; sibling S-054b layers on top) ──
+
+
+class TestDiffHashValidation:
+    """S-054a AC-4/AC-6: --snapshot hex validation + escaped not-found message."""
+
+    def test_non_hex_snapshot_rejected_by_callback(self, tmp_path: Path) -> None:
+        """A non-hex --snapshot prefix is rejected by the Typer callback
+        (usage error), not the generic 'not found' fallback."""
+        result = runner.invoke(
+            app,
+            [
+                "diff",
+                "--db",
+                "sqlite:///x.db",
+                "--snapshot",
+                "zz//../etc",
+                "--output-dir",
+                str(tmp_path),
+            ],
+        )
+        assert result.exit_code == 2
+        out = _strip_ansi(result.output)
+        assert "Invalid value for '--snapshot'" in out
+        assert "hex" in out.lower()
+        # It must be rejected BEFORE the not-found fallback runs.
+        assert "snapshot not found" not in out.lower()
+
+    def test_uppercase_hex_snapshot_rejected_by_callback(self, tmp_path: Path) -> None:
+        """Uppercase hex is rejected by the callback (filenames use lowercase)."""
+        result = runner.invoke(
+            app,
+            [
+                "diff",
+                "--db",
+                "sqlite:///x.db",
+                "--snapshot",
+                "DEADBEEF",
+                "--output-dir",
+                str(tmp_path),
+            ],
+        )
+        assert result.exit_code == 2
+        out = _strip_ansi(result.output)
+        assert "Invalid value for '--snapshot'" in out
+
+    def test_valid_lowercase_hex_snapshot_passes_callback(self, tmp_path: Path) -> None:
+        """A valid lowercase-hex prefix passes the callback (no BadParameter)."""
+        result = runner.invoke(
+            app,
+            [
+                "diff",
+                "--db",
+                "sqlite:///x.db",
+                "--snapshot",
+                "deadbeef",
+                "--output-dir",
+                str(tmp_path),
+            ],
+        )
+        assert "Invalid value for '--snapshot'" not in _strip_ansi(result.output)
+
+    @patch("dbsprout.migrate.snapshot.SnapshotStore")
+    def test_snapshot_not_found_message_is_markup_escaped(
+        self, mock_store_cls: MagicMock, tmp_path: Path
+    ) -> None:
+        """AC-6: the echoed hash is markup-escaped (no-op for hex, but the
+        escape() call is exercised and the literal hash is shown)."""
+        mock_store = MagicMock()
+        mock_store.load_by_hash.return_value = None
+        mock_store_cls.return_value = mock_store
+        result = runner.invoke(
+            app,
+            [
+                "diff",
+                "--db",
+                "sqlite:///x.db",
+                "--snapshot",
+                "abcdef12",
+                "--output-dir",
+                str(tmp_path),
+            ],
+        )
+        assert result.exit_code == 2
+        out = _strip_ansi(result.output)
+        assert "snapshot not found" in out.lower()
+        assert "abcdef12" in out
+
+
+class TestDiffPathValidation:
+    """S-054a AC-1/AC-2/AC-3: --file symlink/traversal/sanitize guards."""
+
+    @patch("dbsprout.migrate.snapshot.SnapshotStore")
+    def test_symlink_file_rejected_exit_2(self, mock_store_cls: MagicMock, tmp_path: Path) -> None:
+        """AC-1: a symlinked --file is refused before being read."""
+        mock_store = MagicMock()
+        mock_store.load_latest.return_value = _simple_schema_for_diff()
+        mock_store_cls.return_value = mock_store
+        target = tmp_path / "real.sql"
+        target.write_text("CREATE TABLE t (id INTEGER PRIMARY KEY);")
+        link = tmp_path / "link.sql"
+        link.symlink_to(target)
+        result = runner.invoke(app, ["diff", "--file", str(link), "--output-dir", str(tmp_path)])
+        assert result.exit_code == 2
+        out = _strip_ansi(result.output)
+        assert "refusing to read symlink" in out.lower()
+        assert str(link) in out
+
+    @patch("dbsprout.migrate.snapshot.SnapshotStore")
+    def test_missing_file_still_says_file_not_found(
+        self, mock_store_cls: MagicMock, tmp_path: Path
+    ) -> None:
+        """AC-2: non-existent --file still exits 2 with the existing message."""
+        mock_store = MagicMock()
+        mock_store.load_latest.return_value = _simple_schema_for_diff()
+        mock_store_cls.return_value = mock_store
+        missing = tmp_path / "nope.sql"
+        result = runner.invoke(app, ["diff", "--file", str(missing), "--output-dir", str(tmp_path)])
+        assert result.exit_code == 2
+        out = _strip_ansi(result.output)
+        assert "file not found" in out.lower()
+        assert str(missing) in out
+
+    @patch("dbsprout.migrate.snapshot.SnapshotStore")
+    def test_parse_error_does_not_echo_file_contents(
+        self, mock_store_cls: MagicMock, tmp_path: Path
+    ) -> None:
+        """AC-3: parser errors are sanitized — no file text leaked.
+
+        Uses a ``.sql`` file because the SQL DDL parser echoes the offending
+        source line in its raw exception message — the real leak vector AC-3
+        closes (other parsers truncate, so they would not exercise this).
+        """
+        mock_store = MagicMock()
+        mock_store.load_latest.return_value = _simple_schema_for_diff()
+        mock_store_cls.return_value = mock_store
+        leak_marker = "PAYLOAD_TOKEN_LEAK_MARKER"
+        bad = tmp_path / "broken.sql"
+        bad.write_text(f"CREATE TABLE {leak_marker} ((( @@@ not valid sql")
+        result = runner.invoke(app, ["diff", "--file", str(bad), "--output-dir", str(tmp_path)])
+        assert result.exit_code == 2
+        out = _strip_ansi(result.output)
+        assert leak_marker not in out
+        assert "failed to parse" in out.lower()
+
+
+class TestDiffMarkupEscape:
+    """S-054a AC-7/AC-8: schema names with Rich markup render as literal text."""
+
+    @patch("dbsprout.cli.commands.diff._load_new_schema")
+    @patch("dbsprout.migrate.snapshot.SnapshotStore")
+    def test_table_named_with_markup_renders_literally(
+        self,
+        mock_store_cls: MagicMock,
+        mock_load_new: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        """A table named with Rich markup must appear as literal bracketed text.
+
+        The identifier validator forbids ``/`` (so a closing ``[/red]`` tag is
+        impossible in a table name), but a slash-free opening tag like
+        ``[blink]evil[blink]`` is a valid identifier AND is still consumed by
+        Rich's markup parser unless escaped — the exact AC-7 injection vector.
+        """
+        old = _simple_schema_for_diff()
+        evil_name = "[blink]evil[blink]"
+        new = DatabaseSchema(
+            tables=[
+                TableSchema(
+                    name="users",
+                    columns=[ColumnSchema(name="id", data_type=ColumnType.INTEGER, nullable=False)],
+                    primary_key=["id"],
+                ),
+                TableSchema(
+                    name=evil_name,
+                    columns=[ColumnSchema(name="x", data_type=ColumnType.INTEGER, nullable=True)],
+                    primary_key=["x"],
+                ),
+            ],
+            dialect="sqlite",
+        )
+        mock_store = MagicMock()
+        mock_store.load_latest.return_value = old
+        mock_store_cls.return_value = mock_store
+        mock_load_new.return_value = (new, "schema.sql")
+
+        result = runner.invoke(
+            app,
+            [
+                "diff",
+                "--file",
+                "schema.sql",
+                "--format",
+                "rich",
+                "--output-dir",
+                str(tmp_path),
+            ],
+        )
+        # drift detected → exit 1; the literal bracketed name must be present.
+        assert result.exit_code == 1
+        assert "[blink]evil[blink]" in _strip_ansi(result.output)
