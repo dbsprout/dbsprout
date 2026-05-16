@@ -563,15 +563,21 @@ def test_pipeline_redaction_skipped_when_presidio_missing(tmp_path: _Path) -> No
 
 
 def test_pipeline_dp_sgd_guard_exits_cleanly(tmp_path: _Path) -> None:
+    # S-097: DP-SGD is requested with a valid accounting mode but Opacus is
+    # not installed in the dev/CI env -- the relaxed guard must still exit 1
+    # cleanly with the install hint before the pipeline proceeds to prepare.
     out = tmp_path / ".dbsprout"
     cfg = MagicMock()
     cfg.privacy.tier = "local"
-    cfg.train = TrainConfig(privacy=TrainPrivacyConfig(dp_sgd=True))
+    cfg.train = TrainConfig(privacy=TrainPrivacyConfig(dp_sgd=True, dp_target_epsilon=8.0))
     extractor, preparer, trainer, exporter = _full_pipeline_mocks(out)
     p_cfg, p_comps = _patches(cfg, extractor, preparer, trainer, exporter)
     with p_cfg, p_comps:
         result = runner.invoke(app, ["train", "--db", "sqlite:///x.db", "--output", str(out)])
 
+    # The full install hint (dbsprout[train-dp]) is asserted at the unit level
+    # in test_privacy.py; here Rich wraps the long line so only the stable
+    # leading marker is checked.
     assert result.exit_code == 1
     assert "DP-SGD" in result.stdout
     extractor.extract.assert_called_once()
