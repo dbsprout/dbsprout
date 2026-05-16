@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sys
+import types
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 from unittest.mock import patch
@@ -20,6 +21,7 @@ from dbsprout.train.privacy import (
     TableRedactionStats,
     TrainingRedactor,
     TrainPrivacyConfig,
+    _opacus_installed,
     dp_sgd_guard,
 )
 
@@ -85,9 +87,25 @@ def test_dp_sgd_guard_noop_when_disabled() -> None:
     dp_sgd_guard(TrainPrivacyConfig(dp_sgd=False))  # must not raise
 
 
-def test_dp_sgd_guard_raises_when_requested() -> None:
-    with pytest.raises(RuntimeError, match="DP-SGD"):
-        dp_sgd_guard(TrainPrivacyConfig(dp_sgd=True))
+def test_opacus_installed_true(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setitem(sys.modules, "opacus", types.ModuleType("opacus"))
+    assert _opacus_installed() is True
+
+
+def test_opacus_installed_false(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setitem(sys.modules, "opacus", None)  # forces ImportError
+    assert _opacus_installed() is False
+
+
+def test_dp_sgd_guard_raises_when_opacus_missing(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setitem(sys.modules, "opacus", None)
+    with pytest.raises(RuntimeError, match=r"dbsprout\[train-dp\]"):
+        dp_sgd_guard(TrainPrivacyConfig(dp_sgd=True, dp_target_epsilon=8.0))
+
+
+def test_dp_sgd_guard_noop_when_opacus_present(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setitem(sys.modules, "opacus", types.ModuleType("opacus"))
+    dp_sgd_guard(TrainPrivacyConfig(dp_sgd=True, dp_target_epsilon=8.0))  # must not raise
 
 
 # --- S-097: DP hyperparameters + validator ---------------------------------

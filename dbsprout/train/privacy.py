@@ -10,8 +10,9 @@ sensitive data:
 3. **PII redaction (Presidio)** -- this module: detect and mask PII *values*
    in the sampled rows before GReaT serialization. Default on.
 4. **DP-SGD (Opacus)** -- opt-in formal guarantee. This module ships the
-   config knob and a clear not-yet-wired guard (:func:`dp_sgd_guard`); full
-   Opacus integration into the training backend is a follow-up.
+   config knob and the install guard (:func:`dp_sgd_guard`); the optimizer +
+   dataloader are wrapped with Opacus ``PrivacyEngine`` on the CUDA/Unsloth
+   path (S-097); the MLX path raises a clear not-supported error.
 
 ``presidio-analyzer`` / ``presidio-anonymizer`` are optional (the
 ``[privacy]`` extra) and imported lazily inside
@@ -36,10 +37,10 @@ logger = logging.getLogger(__name__)
 
 _DP_SGD_HINT = (
     "DP-SGD (differential privacy) was requested ([train.privacy] dp_sgd = "
-    "true) but is not yet wired into the training backend. Disable it "
-    "([train.privacy] dp_sgd = false) or rely on the other three privacy "
-    "layers (LoRA-only, completion-only loss, PII redaction). Full Opacus "
-    "DP-SGD integration is tracked as a follow-up."
+    "true) but Opacus is not installed. Install it with "
+    "'pip install dbsprout[train-dp]' (adds Opacus, PyTorch/CUDA only), or "
+    "disable DP-SGD ([train.privacy] dp_sgd = false) and rely on the other "
+    "three privacy layers (LoRA-only, completion-only loss, PII redaction)."
 )
 
 
@@ -115,14 +116,32 @@ class RedactionStats(BaseModel):
     presidio_available: bool = True
 
 
-def dp_sgd_guard(config: TrainPrivacyConfig) -> None:
-    """Raise a clear error if DP-SGD is requested but unsupported.
+def _opacus_installed() -> bool:
+    """Return ``True`` iff Opacus can be imported.
 
-    A no-op when ``config.dp_sgd`` is ``False``. Called by the training
-    pipeline before the (non-DP) backend runs so the user gets an actionable
-    message instead of a silently-ignored privacy setting.
+    ``opacus`` is imported lazily; a missing install is treated as "not
+    available" rather than raising, so this helper is safe on any host
+    (mirrors :func:`dbsprout.train.trainer._cuda_available`).
     """
-    if config.dp_sgd:
+    try:
+        import opacus  # noqa: F401, PLC0415
+    except ImportError:
+        return False
+    return True
+
+
+def dp_sgd_guard(config: TrainPrivacyConfig) -> None:
+    """Raise a clear error only if DP-SGD is requested but Opacus is missing.
+
+    A no-op when ``config.dp_sgd`` is ``False``. When DP-SGD is requested and
+    Opacus *is* installed this is also a no-op -- the trainer performs the
+    actual private wrap (S-097). Called by the training pipeline before the
+    backend runs so the user gets an actionable install hint instead of a
+    bare ImportError deep in training.
+    """
+    if not config.dp_sgd:
+        return
+    if not _opacus_installed():
         raise RuntimeError(_DP_SGD_HINT)
 
 
