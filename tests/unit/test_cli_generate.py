@@ -5,7 +5,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import re
-from typing import TYPE_CHECKING
+from pathlib import Path
 
 import pytest
 from typer.testing import CliRunner
@@ -18,12 +18,43 @@ from dbsprout.schema.models import (
     TableSchema,
 )
 
-if TYPE_CHECKING:
-    from pathlib import Path
-
 runner = CliRunner()
 
 _ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
+
+# Repo root = three parents up from this file (tests/unit/<file>).
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+
+# Artifacts the `generate` CLI command leaks into the *current working
+# directory* when a test invokes it without chdir'ing into a tmp dir
+# (S-100 / DBS-120). The CWD-relative snapshot/config behaviour is
+# intentional for real users; tests must isolate CWD instead. This
+# module-scoped autouse guard is a standing tripwire so a future
+# CWD-naive test in THIS module cannot silently re-introduce the leak
+# (the bug was lost twice across /parallel-stories before being fixed).
+_LEAK_ARTIFACTS = (".dbsprout", "test.db")
+
+
+@pytest.fixture(autouse=True)
+def _no_repo_root_pollution() -> object:
+    """Fail any test in this module that leaks generate artifacts to repo root.
+
+    Only artifacts that did not exist before the test are flagged, so a
+    developer's pre-existing local ``.dbsprout/`` is not punished — only
+    newly-created pollution from a CWD-naive invocation.
+    """
+    preexisting = {name for name in _LEAK_ARTIFACTS if (_REPO_ROOT / name).exists()}
+    yield
+    leaked = sorted(
+        name for name in _LEAK_ARTIFACTS if name not in preexisting and (_REPO_ROOT / name).exists()
+    )
+    if leaked:
+        pytest.fail(
+            f"Test leaked generate artifacts into the repo root ({_REPO_ROOT}): "
+            f"{leaked}. The `generate` CLI was invoked without "
+            "`monkeypatch.chdir(tmp_path)` (see S-100 / DBS-120).",
+            pytrace=False,
+        )
 
 
 def _strip_ansi(text: str) -> str:
@@ -94,8 +125,9 @@ class TestGenerateIncrementalFlags:
 
 
 class TestGenerateRequiresSchema:
-    def test_errors_without_schema(self, tmp_path: Path) -> None:
+    def test_errors_without_schema(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """Must error if no schema snapshot exists."""
+        monkeypatch.chdir(tmp_path)
         result = runner.invoke(
             app,
             ["generate", "--output-dir", str(tmp_path / "seeds")],
@@ -104,8 +136,9 @@ class TestGenerateRequiresSchema:
 
 
 class TestGenerateProducesOutput:
-    def test_end_to_end_sql(self, tmp_path: Path) -> None:
+    def test_end_to_end_sql(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """Full generate with SQL output."""
+        monkeypatch.chdir(tmp_path)
         project_dir = _write_schema(tmp_path)
         seeds_dir = project_dir / "seeds"
 
@@ -131,8 +164,9 @@ class TestGenerateProducesOutput:
         assert len(sql_files) == 1
         assert sql_files[0].name == "001_items.sql"
 
-    def test_end_to_end_csv(self, tmp_path: Path) -> None:
+    def test_end_to_end_csv(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """Full generate with CSV output."""
+        monkeypatch.chdir(tmp_path)
         project_dir = _write_schema(tmp_path)
         seeds_dir = project_dir / "seeds"
 
@@ -155,8 +189,9 @@ class TestGenerateProducesOutput:
         csv_files = list(seeds_dir.glob("*.csv"))
         assert len(csv_files) == 1
 
-    def test_end_to_end_json(self, tmp_path: Path) -> None:
+    def test_end_to_end_json(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """Full generate with JSON output."""
+        monkeypatch.chdir(tmp_path)
         project_dir = _write_schema(tmp_path)
         seeds_dir = project_dir / "seeds"
 
@@ -181,8 +216,9 @@ class TestGenerateProducesOutput:
         parsed = json.loads(json_files[0].read_text())
         assert len(parsed) == 3
 
-    def test_end_to_end_jsonl(self, tmp_path: Path) -> None:
+    def test_end_to_end_jsonl(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """Full generate with JSONL output."""
+        monkeypatch.chdir(tmp_path)
         project_dir = _write_schema(tmp_path)
         seeds_dir = project_dir / "seeds"
 
@@ -211,8 +247,9 @@ class TestGenerateProducesOutput:
         importlib.util.find_spec("polars") is None,
         reason="polars not installed (optional [data] extra)",
     )
-    def test_parquet_format(self, tmp_path: Path) -> None:
+    def test_parquet_format(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """--output-format parquet should produce .parquet files."""
+        monkeypatch.chdir(tmp_path)
         project_dir = _write_schema(tmp_path)
         seeds_dir = tmp_path / "seeds"
 
@@ -233,8 +270,9 @@ class TestGenerateProducesOutput:
         parquet_files = list(seeds_dir.glob("*.parquet"))
         assert len(parquet_files) == 1
 
-    def test_invalid_format_errors(self, tmp_path: Path) -> None:
+    def test_invalid_format_errors(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """Invalid output format should exit with error."""
+        monkeypatch.chdir(tmp_path)
         project_dir = _write_schema(tmp_path)
 
         result = runner.invoke(
@@ -254,8 +292,11 @@ class TestGenerateProducesOutput:
 
 
 class TestGenerateDirectFormat:
-    def test_direct_format_requires_db(self, tmp_path: Path) -> None:
+    def test_direct_format_requires_db(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """--output-format direct without --db must error."""
+        monkeypatch.chdir(tmp_path)
         project_dir = _write_schema(tmp_path)
 
         result = runner.invoke(
@@ -286,10 +327,13 @@ class TestGenerateDirectFormat:
         output = _strip_ansi(result.output)
         assert "--db" in output
 
-    def test_direct_sqlite_uses_sa_batch(self, tmp_path: Path) -> None:
+    def test_direct_sqlite_uses_sa_batch(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """--output-format direct with sqlite:// uses SaBatchWriter."""
         from unittest.mock import MagicMock, patch  # noqa: PLC0415
 
+        monkeypatch.chdir(tmp_path)
         project_dir = _write_schema(tmp_path)
 
         mock_writer = MagicMock()
