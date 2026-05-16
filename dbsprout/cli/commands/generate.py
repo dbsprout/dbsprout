@@ -46,6 +46,7 @@ def generate_command(  # noqa: PLR0913
     dialect: str = "postgresql",
     engine: str = "heuristic",
     privacy: str = "local",  # noqa: ARG001
+    reference_data: Path | None = None,
     target_db: str | None = None,
     upsert: bool = False,
     insert_method: str = "auto",
@@ -107,7 +108,15 @@ def generate_command(  # noqa: PLR0913
     config = DBSproutConfig.from_toml(cfg_path if cfg_path.exists() else None)
 
     # Orchestrate
-    result = orchestrate(schema, config, seed=seed, default_rows=rows, engine=engine)
+    ref = _load_reference_for_engine(reference_data, schema, engine)
+    result = orchestrate(
+        schema,
+        config,
+        seed=seed,
+        default_rows=rows,
+        engine=engine,
+        reference_data=ref,
+    )
 
     if result.total_tables == 0:
         console.print("[yellow]No tables to generate.[/yellow]")
@@ -138,6 +147,42 @@ def generate_command(  # noqa: PLR0913
     if not report.passed:
         console.print("[red]Integrity validation FAILED.[/red]")
         raise typer.Exit(code=1)
+
+
+def _load_reference_for_engine(
+    reference_data: Path | None,
+    schema: DatabaseSchema,
+    engine: str,
+) -> dict[str, list[dict[str, object]]] | None:
+    """Load per-table reference rows for the statistical engine.
+
+    Only consulted when ``--engine statistical`` is selected. Accepts a
+    single CSV (table name = file stem) or a directory of ``<table>.csv``
+    files, reusing the established ``load_reference_csv`` convention. When
+    no reference data is supplied the statistical engine falls back to the
+    heuristic engine (with a warning) per-table.
+    """
+    if engine != "statistical" or reference_data is None:
+        return None
+    if not reference_data.exists():
+        console.print(
+            f"[yellow]Warning:[/yellow] reference data not found: {reference_data} "
+            "(statistical engine will fall back to heuristic)."
+        )
+        return None
+
+    from dbsprout.quality.fidelity import load_reference_csv  # noqa: PLC0415
+
+    ref: dict[str, list[dict[str, object]]] = {}
+    if reference_data.is_dir():
+        base = reference_data.resolve()
+        for table in schema.tables:
+            csv_path = (reference_data / f"{table.name}.csv").resolve()
+            if csv_path.is_relative_to(base) and csv_path.exists():
+                ref[table.name] = load_reference_csv(csv_path, table.name)
+    else:
+        ref[reference_data.stem] = load_reference_csv(reference_data, reference_data.stem)
+    return ref
 
 
 def _resolve_schema(

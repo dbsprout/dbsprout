@@ -9,7 +9,7 @@ from __future__ import annotations
 import time
 from dataclasses import dataclass, field
 from graphlib import CycleError
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 if TYPE_CHECKING:
     from dbsprout.config.models import DBSproutConfig
@@ -33,16 +33,19 @@ class GenerateResult:
     duration_seconds: float = 0.0
 
 
-def orchestrate(
+def orchestrate(  # noqa: PLR0913
     schema: DatabaseSchema,
     config: DBSproutConfig,
     seed: int,
     default_rows: int,
     engine: str = "heuristic",
+    reference_data: dict[str, list[dict[str, Any]]] | None = None,
 ) -> GenerateResult:
     """Run the full generation pipeline.
 
-    Returns a ``GenerateResult`` with generated data and stats.
+    ``reference_data`` is consumed only by the ``statistical`` engine
+    (per-table sample rows used to fit the Gaussian copula). Returns a
+    ``GenerateResult`` with generated data and stats.
     """
     start = time.monotonic()
 
@@ -55,20 +58,7 @@ def orchestrate(
     # Map columns to generators (once for whole schema)
     all_mappings = map_columns(schema)
 
-    # Select engine — registry-first dispatch so third-party engines
-    # registered via ``[project.entry-points."dbsprout.generators"]`` win
-    # over the hard-wired fallback.
-    use_spec = engine == "spec"
-    heuristic_engine = resolve_engine("heuristic", seed=seed)
-    spec_engine = None
-    all_table_specs = None
-    if use_spec:
-        from dbsprout.spec.analyzer import heuristic_fallback  # noqa: PLC0415
-
-        spec_engine = resolve_engine("spec_driven", seed=seed)
-        dataspec = heuristic_fallback(schema)
-        all_table_specs = {ts.table_name: ts for ts in dataspec.tables}
-
+    selection = _select_engines(engine, schema, seed)
     parent_data: dict[str, list[dict[str, Any]]] = {}
 
     for table_name in insertion_order:
@@ -80,18 +70,14 @@ def orchestrate(
             continue
 
         num_rows = _get_row_count(table_name, config, default_rows)
-
-        # Generate with selected engine
-        if use_spec and spec_engine is not None and all_table_specs is not None:
-            table_spec = all_table_specs.get(table_name)
-            if table_spec is not None:
-                rows = spec_engine.generate_table(table_schema, table_spec, num_rows)
-            else:
-                mappings = all_mappings.get(table_name, {})
-                rows = heuristic_engine.generate_table(table_schema, mappings, num_rows)
-        else:
-            mappings = all_mappings.get(table_name, {})
-            rows = heuristic_engine.generate_table(table_schema, mappings, num_rows)
+        mappings = all_mappings.get(table_name, {})
+        rows = _generate_rows(
+            selection,
+            table_schema,
+            mappings,
+            num_rows,
+            (reference_data or {}).get(table_name, []),
+        )
         sample_fk_values(table_schema, parent_data, rows, seed)
         rows = enforce_constraints(table_schema, rows, seed)
 
@@ -108,6 +94,68 @@ def orchestrate(
         total_tables=len(parent_data),
         duration_seconds=round(duration, 3),
     )
+
+
+@dataclass(frozen=True)
+class _EngineSelection:
+    """Resolved engines for a generation run."""
+
+    engine: str
+    heuristic: Any
+    spec: Any = None
+    statistical: Any = None
+    table_specs: dict[str, Any] = field(default_factory=dict)
+
+
+def _select_engines(engine: str, schema: DatabaseSchema, seed: int) -> _EngineSelection:
+    """Resolve the engine(s) needed for *engine*.
+
+    Registry-first dispatch so third-party engines registered via
+    ``[project.entry-points."dbsprout.generators"]`` win over the
+    hard-wired fallback. The heuristic engine is always resolved — the
+    ``spec`` and ``statistical`` engines fall back to it per-table.
+    """
+    heuristic = resolve_engine("heuristic", seed=seed)
+    if engine == "spec":
+        from dbsprout.spec.analyzer import heuristic_fallback  # noqa: PLC0415
+
+        dataspec = heuristic_fallback(schema)
+        return _EngineSelection(
+            engine="spec",
+            heuristic=heuristic,
+            spec=resolve_engine("spec_driven", seed=seed),
+            table_specs={ts.table_name: ts for ts in dataspec.tables},
+        )
+    if engine == "statistical":
+        return _EngineSelection(
+            engine="statistical",
+            heuristic=heuristic,
+            statistical=resolve_engine("statistical", seed=seed),
+        )
+    return _EngineSelection(engine="heuristic", heuristic=heuristic)
+
+
+def _generate_rows(
+    selection: _EngineSelection,
+    table_schema: Any,
+    mappings: dict[str, Any],
+    num_rows: int,
+    reference_rows: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Generate one table's rows with the selected engine."""
+    rows: Any
+    if selection.engine == "spec" and selection.spec is not None:
+        table_spec = selection.table_specs.get(table_schema.name)
+        if table_spec is not None:
+            rows = selection.spec.generate_table(table_schema, table_spec, num_rows)
+            return cast("list[dict[str, Any]]", rows)
+    elif selection.engine == "statistical" and selection.statistical is not None:
+        rows = selection.statistical.generate_table(
+            table_schema, reference_rows, mappings, num_rows
+        )
+        return cast("list[dict[str, Any]]", rows)
+    rows = selection.heuristic.generate_table(table_schema, mappings, num_rows)
+    return cast("list[dict[str, Any]]", rows)
 
 
 def _build_insertion_order(schema: DatabaseSchema) -> list[str]:
