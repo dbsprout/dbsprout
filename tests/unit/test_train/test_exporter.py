@@ -437,6 +437,9 @@ def test_quantize_to_gguf_invokes_convert_then_quantize_no_shell(
         assert call.kwargs.get("shell", False) is False
         assert call.kwargs.get("check") is True
         assert call.kwargs.get("capture_output") is True
+        # A (generous) timeout bounds a genuinely hung toolchain process.
+        assert isinstance(call.kwargs.get("timeout"), (int, float))
+        assert call.kwargs["timeout"] > 0
     # llama-quantize CLI is `<bin> <in.gguf> <out.gguf> <TYPE>`.
     assert quant_argv[-1] == _QUANT_TYPE
     assert quant_argv[-2] == str(out)
@@ -581,6 +584,21 @@ def test_quantize_to_gguf_subprocess_failure_raises_runtime(
     merged.mkdir()
     with pytest.raises(RuntimeError, match="convert exploded"):
         _quantize_to_gguf(merged, tmp_path / "o.gguf")
+
+
+def test_run_tool_surfaces_timeout_as_runtime_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A hung toolchain process must not block forever: subprocess.TimeoutExpired
+    # is surfaced as a clear DBSprout RuntimeError naming the tool.
+    import subprocess  # noqa: PLC0415
+
+    def _hang(argv: list[str], **_kw: object) -> None:
+        raise subprocess.TimeoutExpired(argv, timeout=1)
+
+    monkeypatch.setattr(exporter_mod.subprocess, "run", _hang)
+    with pytest.raises(RuntimeError, match=r"timed out"):
+        exporter_mod._run_tool(["/bin/true", "arg"])
 
 
 # --- Task 6: load-verify seam ----------------------------------------------

@@ -107,6 +107,11 @@ _KNOWN_CONVERTERS = (
     Path("/opt/llama.cpp/convert_hf_to_gguf.py"),
 )
 _QUANTIZE_BIN = "llama-quantize"
+# Generous wall-clock ceiling per conversion subprocess. A 1.5B-param Q4_K_M
+# export is documented at well under 10 min on commodity hardware; 1 h leaves
+# ample headroom for a slow disk / larger model while still bounding a
+# genuinely hung process so the export can never block forever.
+_TOOL_TIMEOUT_SECONDS = 3600
 _HINT_TOOLCHAIN = (
     "llama.cpp conversion tooling not found. Set {env} to the path of "
     "{what}, or install a llama.cpp build on PATH. (toolchain-validation-pending)"
@@ -294,12 +299,25 @@ def _run_tool(argv: list[str]) -> None:
     """Run a llama.cpp tool as a subprocess (list args, no shell, checked).
 
     ``shell=False`` is implicit (list argv); ``check=True`` raises on non-zero
-    exit; ``capture_output=True`` keeps stderr for the error message.
+    exit; ``capture_output=True`` keeps stderr for the error message; a
+    generous ``timeout`` bounds a genuinely hung process so an export can
+    never block forever. Both failure modes surface as a clear DBSprout
+    ``RuntimeError`` naming the tool.
     """
     try:
         # argv is a fixed list (resolved tool path + our own staged file
         # paths), shell=False, no untrusted-string interpolation.
-        subprocess.run(argv, check=True, capture_output=True, text=True)  # noqa: S603  # nosec B603
+        subprocess.run(  # noqa: S603  # nosec B603
+            argv,
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=_TOOL_TIMEOUT_SECONDS,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeError(
+            f"llama.cpp tool timed out after {_TOOL_TIMEOUT_SECONDS}s ({argv[0]})"
+        ) from exc
     except subprocess.CalledProcessError as exc:
         stderr = (exc.stderr or "").strip()
         raise RuntimeError(f"llama.cpp tool failed ({argv[0]}): {stderr or exc}") from exc
