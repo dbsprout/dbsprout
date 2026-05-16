@@ -169,6 +169,21 @@ def test_redactor_masks_pii_and_counts(monkeypatch: pytest.MonkeyPatch) -> None:
     assert samples["users"]["email"].to_list() == ["a@b.com", "safe text"]
 
 
+def test_redactor_preserves_non_string_dtypes(monkeypatch: pytest.MonkeyPatch) -> None:
+    samples = {
+        "t": pl.DataFrame({"i": pl.Series([1, 2], dtype=pl.Int32), "email": ["a@b.com", "x"]})
+    }
+    redactor = TrainingRedactor()
+    monkeypatch.setattr(
+        TrainingRedactor, "_load_engines", lambda _self: (_FakeAnalyzer(), _FakeAnonymizer())
+    )
+    out, _stats = redactor.redact(samples, config=TrainPrivacyConfig())
+    assert out["t"].schema["i"] == pl.Int32  # dtype must survive redaction
+    assert out["t"].schema["email"] == pl.String
+    assert out["t"]["email"].to_list() == ["<EMAIL_ADDRESS>", "x"]
+    assert samples["t"].schema["i"] == pl.Int32  # input untouched
+
+
 def test_redactor_passes_pii_entities_through(monkeypatch: pytest.MonkeyPatch) -> None:
     seen: dict[str, object] = {}
 

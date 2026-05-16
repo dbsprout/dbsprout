@@ -208,18 +208,23 @@ class TrainingRedactor:
         anonymizer: Any,
         entities: list[str] | None,
     ) -> tuple[pl.DataFrame, TableRedactionStats]:
-        """Redact every string column of one DataFrame (immutably)."""
+        """Redact every string column of one DataFrame (immutably).
+
+        Only ``String`` columns are scanned; every other column is left as
+        its original Series so dtypes (Int/Datetime/etc.) are preserved
+        exactly. ``with_columns`` returns a *new* frame, so the input is
+        never mutated.
+        """
         import polars as pl  # noqa: PLC0415 - lazy: keep polars off CLI startup
 
         values_masked = 0
         entity_counts: dict[str, int] = {}
-        new_columns: dict[str, list[Any]] = {}
+        replacements: list[pl.Series] = []
         for name in df.columns:
             series = df[name]
             if series.dtype != pl.String:
-                new_columns[name] = series.to_list()
                 continue
-            redacted_cells: list[Any] = []
+            redacted_cells: list[str | None] = []
             for cell in series.to_list():
                 if cell is None:
                     redacted_cells.append(None)
@@ -232,8 +237,8 @@ class TrainingRedactor:
                     for ent, n in hits.items():
                         entity_counts[ent] = entity_counts.get(ent, 0) + n
                 redacted_cells.append(new_text)
-            new_columns[name] = redacted_cells
-        new_df = pl.DataFrame(new_columns)
+            replacements.append(pl.Series(name, redacted_cells, dtype=pl.String))
+        new_df = df.with_columns(replacements) if replacements else df
         return new_df, TableRedactionStats(
             table=table, values_masked=values_masked, entity_counts=entity_counts
         )
