@@ -1858,3 +1858,60 @@ class TestDiffPathValidation:
         out = _strip_ansi(result.output)
         assert leak_marker not in out
         assert "failed to parse" in out.lower()
+
+
+class TestDiffMarkupEscape:
+    """S-054a AC-7/AC-8: schema names with Rich markup render as literal text."""
+
+    @patch("dbsprout.cli.commands.diff._load_new_schema")
+    @patch("dbsprout.migrate.snapshot.SnapshotStore")
+    def test_table_named_with_markup_renders_literally(
+        self,
+        mock_store_cls: MagicMock,
+        mock_load_new: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        """A table named with Rich markup must appear as literal bracketed text.
+
+        The identifier validator forbids ``/`` (so a closing ``[/red]`` tag is
+        impossible in a table name), but a slash-free opening tag like
+        ``[blink]evil[blink]`` is a valid identifier AND is still consumed by
+        Rich's markup parser unless escaped — the exact AC-7 injection vector.
+        """
+        old = _simple_schema_for_diff()
+        evil_name = "[blink]evil[blink]"
+        new = DatabaseSchema(
+            tables=[
+                TableSchema(
+                    name="users",
+                    columns=[ColumnSchema(name="id", data_type=ColumnType.INTEGER, nullable=False)],
+                    primary_key=["id"],
+                ),
+                TableSchema(
+                    name=evil_name,
+                    columns=[ColumnSchema(name="x", data_type=ColumnType.INTEGER, nullable=True)],
+                    primary_key=["x"],
+                ),
+            ],
+            dialect="sqlite",
+        )
+        mock_store = MagicMock()
+        mock_store.load_latest.return_value = old
+        mock_store_cls.return_value = mock_store
+        mock_load_new.return_value = (new, "schema.sql")
+
+        result = runner.invoke(
+            app,
+            [
+                "diff",
+                "--file",
+                "schema.sql",
+                "--format",
+                "rich",
+                "--output-dir",
+                str(tmp_path),
+            ],
+        )
+        # drift detected → exit 1; the literal bracketed name must be present.
+        assert result.exit_code == 1
+        assert "[blink]evil[blink]" in _strip_ansi(result.output)

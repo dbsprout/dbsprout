@@ -188,28 +188,36 @@ def _change_prefix(ct: SchemaChangeType) -> str:
 
 
 def _format_change_line(c: SchemaChange) -> str:
-    """Format a single change into a human-readable line."""
+    """Format a single change into a human-readable line.
+
+    Dynamic values (table/column names, old/new values) are markup-escaped
+    so a hostile schema name like ``[blink]evil[blink]`` renders as literal
+    text rather than styled output (S-054a AC-7). The ``[green]+[/green]``
+    prefix markup is added by the caller, not here, so it stays intact.
+    """
+    from rich.markup import escape  # noqa: PLC0415
+
     from dbsprout.migrate.models import SchemaChangeType  # noqa: PLC0415
 
     ct = c.change_type
-    col_ref = f"{c.table_name}.{c.column_name}"
+    table = escape(str(c.table_name)) if c.table_name is not None else c.table_name
+    column = escape(str(c.column_name)) if c.column_name is not None else c.column_name
+    old_v = escape(str(c.old_value)) if c.old_value is not None else c.old_value
+    new_v = escape(str(c.new_value)) if c.new_value is not None else c.new_value
+    col_ref = f"{table}.{column}"
     formatters: dict[SchemaChangeType, str] = {
-        SchemaChangeType.ENUM_CHANGED: f"enum: {c.column_name or '<unknown>'}",
+        SchemaChangeType.ENUM_CHANGED: f"enum: {column or '<unknown>'}",
         SchemaChangeType.COLUMN_ADDED: col_ref,
         SchemaChangeType.COLUMN_REMOVED: col_ref,
-        SchemaChangeType.COLUMN_TYPE_CHANGED: f"{col_ref}: {c.old_value} → {c.new_value}",
-        SchemaChangeType.COLUMN_NULLABILITY_CHANGED: (
-            f"{col_ref}: nullable {c.old_value} → {c.new_value}"
-        ),
-        SchemaChangeType.COLUMN_DEFAULT_CHANGED: (
-            f"{col_ref}: default {c.old_value!r} → {c.new_value!r}"
-        ),
-        SchemaChangeType.FOREIGN_KEY_ADDED: f"{c.table_name} foreign key",
-        SchemaChangeType.FOREIGN_KEY_REMOVED: f"{c.table_name} foreign key",
-        SchemaChangeType.INDEX_ADDED: f"{c.table_name} index",
-        SchemaChangeType.INDEX_REMOVED: f"{c.table_name} index",
-        SchemaChangeType.TABLE_ADDED: c.table_name,
-        SchemaChangeType.TABLE_REMOVED: c.table_name,
+        SchemaChangeType.COLUMN_TYPE_CHANGED: f"{col_ref}: {old_v} → {new_v}",
+        SchemaChangeType.COLUMN_NULLABILITY_CHANGED: (f"{col_ref}: nullable {old_v} → {new_v}"),
+        SchemaChangeType.COLUMN_DEFAULT_CHANGED: (f"{col_ref}: default {old_v!r} → {new_v!r}"),
+        SchemaChangeType.FOREIGN_KEY_ADDED: f"{table} foreign key",
+        SchemaChangeType.FOREIGN_KEY_REMOVED: f"{table} foreign key",
+        SchemaChangeType.INDEX_ADDED: f"{table} index",
+        SchemaChangeType.INDEX_REMOVED: f"{table} index",
+        SchemaChangeType.TABLE_ADDED: table,
+        SchemaChangeType.TABLE_REMOVED: table,
     }
     return formatters.get(ct, str(ct.value))
 
