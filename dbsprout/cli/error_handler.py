@@ -64,9 +64,12 @@ def handle_cli_errors(*, verbose: bool) -> Iterator[None]:
     except Exception as exc:  # top-level CLI guard — render any error nicely
         if verbose:
             raise
+        # Do not echo the raw exception text: messages from libraries such as
+        # SQLAlchemy can embed connection URLs (with passwords). Only the
+        # exception class is safe to show; --verbose surfaces the full detail.
         generic = DBSproutError(
             what="An unexpected error occurred.",
-            why=f"{type(exc).__name__}: {exc}",
+            why=f"Unhandled {type(exc).__name__}.",
             fix="Re-run with --verbose for the full traceback.",
         )
         console.print(format_error_panel(generic))

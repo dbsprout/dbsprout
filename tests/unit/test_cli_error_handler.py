@@ -63,6 +63,26 @@ def test_handle_cli_errors_wraps_unexpected_error_non_verbose() -> None:
     assert exc_info.value.exit_code == 1
 
 
+def test_generic_handler_does_not_leak_exception_text(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Non-verbose generic path must not echo raw exception strings.
+
+    Library exceptions (e.g. SQLAlchemy) can embed connection URLs with
+    passwords; only the exception class name is safe to surface.
+    """
+    eh = sys.modules["dbsprout.cli.error_handler"]
+
+    rec = Console(width=100, record=True)
+    monkeypatch.setattr(eh, "console", rec)
+    leaky_message = "could not connect to postgresql://user:s3cr3t@host/db"
+    with pytest.raises(typer.Exit), handle_cli_errors(verbose=False):
+        raise RuntimeError(leaky_message)
+    text = rec.export_text()
+    assert "s3cr3t" not in text
+    assert "RuntimeError" in text
+
+
 def test_handle_cli_errors_reraises_unexpected_error_verbose() -> None:
     with pytest.raises(RuntimeError, match="boom"), handle_cli_errors(verbose=True):
         raise RuntimeError("boom")

@@ -191,11 +191,14 @@ def audit_proxy(
 
 @app.callback()
 def main(
-    ctx: typer.Context,
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Show full tracebacks on error."),
 ) -> None:
-    """DBSprout — realistic database seed data from your schema."""
-    ctx.obj = {"verbose": verbose}
+    """DBSprout — realistic database seed data from your schema.
+
+    ``--verbose`` is declared here so Typer accepts it as a global option;
+    it is actually consumed by :func:`run` before Typer dispatches (the
+    error guard needs to know whether to print a traceback).
+    """
 
 
 def run() -> None:
