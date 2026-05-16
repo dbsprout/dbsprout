@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 import sys
 import types
 from pathlib import Path
@@ -29,6 +30,18 @@ from dbsprout.train.loader import ModelLoader
 runner = CliRunner()
 
 _SYNTHETIC_LORA = "/tmp/adapter.gguf"  # noqa: S108 — never read; mock boundary
+
+# Rich renders --help into an ANSI box whose width depends on the terminal.
+# CI has no TTY, so Rich falls back to a narrow width that wraps option names
+# (splitting "--lora" across lines) and injects ANSI styling mid-token. Match
+# the repo convention (per-module _strip_ansi on result.output) and force a
+# wide, color-free render so option names stay intact regardless of env.
+_ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
+_HELP_ENV = {"COLUMNS": "200", "NO_COLOR": "1"}
+
+
+def _strip_ansi(text: str) -> str:
+    return _ANSI_RE.sub("", text)
 
 
 def _schema() -> DatabaseSchema:
@@ -168,9 +181,9 @@ class TestGenerateCommandLoraValidation:
 
 class TestLoraCliEndToEnd:
     def test_lora_option_in_help(self) -> None:
-        result = runner.invoke(app, ["generate", "--help"])
+        result = runner.invoke(app, ["generate", "--help"], env=_HELP_ENV)
         assert result.exit_code == 0
-        assert "--lora" in result.stdout
+        assert "--lora" in _strip_ansi(result.output)
 
     def test_generate_lora_end_to_end_with_mocked_llama(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
