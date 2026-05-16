@@ -6,7 +6,11 @@ import re
 from pathlib import Path
 
 import pytest
-import tomllib
+
+try:
+    import tomllib  # type: ignore[import-not-found]
+except ModuleNotFoundError:  # pragma: no cover — Python 3.10
+    import tomli as tomllib  # type: ignore[import-not-found]
 
 from dbsprout.errors import (
     ConfigError,
