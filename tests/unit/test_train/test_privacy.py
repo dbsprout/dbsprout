@@ -4,11 +4,15 @@ from __future__ import annotations
 
 import sys
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 from unittest.mock import patch
 
 import polars as pl
 import pytest
 from pydantic import ValidationError
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 from dbsprout.train.config import TrainConfig
 from dbsprout.train.privacy import (
@@ -195,3 +199,59 @@ def test_redactor_table_with_only_non_string_columns(monkeypatch: pytest.MonkeyP
     assert out["nums"]["a"].to_list() == [1, 2]
     assert stats.total_values_masked == 0
     assert stats.tables[0].table == "nums"
+
+
+# --- Task 7: redact_dir (on-disk Parquet round-trip) -----------------------
+
+
+def test_redact_dir_rewrites_parquet_in_place(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    sample_dir = tmp_path / "training"
+    samples_dir = sample_dir / "samples"
+    samples_dir.mkdir(parents=True)
+    pl.DataFrame({"id": [1], "email": ["a@b.com"]}).write_parquet(samples_dir / "users.parquet")
+
+    redactor = TrainingRedactor()
+    monkeypatch.setattr(
+        TrainingRedactor, "_load_engines", lambda _self: (_FakeAnalyzer(), _FakeAnonymizer())
+    )
+    stats = redactor.redact_dir(sample_dir, config=TrainPrivacyConfig())
+
+    assert stats.total_values_masked == 1
+    written = pl.read_parquet(samples_dir / "users.parquet")
+    assert written["email"].to_list() == ["<EMAIL_ADDRESS>"]
+    assert written["id"].to_list() == [1]
+
+
+def test_redact_dir_missing_samples_dir_is_noop(tmp_path: Path) -> None:
+    sample_dir = tmp_path / "training"
+    redactor = TrainingRedactor()
+    stats = redactor.redact_dir(sample_dir, config=TrainPrivacyConfig())
+    assert stats.total_values_masked == 0
+    assert stats.tables == ()
+
+
+def test_redact_dir_presidio_missing_leaves_files_untouched(tmp_path: Path) -> None:
+    sample_dir = tmp_path / "training"
+    samples_dir = sample_dir / "samples"
+    samples_dir.mkdir(parents=True)
+    pl.DataFrame({"email": ["a@b.com"]}).write_parquet(samples_dir / "users.parquet")
+    redactor = TrainingRedactor()
+    with patch.dict(sys.modules, {"presidio_analyzer": None, "presidio_anonymizer": None}):
+        stats = redactor.redact_dir(sample_dir, config=TrainPrivacyConfig())
+    assert stats.presidio_available is False
+    assert stats.total_values_masked == 0
+    # original Parquet must be left exactly as written (no rewrite on fallback)
+    assert pl.read_parquet(samples_dir / "users.parquet")["email"].to_list() == ["a@b.com"]
+
+
+def test_redact_dir_disabled_is_noop(tmp_path: Path) -> None:
+    sample_dir = tmp_path / "training"
+    samples_dir = sample_dir / "samples"
+    samples_dir.mkdir(parents=True)
+    pl.DataFrame({"email": ["a@b.com"]}).write_parquet(samples_dir / "users.parquet")
+    redactor = TrainingRedactor()
+    stats = redactor.redact_dir(sample_dir, config=TrainPrivacyConfig(pii_redaction=False))
+    assert stats.total_values_masked == 0
+    assert pl.read_parquet(samples_dir / "users.parquet")["email"].to_list() == ["a@b.com"]

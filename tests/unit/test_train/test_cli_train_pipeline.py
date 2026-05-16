@@ -16,6 +16,7 @@ from typer.testing import CliRunner
 
 from dbsprout.cli.app import app
 from dbsprout.train.config import LoRAAdapter, TrainConfig
+from dbsprout.train.privacy import RedactionStats, TrainPrivacyConfig
 
 if TYPE_CHECKING:
     from pathlib import Path as _Path
@@ -71,21 +72,28 @@ def _export_result(out: _Path) -> MagicMock:
     return res
 
 
-def _components(
+def _components(  # noqa: PLR0913 - one mock per pipeline stage + optional seams
     extractor: MagicMock,
     preparer: MagicMock,
     trainer: MagicMock,
     exporter: MagicMock,
     *,
     select: object | None = None,
+    redactor: MagicMock | None = None,
 ) -> MagicMock:
     """Build a fake ``_PipelineComponents`` (the injectable seam).
 
     No heavy import happens — the real ``_default_components`` (which lazily
-    pulls polars/torch/mlx) is replaced wholesale.
+    pulls polars/torch/mlx) is replaced wholesale. ``redactor`` defaults to a
+    MagicMock whose ``redact_dir`` returns a real ``RedactionStats`` so the
+    summary-printing path is exercised without Presidio.
     """
+    if redactor is None:
+        redactor = MagicMock(name="redactor")
+        redactor.redact_dir.return_value = RedactionStats()
     comps = MagicMock(name="components")
     comps.make_extractor = MagicMock(return_value=extractor)
+    comps.make_redactor = MagicMock(return_value=redactor)
     comps.make_preparer = MagicMock(return_value=preparer)
     comps.select_trainer = select if select is not None else MagicMock(return_value=trainer)
     comps.make_exporter = MagicMock(return_value=exporter)
@@ -100,12 +108,15 @@ def _patches(  # noqa: PLR0913 - one mock per pipeline stage + cfg
     exporter: MagicMock,
     *,
     select: object | None = None,
+    redactor: MagicMock | None = None,
 ):
     return (
         patch("dbsprout.cli.commands.train.load_config", return_value=cfg),
         patch(
             "dbsprout.cli.commands.train._default_components",
-            return_value=_components(extractor, preparer, trainer, exporter, select=select),
+            return_value=_components(
+                extractor, preparer, trainer, exporter, select=select, redactor=redactor
+            ),
         ),
     )
 
@@ -484,3 +495,84 @@ def test_export_error_scrubs_secret(tmp_path: _Path) -> None:
         result = runner.invoke(app, ["train", "--db", _SECRET, "--output", str(out)])
     assert result.exit_code == 1
     assert "topsecretpw" not in result.stdout
+
+
+# --------------------------------------------------------------------------- #
+# S-070 — PII redaction + DP-SGD guard plumbing
+# --------------------------------------------------------------------------- #
+def _full_pipeline_mocks(out: _Path) -> tuple[MagicMock, MagicMock, MagicMock, MagicMock]:
+    extractor = MagicMock()
+    extractor.extract.return_value = _sample_result(out)
+    preparer = MagicMock()
+    preparer.prepare.return_value = _serialize_result(out)
+    trainer = MagicMock()
+    trainer.train.return_value = _adapter(out)
+    exporter = MagicMock()
+    exporter.to_gguf_result.return_value = _export_result(out)
+    return extractor, preparer, trainer, exporter
+
+
+def test_pipeline_redacts_before_serialize(tmp_path: _Path) -> None:
+    out = tmp_path / ".dbsprout"
+    cfg = _local_cfg()
+    extractor, preparer, trainer, exporter = _full_pipeline_mocks(out)
+    redactor = MagicMock(name="redactor")
+    redactor.redact_dir.return_value = RedactionStats(
+        total_values_masked=5, entity_totals={"EMAIL_ADDRESS": 5}
+    )
+    p_cfg, p_comps = _patches(cfg, extractor, preparer, trainer, exporter, redactor=redactor)
+    with p_cfg, p_comps:
+        result = runner.invoke(app, ["train", "--db", "sqlite:///x.db", "--output", str(out)])
+
+    assert result.exit_code == 0, result.stdout
+    redactor.redact_dir.assert_called_once()
+    # redaction must happen before serialization
+    assert redactor.redact_dir.call_args.args[0] == out / "training"
+    assert "Redacted" in result.stdout
+    assert "EMAIL_ADDRESS" in result.stdout
+
+
+def test_pipeline_no_pii_redaction_flag_skips_redactor(tmp_path: _Path) -> None:
+    out = tmp_path / ".dbsprout"
+    cfg = _local_cfg()
+    extractor, preparer, trainer, exporter = _full_pipeline_mocks(out)
+    redactor = MagicMock(name="redactor")
+    p_cfg, p_comps = _patches(cfg, extractor, preparer, trainer, exporter, redactor=redactor)
+    with p_cfg, p_comps:
+        result = runner.invoke(
+            app,
+            ["train", "--db", "sqlite:///x.db", "--output", str(out), "--no-pii-redaction"],
+        )
+
+    assert result.exit_code == 0, result.stdout
+    redactor.redact_dir.assert_not_called()
+
+
+def test_pipeline_redaction_skipped_when_presidio_missing(tmp_path: _Path) -> None:
+    out = tmp_path / ".dbsprout"
+    cfg = _local_cfg()
+    extractor, preparer, trainer, exporter = _full_pipeline_mocks(out)
+    redactor = MagicMock(name="redactor")
+    redactor.redact_dir.return_value = RedactionStats(presidio_available=False)
+    p_cfg, p_comps = _patches(cfg, extractor, preparer, trainer, exporter, redactor=redactor)
+    with p_cfg, p_comps:
+        result = runner.invoke(app, ["train", "--db", "sqlite:///x.db", "--output", str(out)])
+
+    assert result.exit_code == 0, result.stdout
+    assert "Presidio not installed" in result.stdout
+
+
+def test_pipeline_dp_sgd_guard_exits_cleanly(tmp_path: _Path) -> None:
+    out = tmp_path / ".dbsprout"
+    cfg = MagicMock()
+    cfg.privacy.tier = "local"
+    cfg.train = TrainConfig(privacy=TrainPrivacyConfig(dp_sgd=True))
+    extractor, preparer, trainer, exporter = _full_pipeline_mocks(out)
+    p_cfg, p_comps = _patches(cfg, extractor, preparer, trainer, exporter)
+    with p_cfg, p_comps:
+        result = runner.invoke(app, ["train", "--db", "sqlite:///x.db", "--output", str(out)])
+
+    assert result.exit_code == 1
+    assert "DP-SGD" in result.stdout
+    extractor.extract.assert_called_once()
+    preparer.prepare.assert_not_called()

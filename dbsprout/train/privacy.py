@@ -28,6 +28,8 @@ from typing import TYPE_CHECKING, Any
 from pydantic import BaseModel, ConfigDict, Field
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     import polars as pl
 
 logger = logging.getLogger(__name__)
@@ -155,6 +157,38 @@ class TrainingRedactor:
             entity_totals=entity_totals,
             presidio_available=True,
         )
+
+    def redact_dir(
+        self,
+        sample_dir: Path,
+        *,
+        config: TrainPrivacyConfig,
+    ) -> RedactionStats:
+        """Redact the on-disk Parquet under ``<sample_dir>/samples/`` in place.
+
+        Reads every ``samples/*.parquet`` the extractor wrote, runs
+        :meth:`redact`, and overwrites each file with its redacted frame so a
+        subsequent ``DataPreparer.prepare`` serializes masked values. A missing
+        ``samples/`` directory (or ``pii_redaction`` disabled) is a no-op
+        returning empty stats. When Presidio is unavailable the Parquet files
+        are left untouched and ``presidio_available=False`` is reported.
+        """
+        if not config.pii_redaction:
+            return RedactionStats()
+
+        import polars as pl  # noqa: PLC0415 - lazy: keep polars off CLI startup
+
+        samples_dir = sample_dir / "samples"
+        parquet_files = sorted(samples_dir.glob("*.parquet")) if samples_dir.is_dir() else []
+        if not parquet_files:
+            return RedactionStats()
+
+        frames = {p.stem: pl.read_parquet(p) for p in parquet_files}
+        redacted, stats = self.redact(frames, config=config)
+        if stats.presidio_available:
+            for table, df in redacted.items():
+                df.write_parquet(samples_dir / f"{table}.parquet")
+        return stats
 
     def _load_engines(self) -> tuple[Any, Any] | None:
         """Lazily build the Presidio analyzer + anonymizer, or ``None``."""
