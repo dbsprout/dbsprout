@@ -228,8 +228,7 @@ class TestLoRAHotSwap:
 
         with patch("dbsprout.train.loader.ModelLoader") as loader_cls:
             handle = MagicMock(name="LlamaHandle")
-            loader_cls.return_value.load.return_value = MagicMock()
-            loader_cls.return_value.get_handle.return_value = handle
+            loader_cls.return_value.load.return_value = MagicMock(handle=handle, swap_seconds=0.4)
 
             provider.set_lora(adapter)
             assert provider.lora_path == adapter
@@ -238,6 +237,7 @@ class TestLoRAHotSwap:
             loader_cls.return_value.load.assert_called_once()
             _, kwargs = loader_cls.return_value.load.call_args
             assert kwargs["lora_path"] == adapter
+            # Handle comes straight off load() — no redundant get_handle().
             assert llm is handle
         provider.close()
 
@@ -257,4 +257,54 @@ class TestLoRAHotSwap:
         provider._llm = MagicMock(name="stale")
         provider.set_lora(tmp_path / "new.gguf")
         assert provider._llm is None
+        provider.close()
+
+    def test_loader_path_uses_4096_n_ctx_like_base_path(self, tmp_path: Path) -> None:
+        """Review #13: the LoRA path must use the same 4096 n_ctx as S-025.
+
+        A 512 default would overflow the spec prompt; assert the n_ctx kwarg
+        reaches the (mocked) Llama ctor on the loader path.
+        """
+        from unittest.mock import MagicMock, patch  # noqa: PLC0415
+
+        adapter = tmp_path / "myschema.gguf"
+        adapter.write_bytes(b"\x00")
+        provider = EmbeddedProvider(cache_dir=tmp_path / "cache", lora_path=adapter)
+        provider._download_model = MagicMock(  # type: ignore[assignment]
+            return_value=tmp_path / "base.gguf"
+        )
+
+        with patch("dbsprout.train.loader.ModelLoader") as loader_cls:
+            handle = MagicMock(name="LlamaHandle")
+            loader_cls.return_value.load.return_value = MagicMock(handle=handle, swap_seconds=0.3)
+            loader_cls.return_value.get_handle.return_value = handle
+
+            llm = provider._ensure_llm()
+
+            _, kwargs = loader_cls.return_value.load.call_args
+            assert kwargs["n_ctx"] == 4096
+            # Review #14: handle comes straight off load() — no redundant
+            # second get_handle() lookup.
+            assert llm is handle
+            loader_cls.return_value.get_handle.assert_not_called()
+        provider.close()
+
+    def test_loader_path_logs_slow_swap(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Review #14: a >= 2s swap is observable at runtime (logged warning)."""
+        from unittest.mock import MagicMock, patch  # noqa: PLC0415
+
+        adapter = tmp_path / "s.gguf"
+        adapter.write_bytes(b"\x00")
+        provider = EmbeddedProvider(cache_dir=tmp_path / "cache", lora_path=adapter)
+        provider._download_model = MagicMock(  # type: ignore[assignment]
+            return_value=tmp_path / "base.gguf"
+        )
+        with patch("dbsprout.train.loader.ModelLoader") as loader_cls:
+            handle = MagicMock(name="LlamaHandle")
+            loader_cls.return_value.load.return_value = MagicMock(handle=handle, swap_seconds=2.5)
+            with caplog.at_level("WARNING"):
+                provider._ensure_llm()
+        assert "swap" in caplog.text.lower()
         provider.close()

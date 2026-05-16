@@ -254,3 +254,117 @@ def test_train_handles_no_loss_history(
             output_dir=tmp_path / "a",
         )
     assert adapter.final_loss is None
+
+
+# --- Review #2: partial-install (datasets/trl) -> friendly RuntimeError ------
+
+
+def test_train_partial_install_missing_datasets_raises_hint(
+    corpus: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # unsloth present but ``datasets`` absent (a real partial-install state):
+    # must raise the friendly install hint, not a bare ImportError.
+    unsloth_mod = types.ModuleType("unsloth")
+    unsloth_mod.FastLanguageModel = mock.MagicMock(name="FastLanguageModel")  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "unsloth", unsloth_mod)
+    monkeypatch.setitem(sys.modules, "datasets", None)  # forces ImportError
+    with (
+        mock.patch("dbsprout.train.trainer._cuda_available", return_value=True),
+        pytest.raises(RuntimeError, match=r"dbsprout\[train-cuda\]"),
+    ):
+        QLoRATrainer().train(
+            corpus_path=corpus, config=TrainConfig(epochs=1), output_dir=tmp_path / "a"
+        )
+
+
+def test_train_partial_install_missing_trl_raises_hint(
+    corpus: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    unsloth_mod = types.ModuleType("unsloth")
+    unsloth_mod.FastLanguageModel = mock.MagicMock(name="FastLanguageModel")  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "unsloth", unsloth_mod)
+    datasets_mod = types.ModuleType("datasets")
+    datasets_mod.load_dataset = mock.MagicMock(name="load_dataset")  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "datasets", datasets_mod)
+    monkeypatch.setitem(sys.modules, "trl", None)  # forces ImportError
+    with (
+        mock.patch("dbsprout.train.trainer._cuda_available", return_value=True),
+        pytest.raises(RuntimeError, match=r"dbsprout\[train-cuda\]"),
+    ):
+        QLoRATrainer().train(
+            corpus_path=corpus, config=TrainConfig(epochs=1), output_dir=tmp_path / "a"
+        )
+
+
+# --- Review #3: cheap local precondition checked before GPU/backend ---------
+
+
+def test_corpus_missing_checked_before_backend_selection(tmp_path: Path) -> None:
+    # CPU host (no CUDA) + missing corpus: the user should get the actionable
+    # "run train serialize" corpus error, not the GPU/install hint. This pins
+    # the precondition order so a cheap local check never hides behind the
+    # backend probe.
+    with (
+        mock.patch("dbsprout.train.trainer._cuda_available", return_value=False),
+        pytest.raises(FileNotFoundError, match="train serialize"),
+    ):
+        QLoRATrainer().train(
+            corpus_path=tmp_path / "missing.jsonl",
+            config=TrainConfig(),
+            output_dir=tmp_path / "a",
+        )
+
+
+def test_corpus_empty_checked_before_backend_selection(tmp_path: Path) -> None:
+    empty = tmp_path / "empty.jsonl"
+    empty.write_text("", encoding="utf-8")
+    with (
+        mock.patch("dbsprout.train.trainer._cuda_available", return_value=False),
+        pytest.raises(ValueError, match="empty"),
+    ):
+        QLoRATrainer().train(
+            corpus_path=empty,
+            config=TrainConfig(),
+            output_dir=tmp_path / "a",
+        )
+
+
+# --- Review #4: GReaT single-text corpus has no prompt by construction ------
+
+
+def test_corpus_format_invariant_single_text_field_no_prompt_split(corpus: Path) -> None:
+    # The GReaT serializer (S-063) emits a single ``text`` field per row with
+    # NO prompt/completion split. ``completion_only_loss`` is therefore a
+    # structural no-op safeguard: there is nothing to memorize by construction.
+    # This test pins that corpus-format invariant so the privacy AC stays
+    # honest even if the serializer changes.
+    import json  # noqa: PLC0415
+
+    for line in corpus.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        row = json.loads(line)
+        assert set(row) <= {"text", "table"}
+        assert "text" in row
+        assert "prompt" not in row
+        assert "completion" not in row
+
+
+# --- Review #5: training_loss coercion guarded against bad types ------------
+
+
+def test_train_handles_non_numeric_training_loss(
+    corpus: Path, tmp_path: Path, fake_unsloth: dict[str, mock.MagicMock]
+) -> None:
+    # A backend returning a non-numeric ``training_loss`` (e.g. a string) must
+    # degrade to ``final_loss=None`` rather than crash the whole run.
+    fake_unsloth["trainer_obj"].train.return_value = types.SimpleNamespace(
+        training_loss="not-a-number"
+    )
+    with mock.patch("dbsprout.train.trainer._cuda_available", return_value=True):
+        adapter = QLoRATrainer().train(
+            corpus_path=corpus,
+            config=TrainConfig(epochs=1),
+            output_dir=tmp_path / "a",
+        )
+    assert adapter.final_loss is None

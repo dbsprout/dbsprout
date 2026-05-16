@@ -10,6 +10,13 @@ from typing import TYPE_CHECKING, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+# ``dbsprout.train.config`` is the lightweight ``[train]`` model submodule
+# (pydantic + pathlib only). The package's PEP 562 ``__getattr__`` keeps the
+# heavy training submodules (trainer/mlx_trainer/loader/exporter +
+# ``rich.progress``) off this import — they used to be eagerly re-exported by
+# ``dbsprout/train/__init__.py``, adding ~150 ms to every CLI command and
+# breaking the <500 ms startup budget. Importing the submodule directly here
+# keeps ``DBSproutConfig`` fully defined for Pydantic without that cost.
 from dbsprout.train.config import TrainConfig
 
 if TYPE_CHECKING:

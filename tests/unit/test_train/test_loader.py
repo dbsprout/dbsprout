@@ -93,11 +93,14 @@ def test_loader_init_rejects_capacity_below_one() -> None:
         ModelLoader(capacity=0)
 
 
-def test_loader_load_llama_missing_dep_raises_hint(
+def test_loader_load_llama_missing_dep_raises_importerror(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    # Review #15: parity with the S-025 base path — missing llama-cpp-python
+    # raises ImportError (not RuntimeError) so callers handle one exception
+    # type across both load paths.
     monkeypatch.setitem(sys.modules, "llama_cpp", None)  # forces ImportError
-    with pytest.raises(RuntimeError, match=r"dbsprout\[llm\]"):
+    with pytest.raises(ImportError, match=r"dbsprout\[llm\]"):
         ModelLoader()._load_llama()
 
 
@@ -287,3 +290,97 @@ def test_cache_hit_has_zero_swap_seconds(fake_llama: mock.MagicMock, tmp_path: P
 
 def test_swap_budget_constant() -> None:
     assert _MAX_SWAP_SECONDS == 2.0
+
+
+# --- Review #13: n_ctx threaded through (default matches S-025 4096) --------
+
+
+def test_load_default_n_ctx_matches_s025_base_path(
+    fake_llama: mock.MagicMock, tmp_path: Path
+) -> None:
+    from dbsprout.train.loader import _DEFAULT_N_CTX  # noqa: PLC0415
+
+    assert _DEFAULT_N_CTX == 4096
+    base = tmp_path / "base.gguf"
+    base.write_bytes(b"\x00")
+    ModelLoader().load(base)
+    _, kwargs = fake_llama.call_args
+    assert kwargs["n_ctx"] == 4096
+
+
+def test_load_threads_explicit_n_ctx_to_llama_ctor(
+    fake_llama: mock.MagicMock, tmp_path: Path
+) -> None:
+    base = tmp_path / "base.gguf"
+    base.write_bytes(b"\x00")
+    ModelLoader().load(base, n_ctx=8192)
+    _, kwargs = fake_llama.call_args
+    assert kwargs["n_ctx"] == 8192
+
+
+def test_load_n_ctx_part_of_cache_key(fake_llama: mock.MagicMock, tmp_path: Path) -> None:
+    # Different n_ctx must not silently reuse a handle built with another ctx.
+    base = tmp_path / "base.gguf"
+    base.write_bytes(b"\x00")
+    ld = ModelLoader(capacity=4)
+    ld.load(base, n_ctx=4096)
+    r2 = ld.load(base, n_ctx=8192)
+    assert r2.cache_hit is False
+    assert fake_llama.call_count == 2
+
+
+# --- Review #14: load() returns the handle (no redundant double lookup) -----
+
+
+def test_load_returns_handle_directly(fake_llama: mock.MagicMock, tmp_path: Path) -> None:
+    base = tmp_path / "base.gguf"
+    base.write_bytes(b"\x00")
+    ld = ModelLoader()
+    result = ld.load(base)
+    # The constructed handle is exposed on the result so callers need not do a
+    # second get_handle() lookup.
+    assert result.handle is not None
+    assert result.handle is ld.get_handle(base)
+
+
+def test_load_cache_hit_returns_same_handle(fake_llama: mock.MagicMock, tmp_path: Path) -> None:
+    base = tmp_path / "base.gguf"
+    base.write_bytes(b"\x00")
+    ld = ModelLoader()
+    first = ld.load(base)
+    second = ld.load(base)
+    assert second.cache_hit is True
+    assert second.handle is first.handle
+
+
+def test_load_warns_when_swap_exceeds_budget(
+    fake_llama: mock.MagicMock,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    base = tmp_path / "base.gguf"
+    base.write_bytes(b"\x00")
+    # Mock the clock so the construction "takes" 3s (> 2s budget).
+    ticks = iter([100.0, 103.0])
+    monkeypatch.setattr(loader_mod.time, "monotonic", lambda: next(ticks))
+    with caplog.at_level("WARNING"):
+        result = ModelLoader().load(base)
+    assert result.swap_seconds == pytest.approx(3.0)
+    assert "swap" in caplog.text.lower()
+    assert str(_MAX_SWAP_SECONDS) in caplog.text or "2.0" in caplog.text
+
+
+def test_load_no_warn_when_swap_within_budget(
+    fake_llama: mock.MagicMock,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    base = tmp_path / "base.gguf"
+    base.write_bytes(b"\x00")
+    ticks = iter([10.0, 10.1])
+    monkeypatch.setattr(loader_mod.time, "monotonic", lambda: next(ticks))
+    with caplog.at_level("WARNING"):
+        ModelLoader().load(base)
+    assert "exceeded" not in caplog.text.lower()

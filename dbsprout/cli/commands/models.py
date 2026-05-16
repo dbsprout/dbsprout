@@ -49,6 +49,7 @@ def list_models() -> None:
     table.add_column("Kind")
     table.add_column("Installed")
 
+    registry_filenames = {e.filename for e in load_registry()}
     for entry in load_registry():
         table.add_row(
             entry.name,
@@ -66,6 +67,17 @@ def list_models() -> None:
                 "-",
                 _fmt_size(im.size_bytes),
                 "custom",
+                "[green]yes[/green]",
+            )
+        # Surface base models present on disk but absent from the registry
+        # (e.g. a manually-placed GGUF) — otherwise they were invisible.
+        elif im.kind == "base" and im.name not in registry_filenames:
+            table.add_row(
+                im.name,
+                "-",
+                "-",
+                _fmt_size(im.size_bytes),
+                "base",
                 "[green]yes[/green]",
             )
 
@@ -106,7 +118,9 @@ def _make_client() -> httpx.Client:
     """Create the httpx client (own seam so tests can swap the transport)."""
     import httpx  # noqa: PLC0415 - keep httpx off the <500ms CLI startup path
 
-    return httpx.Client(timeout=600.0, follow_redirects=True)
+    from dbsprout.models.manager import _DOWNLOAD_TIMEOUT_S  # noqa: PLC0415
+
+    return httpx.Client(timeout=_DOWNLOAD_TIMEOUT_S, follow_redirects=True)
 
 
 @models_app.command("download")

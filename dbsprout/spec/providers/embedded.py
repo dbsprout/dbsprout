@@ -171,13 +171,30 @@ class EmbeddedProvider:
         return self._llm
 
     def _load_via_loader(self, model_path: Path) -> Any:
-        """Load (or hot-swap) the model+adapter through the ModelLoader."""
-        from dbsprout.train.loader import ModelLoader  # noqa: PLC0415
+        """Load (or hot-swap) the model+adapter through the ModelLoader.
+
+        Threads the same ``n_ctx`` as the S-025 base path so the LoRA path
+        does not overflow the spec prompt, and uses the handle returned by
+        ``load()`` directly (no redundant second ``get_handle`` lookup). A
+        slow swap (>= the loader's budget) is surfaced as a WARNING so the
+        ``<2s`` AC is observable at runtime.
+        """
+        from dbsprout.train.loader import (  # noqa: PLC0415
+            _MAX_SWAP_SECONDS,
+            ModelLoader,
+        )
 
         if self._loader is None:
             self._loader = ModelLoader()
-        self._loader.load(model_path, lora_path=self._lora_path)
-        return self._loader.get_handle(model_path, self._lora_path)
+        loaded = self._loader.load(model_path, lora_path=self._lora_path, n_ctx=_DEFAULT_N_CTX)
+        if loaded.swap_seconds >= _MAX_SWAP_SECONDS:
+            logger.warning(
+                "LoRA hot-swap took %.2fs (>= %.1fs budget) for adapter %s",
+                loaded.swap_seconds,
+                _MAX_SWAP_SECONDS,
+                self._lora_path,
+            )
+        return loaded.handle
 
     def _download_model(self) -> Path:  # pragma: no cover
         """Download the model from Hugging Face if not cached."""

@@ -24,20 +24,56 @@ def _strip_ansi(text: str) -> str:
 
 
 class TestModelEntry:
+    def _valid_kwargs(self, **over: object) -> dict[str, object]:
+        base: dict[str, object] = {
+            "name": "qwen2.5-1.5b-instruct",
+            "description": "Qwen2.5 1.5B Instruct (GGUF)",
+            "repo": "Qwen/Qwen2.5-1.5B-Instruct-GGUF",
+            "filename": "qwen2.5-1.5b-instruct-q4_k_m.gguf",
+            "size_bytes": 1_000_000_000,
+            "quantization": "Q4_K_M",
+            "parameters": "1.5B",
+        }
+        base.update(over)
+        return base
+
     def test_frozen_and_fields(self) -> None:
-        entry = ModelEntry(
-            name="qwen2.5-1.5b-instruct",
-            description="Qwen2.5 1.5B Instruct (GGUF)",
-            repo="Qwen/Qwen2.5-1.5B-Instruct-GGUF",
-            filename="qwen2.5-1.5b-instruct-q4_k_m.gguf",
-            size_bytes=1_000_000_000,
-            quantization="Q4_K_M",
-            parameters="1.5B",
-        )
+        entry = ModelEntry(**self._valid_kwargs())  # type: ignore[arg-type]
         assert entry.training == "base"
         assert entry.default is False
+        assert entry.sha256 is None
         with pytest.raises(ValueError, match="frozen"):
             entry.name = "other"  # type: ignore[misc]
+
+    # --- Review #18: path-traversal / SSRF field validators ----------------
+
+    @pytest.mark.parametrize(
+        "bad_filename",
+        ["../evil.gguf", "a/b.gguf", "a\\b.gguf", "/abs/path.gguf", "..", "."],
+    )
+    def test_filename_rejects_traversal_and_separators(self, bad_filename: str) -> None:
+        with pytest.raises(ValueError, match="filename"):
+            ModelEntry(**self._valid_kwargs(filename=bad_filename))  # type: ignore[arg-type]
+
+    @pytest.mark.parametrize(
+        "bad_repo",
+        ["not-a-repo", "org/repo/extra", "../evil", "org /repo", "org/repo;rm"],
+    )
+    def test_repo_must_be_org_slash_name(self, bad_repo: str) -> None:
+        with pytest.raises(ValueError, match="repo"):
+            ModelEntry(**self._valid_kwargs(repo=bad_repo))  # type: ignore[arg-type]
+
+    def test_valid_repo_and_filename_accepted(self) -> None:
+        entry = ModelEntry(**self._valid_kwargs())  # type: ignore[arg-type]
+        assert entry.repo == "Qwen/Qwen2.5-1.5B-Instruct-GGUF"
+        assert entry.filename == "qwen2.5-1.5b-instruct-q4_k_m.gguf"
+
+    # --- Review #19: optional sha256 ---------------------------------------
+
+    def test_sha256_optional_and_settable(self) -> None:
+        digest = "a" * 64
+        entry = ModelEntry(**self._valid_kwargs(sha256=digest))  # type: ignore[arg-type]
+        assert entry.sha256 == digest
 
 
 class TestInstalledModel:
@@ -62,7 +98,7 @@ class TestLoadRegistry:
     def test_load_registry_from_explicit_path(self, tmp_path: Path) -> None:
         manifest = tmp_path / "r.json"
         manifest.write_text(
-            '[{"name":"m","description":"d","repo":"r","filename":"f.gguf",'
+            '[{"name":"m","description":"d","repo":"org/repo","filename":"f.gguf",'
             '"size_bytes":1,"quantization":"Q4","parameters":"1B"}]',
             encoding="utf-8",
         )
@@ -113,6 +149,169 @@ class TestModelManagerDiscovery:
 
 def _mock_client(handler: object) -> httpx.Client:
     return httpx.Client(transport=httpx.MockTransport(handler))  # type: ignore[arg-type]
+
+
+def _entry(**over: object) -> ModelEntry:
+    base: dict[str, object] = {
+        "name": "m",
+        "description": "d",
+        "repo": "org/repo",
+        "filename": "m.gguf",
+        "size_bytes": 1,
+        "quantization": "Q4",
+        "parameters": "1B",
+    }
+    base.update(over)
+    return ModelEntry(**base)  # type: ignore[arg-type]
+
+
+class TestInstallPathContainment:
+    """Review #18: install_path must stay inside base_dir."""
+
+    def test_install_path_within_base_dir(self, tmp_path: Path) -> None:
+        mgr = ModelManager(root=tmp_path / ".dbsprout" / "models")
+        entry = _entry(filename="ok.gguf")
+        resolved = mgr.install_path(entry).resolve()
+        assert resolved.is_relative_to(mgr.base_dir.resolve())
+
+    def test_download_rejects_escaping_install_path(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Even if a (hypothetically) crafted entry slipped past field
+        # validation, download() must assert containment before writing.
+        mgr = ModelManager(root=tmp_path / ".dbsprout" / "models")
+        entry = _entry(filename="ok.gguf")
+
+        def handler(_req: httpx.Request) -> httpx.Response:
+            return httpx.Response(200, content=b"x")
+
+        monkeypatch.setattr(
+            ModelManager,
+            "install_path",
+            lambda _self, _e: tmp_path / "escaped.gguf",
+        )
+        with pytest.raises((ValueError, DownloadError), match=r"(?i)outside|escap|contain"):
+            mgr.download(entry, client=_mock_client(handler))
+
+
+class TestSha256Verification:
+    """Review #19: optional sha256 is verified while streaming."""
+
+    def test_sha256_match_keeps_file(self, tmp_path: Path) -> None:
+        import hashlib  # noqa: PLC0415
+
+        body = b"GGUF-PAYLOAD" * 4
+        digest = hashlib.sha256(body).hexdigest()
+        entry = _entry(sha256=digest)
+        mgr = ModelManager(root=tmp_path / ".dbsprout" / "models")
+
+        def handler(_req: httpx.Request) -> httpx.Response:
+            return httpx.Response(200, content=body, headers={"Content-Length": str(len(body))})
+
+        dest = mgr.download(entry, client=_mock_client(handler))
+        assert dest.read_bytes() == body
+
+    def test_sha256_mismatch_deletes_part_and_raises(self, tmp_path: Path) -> None:
+        entry = _entry(sha256="0" * 64)
+        mgr = ModelManager(root=tmp_path / ".dbsprout" / "models")
+
+        def handler(_req: httpx.Request) -> httpx.Response:
+            return httpx.Response(200, content=b"wrong-bytes")
+
+        with pytest.raises(DownloadError, match=r"(?i)sha256|checksum|integrity"):
+            mgr.download(entry, client=_mock_client(handler))
+        part = mgr.install_path(entry).with_suffix(mgr.install_path(entry).suffix + ".part")
+        assert not part.exists()
+        assert not mgr.install_path(entry).exists()
+
+    def test_no_sha256_skips_verification(self, tmp_path: Path) -> None:
+        entry = _entry(sha256=None)
+        mgr = ModelManager(root=tmp_path / ".dbsprout" / "models")
+
+        def handler(_req: httpx.Request) -> httpx.Response:
+            return httpx.Response(200, content=b"anything")
+
+        dest = mgr.download(entry, client=_mock_client(handler))
+        assert dest.read_bytes() == b"anything"
+
+
+class TestListSurfacesUnregisteredBaseModels:
+    """Review #20: list must show base models on disk absent from registry."""
+
+    def test_list_includes_unregistered_base_model(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.chdir(tmp_path)
+        root = tmp_path / ".dbsprout" / "models"
+        (root / "base").mkdir(parents=True)
+        # A base model on disk that is NOT in the bundled registry.
+        (root / "base" / "mystery-model.gguf").write_bytes(b"z" * 11)
+
+        result = runner.invoke(app, ["models", "list"])
+        out = _strip_ansi(result.output)
+        assert result.exit_code == 0
+        assert "mystery-model" in out
+
+
+class TestDownloadResilience:
+    """Review #21: redirects, content-length guard, OSError wrap."""
+
+    def test_make_client_follows_redirects(self) -> None:
+        client = _make_client()
+        try:
+            assert client.follow_redirects is True
+        finally:
+            client.close()
+
+    def test_download_follows_302_redirect(self, tmp_path: Path) -> None:
+        # HF `resolve` returns a 302 to a CDN; the standalone manager client
+        # must follow it (real latent bug).
+        entry = next(e for e in load_registry() if e.default)
+        body = b"REDIRECTED-GGUF"
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            if "resolve/main" in str(request.url):
+                return httpx.Response(302, headers={"Location": "https://cdn.example/file"})
+            return httpx.Response(200, content=body, headers={"Content-Length": str(len(body))})
+
+        client = httpx.Client(transport=httpx.MockTransport(handler), follow_redirects=True)
+        mgr = ModelManager(root=tmp_path / ".dbsprout" / "models")
+        dest = mgr.download(entry, client=client)
+        assert dest.read_bytes() == body
+
+    def test_bad_content_length_raises_downloaderror(self, tmp_path: Path) -> None:
+        entry = next(e for e in load_registry() if e.default)
+        mgr = ModelManager(root=tmp_path / ".dbsprout" / "models")
+
+        def handler(_req: httpx.Request) -> httpx.Response:
+            return httpx.Response(200, content=b"x", headers={"Content-Length": "not-an-int"})
+
+        with pytest.raises(DownloadError, match=r"(?i)content-length|invalid"):
+            mgr.download(entry, client=_mock_client(handler))
+
+    def test_disk_full_oserror_wrapped(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        entry = next(e for e in load_registry() if e.default)
+        mgr = ModelManager(root=tmp_path / ".dbsprout" / "models")
+
+        def handler(_req: httpx.Request) -> httpx.Response:
+            return httpx.Response(200, content=b"data")
+
+        real_open = Path.open
+
+        def _boom(self: Path, *a: object, **k: object):  # type: ignore[no-untyped-def]
+            if self.suffix == ".part":
+                raise OSError("No space left on device")
+            return real_open(self, *a, **k)  # type: ignore[arg-type]
+
+        monkeypatch.setattr(Path, "open", _boom)
+        with pytest.raises(DownloadError, match=r"(?i)disk|space|write|os"):
+            mgr.download(entry, client=_mock_client(handler))
+
+    def test_download_timeout_constant_reused(self) -> None:
+        # Single source of truth for the socket timeout (no duplicated 600.0).
+        assert manager_mod._DOWNLOAD_TIMEOUT_S == 600.0
 
 
 class TestDownload:

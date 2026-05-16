@@ -2,12 +2,17 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING, Any
 
 import typer
 
 from dbsprout.cli.console import console
 from dbsprout.config import load_config
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 # NOTE: no_args_is_help is intentionally NOT set — the `pipeline` callback below
 # uses invoke_without_command=True and renders help itself for the bare
@@ -75,6 +80,41 @@ def pipeline(  # noqa: PLR0913 - CLI flags are inherently positional/named
     )
 
 
+@dataclass(frozen=True)
+class _PipelineComponents:
+    """Injectable seam for the four pipeline stages (S-068 review #16).
+
+    Holds factories/callables instead of importing the heavy stage modules at
+    the call site. Tests replace this whole object so the suite runs without
+    the ``[data]``/``[stats]`` extras (no real ``polars``/``torch``/``mlx``
+    import); production uses :func:`_default_components`, which lazily imports
+    the real implementations only when the pipeline actually runs.
+    """
+
+    make_extractor: Callable[[], Any]
+    make_preparer: Callable[[], Any]
+    select_trainer: Callable[[], Any]
+    make_exporter: Callable[[], Any]
+
+
+def _default_components() -> _PipelineComponents:
+    """Build the real pipeline components (heavy deps lazily imported here)."""
+    # Lazy import: keeps polars/torch/unsloth/mlx off the <500 ms startup path
+    # AND off plain ``import dbsprout.cli.commands.train`` (so core-only test
+    # collection never pulls the optional extras).
+    from dbsprout.train.exporter import Exporter  # noqa: PLC0415
+    from dbsprout.train.extractor import SampleExtractor  # noqa: PLC0415
+    from dbsprout.train.mlx_trainer import select_trainer  # noqa: PLC0415
+    from dbsprout.train.serializer import DataPreparer  # noqa: PLC0415
+
+    return _PipelineComponents(
+        make_extractor=SampleExtractor,
+        make_preparer=DataPreparer,
+        select_trainer=select_trainer,
+        make_exporter=Exporter,
+    )
+
+
 def _run_pipeline(  # noqa: PLR0913 - one knob per pipeline stage
     *,
     db: str,
@@ -83,15 +123,13 @@ def _run_pipeline(  # noqa: PLR0913 - one knob per pipeline stage
     output: Path,
     seed: int,
     quiet: bool,
+    components: _PipelineComponents | None = None,
 ) -> None:
-    """Glue the four pipeline stages together. All heavy deps lazy-imported."""
-    # Lazy import: keeps polars/torch/unsloth/mlx off the <500 ms startup path.
+    """Glue the four pipeline stages together via the injectable seam."""
     from dbsprout.cli._utils import scrub_secrets  # noqa: PLC0415
-    from dbsprout.train.exporter import Exporter  # noqa: PLC0415
-    from dbsprout.train.extractor import SampleExtractor  # noqa: PLC0415
-    from dbsprout.train.mlx_trainer import select_trainer  # noqa: PLC0415
     from dbsprout.train.models import ExtractorConfig, NullPolicy  # noqa: PLC0415
-    from dbsprout.train.serializer import DataPreparer  # noqa: PLC0415
+
+    comps = components if components is not None else _default_components()
 
     config = load_config()
     train_overrides = {k: v for k, v in {"epochs": epochs}.items() if v is not None}
@@ -103,9 +141,12 @@ def _run_pipeline(  # noqa: PLR0913 - one knob per pipeline stage
     gguf_dir = output / "models" / "custom"
 
     # Stage 1: extract a stratified sample from the live database.
+    # ``scrub_secrets(str(exc), db)`` is applied uniformly to ALL four stage
+    # handlers (defense-in-depth, S-068 review #17): any stage's exception
+    # message could embed the DB URL/credentials transitively.
     console.print("[bold blue]\\[1/4][/bold blue] Extracting sample from database...")
     try:
-        extract_result = SampleExtractor().extract(
+        extract_result = comps.make_extractor().extract(
             source=db,
             config=ExtractorConfig(
                 sample_rows=sample_rows, output_dir=sample_dir, seed=seed, quiet=quiet
@@ -119,7 +160,7 @@ def _run_pipeline(  # noqa: PLR0913 - one knob per pipeline stage
     # Stage 2: serialize Parquet samples into GReaT-style JSONL.
     console.print("[bold blue]\\[2/4][/bold blue] Serializing rows to JSONL corpus...")
     try:
-        serialize_result = DataPreparer().prepare(
+        serialize_result = comps.make_preparer().prepare(
             input_dir=sample_dir,
             output_path=corpus_path,
             seed=seed,
@@ -127,38 +168,38 @@ def _run_pipeline(  # noqa: PLR0913 - one knob per pipeline stage
             quiet=quiet,
         )
     except (FileNotFoundError, ValueError) as exc:
-        console.print(f"[red]Error:[/red] {exc}")
+        console.print(f"[red]Error:[/red] {scrub_secrets(str(exc), db)}")
         raise typer.Exit(code=1) from exc
 
     # Stage 3: fine-tune a LoRA adapter (CUDA or MLX, auto-detected).
     console.print("[bold blue]\\[3/4][/bold blue] Fine-tuning LoRA adapter...")
     try:
-        trainer = select_trainer()
+        trainer = comps.select_trainer()
     except RuntimeError as exc:
-        console.print(f"[red]Error:[/red] {exc}")
+        console.print(f"[red]Error:[/red] {scrub_secrets(str(exc), db)}")
         raise typer.Exit(code=1) from exc
     try:
-        adapter = trainer.train(  # type: ignore[attr-defined]
+        adapter = trainer.train(
             corpus_path=serialize_result.output_path,
             config=train_config,
             output_dir=adapter_dir,
             quiet=quiet,
         )
     except (RuntimeError, FileNotFoundError, ValueError) as exc:
-        console.print(f"[red]Error:[/red] {exc}")
+        console.print(f"[red]Error:[/red] {scrub_secrets(str(exc), db)}")
         raise typer.Exit(code=1) from exc
 
     # Stage 4: merge + quantize to a GGUF model.
     console.print("[bold blue]\\[4/4][/bold blue] Exporting GGUF model...")
     try:
-        export_result = Exporter().to_gguf_result(
+        export_result = comps.make_exporter().to_gguf_result(
             adapter,
             Path(train_config.base_model),
             output_dir=gguf_dir,
             quiet=quiet,
         )
     except (RuntimeError, FileNotFoundError, ValueError) as exc:
-        console.print(f"[red]Error:[/red] {exc}")
+        console.print(f"[red]Error:[/red] {scrub_secrets(str(exc), db)}")
         raise typer.Exit(code=1) from exc
 
     _print_summary(

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -113,18 +114,40 @@ class ModelManager:
         the partial ``.part`` file is kept so a re-run can resume.
         """
         dest = self.install_path(entry)
+
+        # Defense-in-depth: even though ModelEntry validates ``filename``,
+        # assert the resolved destination stays inside base_dir before any
+        # write (path-traversal / SSRF latent fix).
+        base = self.base_dir.resolve()
+        if not dest.resolve().is_relative_to(base):
+            msg = f"refusing to write outside {base}: {dest}"
+            raise DownloadError(msg)
+
         if dest.is_file() and not force:
             return dest
 
         import httpx  # noqa: PLC0415 - keep httpx off the <500ms CLI startup path
 
         owns_client = client is None
-        http = client if client is not None else httpx.Client(timeout=_DOWNLOAD_TIMEOUT_S)
+        # ``follow_redirects=True``: HuggingFace ``resolve`` returns a 302 to a
+        # CDN; without this the standalone manager client fails the download.
+        http = (
+            client
+            if client is not None
+            else httpx.Client(timeout=_DOWNLOAD_TIMEOUT_S, follow_redirects=True)
+        )
         try:
             return self._stream_to_part(entry, dest, http, progress_cb)
         except (httpx.HTTPError, httpx.StreamError) as exc:
             msg = (
                 f"download of {entry.name!r} failed: {exc}. "
+                f"Re-run `dbsprout models download {entry.name}` to resume."
+            )
+            raise DownloadError(msg) from exc
+        except OSError as exc:
+            # Disk full / permission / I/O error while writing the .part.
+            msg = (
+                f"download of {entry.name!r} failed writing to disk: {exc}. "
                 f"Re-run `dbsprout models download {entry.name}` to resume."
             )
             raise DownloadError(msg) from exc
@@ -151,12 +174,35 @@ class ModelManager:
             mode = "ab" if resuming else "wb"
             downloaded = existing if resuming else 0
             remaining = response.headers.get("Content-Length")
-            total = (downloaded + int(remaining)) if remaining else 0
+            try:
+                total = (downloaded + int(remaining)) if remaining else 0
+            except ValueError as exc:
+                msg = f"server sent an invalid Content-Length {remaining!r} for {entry.name!r}"
+                raise DownloadError(msg) from exc
+            # Hash the full content while writing so the integrity check costs
+            # no extra read. A resumed (.part) download cannot be hash-verified
+            # (the prefix bytes were not streamed this run), so verification is
+            # skipped when resuming — the .part is kept for a fresh retry.
+            hasher = hashlib.sha256() if (entry.sha256 and not resuming) else None
             with part.open(mode) as fh:
                 for chunk in response.iter_bytes():
                     fh.write(chunk)
+                    if hasher is not None:
+                        hasher.update(chunk)
                     downloaded += len(chunk)
                     if progress_cb is not None:
                         progress_cb(downloaded, total or downloaded)
+
+        if hasher is not None:
+            actual = hasher.hexdigest()
+            if actual != entry.sha256:
+                part.unlink(missing_ok=True)
+                msg = (
+                    f"sha256 mismatch for {entry.name!r}: expected "
+                    f"{entry.sha256}, got {actual}. The corrupt partial file "
+                    "was removed; re-run the download."
+                )
+                raise DownloadError(msg)
+
         os.replace(part, dest)  # atomic finalize of the completed download
         return dest

@@ -11,10 +11,13 @@ time — so the ``<500 ms`` CLI startup budget is preserved and ``import
 dbsprout`` works without ``dbsprout[train-cuda]`` installed. This mirrors the
 lazy-import contract in :class:`dbsprout.spec.providers.embedded.EmbeddedProvider`.
 
-Privacy safeguard: the trainer **always** forces completion-only loss so the
-model is trained on the serialized row text only and never to reproduce a
-prompt verbatim, regardless of the user's ``TrainConfig.completion_only_loss``
-value.
+Privacy safeguard: the **structural** guarantee is the GReaT corpus format
+itself (S-063) — every training row is a single ``text`` field with NO
+prompt/completion split, so by construction there is no prompt for the model
+to memorize verbatim. ``completion_only_loss`` is still forced ``True``
+regardless of ``TrainConfig.completion_only_loss``, but for this single-text
+corpus it is a no-op kept only to future-proof any later prompt/completion
+corpus; it is not the load-bearing safeguard.
 """
 
 from __future__ import annotations
@@ -104,8 +107,10 @@ class QLoRATrainer:
             *corpus_path* exists but is empty.
         """
         start = time.perf_counter()
-        backend = _select_backend()
 
+        # Validate the cheap *local* preconditions BEFORE probing for a
+        # GPU/backend. On a CPU host with a missing corpus the user should get
+        # the actionable corpus error, not a misleading "install CUDA" hint.
         if not corpus_path.exists():
             raise FileNotFoundError(
                 f"training corpus not found: {corpus_path}. Run 'dbsprout train serialize' first."
@@ -115,6 +120,8 @@ class QLoRATrainer:
         )
         if sample_count == 0:
             raise ValueError(f"training corpus {corpus_path} is empty; nothing to train on.")
+
+        backend = _select_backend()
 
         adapter_dir = output_dir / (schema_hash or "default")
         adapter_dir.mkdir(parents=True, exist_ok=True)
@@ -163,15 +170,22 @@ class QLoRATrainer:
         """Run the Unsloth QLoRA training loop; return the final training loss.
 
         Heavy deps are imported here so module import stays light. The
-        completion-only-loss privacy safeguard is forced ``True`` into the
-        trainer config independently of ``config.completion_only_loss``.
+        completion-only-loss flag is forced ``True`` independently of
+        ``config.completion_only_loss`` — but note it is a no-op for the GReaT
+        single-text corpus (no prompt exists to memorize *by construction*);
+        the corpus format is the real privacy safeguard. A non-numeric backend
+        loss degrades to ``None`` rather than raising.
         """
         try:
+            # All three live in the same ``dbsprout[train-cuda]`` extra. Folding
+            # them into one guarded block means a *partial* install (e.g.
+            # unsloth present but ``datasets``/``trl`` missing) still surfaces
+            # the friendly install hint instead of a bare ImportError.
+            from datasets import load_dataset  # noqa: PLC0415
+            from trl import SFTConfig, SFTTrainer  # noqa: PLC0415
             from unsloth import FastLanguageModel  # noqa: PLC0415
-        except ImportError as exc:  # pragma: no cover - exercised via mock injection
+        except ImportError as exc:
             raise RuntimeError(_INSTALL_HINT) from exc
-        from datasets import load_dataset  # noqa: PLC0415
-        from trl import SFTConfig, SFTTrainer  # noqa: PLC0415
 
         with Progress(
             SpinnerColumn(),
@@ -208,9 +222,13 @@ class QLoRATrainer:
                 learning_rate=config.learning_rate,
                 per_device_train_batch_size=config.batch_size,
                 dataset_text_field="text",
-                # Privacy safeguard: always True regardless of user config so
-                # the model never memorizes prompts (no prompt-only rows here,
-                # but this future-proofs prompt/completion corpora).
+                # Privacy: forced True regardless of ``config.completion_only_loss``.
+                # NOTE: for the GReaT corpus (S-063) this is a *no-op by
+                # construction* — every row is a single ``text`` field with NO
+                # prompt/completion split, so there is no prompt to memorize.
+                # The real structural safeguard is the corpus format itself;
+                # this flag is kept only to future-proof any later
+                # prompt/completion corpus and is not load-bearing today.
                 completion_only_loss=True,
             )
             trainer = SFTTrainer(
@@ -224,4 +242,12 @@ class QLoRATrainer:
             progress.update(task, description="Done", completed=1, total=1)
 
         loss = getattr(stats, "training_loss", None)
-        return float(loss) if loss is not None else None
+        if loss is None:
+            return None
+        try:
+            return float(loss)
+        except (TypeError, ValueError):
+            # A backend reporting a non-numeric loss must not crash a
+            # completed run; degrade to "no loss history" instead.
+            logger.warning("non-numeric training_loss %r; reporting final_loss=None", loss)
+            return None

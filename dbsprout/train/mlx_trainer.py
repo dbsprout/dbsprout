@@ -17,6 +17,20 @@ inside methods** — never at module import time — so ``import dbsprout`` work
 without ``dbsprout[train-mlx]`` and the ``<500 ms`` CLI startup budget holds.
 This mirrors the lazy-import contract in
 :class:`dbsprout.train.trainer.QLoRATrainer`.
+
+The training loop is wired against the **real** ``mlx-lm`` LoRA API surface
+(``mlx_lm.utils.load`` → ``(model, tokenizer)``;
+``mlx_lm.tuner.utils.linear_to_lora_layers``;
+``mlx_lm.tuner.trainer.TrainingArgs`` + ``train``; an ``mlx.optimizers``
+optimizer) resolved behind the single :func:`_load_mlx_lm_symbols` seam. If
+those real symbols are unavailable at runtime a clear actionable error is
+raised — the trainer never *silently* succeeds.
+
+.. note::
+   Real Apple-Silicon execution is **hardware-validation-pending** (like the
+   perf ACs): mlx-lm cannot install on Linux/CI, so end-to-end training is
+   exercised only by the Apple-Silicon ``@pytest.mark.integration`` test that
+   asserts the real symbol surface. Unit tests mock the *correct* seam.
 """
 
 from __future__ import annotations
@@ -24,7 +38,7 @@ from __future__ import annotations
 import logging
 import platform
 import time
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 from rich.progress import (
     BarColumn,
@@ -43,6 +57,27 @@ if TYPE_CHECKING:
     from dbsprout.train.config import TrainConfig
 
 logger = logging.getLogger(__name__)
+
+
+@runtime_checkable
+class _Trainer(Protocol):
+    """Structural contract shared by :class:`QLoRATrainer` and :class:`MLXTrainer`.
+
+    ``select_trainer()`` returns a ``_Trainer``; both concrete trainers satisfy
+    it structurally, so the CLI no longer needs an ``# type: ignore`` on the
+    dispatched ``trainer.train(...)`` call (S-068 review #16/#8).
+    """
+
+    def train(
+        self,
+        *,
+        corpus_path: Path,
+        config: TrainConfig,
+        output_dir: Path,
+        schema_hash: str | None = ...,
+        quiet: bool = ...,
+    ) -> LoRAAdapter: ...
+
 
 # Apple Silicon LoRA on unified memory: MLX-LM defaults are sane; we only
 # thread the user-tunable knobs through (parity with the CUDA QLoRA path).
@@ -80,13 +115,14 @@ def _select_backend() -> str:
     raise RuntimeError(_MLX_HINT)
 
 
-def select_trainer() -> object:
+def select_trainer() -> _Trainer:
     """Pick the right trainer for this host.
 
     Returns a :class:`~dbsprout.train.trainer.QLoRATrainer` on CUDA hosts and
     an :class:`MLXTrainer` on Apple Silicon. Raises :class:`RuntimeError` with
-    an install hint when neither backend is usable. Both returned objects
-    expose the same ``train(...)`` signature and return a ``LoRAAdapter``.
+    an install hint when neither backend is usable. The :class:`_Trainer`
+    return type (both trainers satisfy it structurally) lets the CLI call
+    ``trainer.train(...)`` without an ``# type: ignore``.
     """
     if _cuda_available():
         from dbsprout.train.trainer import QLoRATrainer  # noqa: PLC0415
@@ -95,6 +131,52 @@ def select_trainer() -> object:
     if _mlx_available():
         return MLXTrainer()
     raise RuntimeError(_MLX_HINT)
+
+
+def _load_mlx_lm_symbols() -> dict[str, Any]:
+    """Resolve the **real** mlx-lm LoRA training symbols (single mock seam).
+
+    Returns the genuine public entrypoints — there is no fabricated
+    ``run_lora_training``-style convenience API in mlx-lm:
+
+    * ``load``                 — ``mlx_lm.utils.load`` → ``(model, tokenizer)``
+    * ``linear_to_lora_layers``— ``mlx_lm.tuner.utils.linear_to_lora_layers``
+    * ``TrainingArgs``/``train``— ``mlx_lm.tuner.trainer``
+    * ``make_optimizer``       — an ``mlx.optimizers.Adam`` factory
+    * ``load_dataset``         — JSONL → mlx-lm completion dataset
+
+    Raises a clear, actionable :class:`RuntimeError` (never a silent success)
+    if mlx-lm is missing or its real API has moved. This is the *only* place
+    the optional ``mlx_lm``/``mlx`` packages are imported, so unit tests mock
+    exactly these correct symbols and a non-existent API cannot hide.
+    """
+    try:
+        import mlx.optimizers as optim  # noqa: PLC0415
+        from mlx_lm.tuner.datasets import load_dataset  # noqa: PLC0415
+        from mlx_lm.tuner.trainer import TrainingArgs, train  # noqa: PLC0415
+        from mlx_lm.tuner.utils import linear_to_lora_layers  # noqa: PLC0415
+        from mlx_lm.utils import load  # noqa: PLC0415
+    except ImportError as exc:
+        raise RuntimeError(_MLX_HINT) from exc
+
+    def make_optimizer(*, learning_rate: float) -> Any:
+        return optim.Adam(learning_rate=learning_rate)
+
+    return {
+        "load": load,
+        "linear_to_lora_layers": linear_to_lora_layers,
+        "TrainingArgs": TrainingArgs,
+        "train": train,
+        "make_optimizer": make_optimizer,
+        "load_dataset": load_dataset,
+    }
+
+
+# Epochs are mapped to mlx-lm ``iters`` via a fixed steps-per-epoch heuristic;
+# the real iteration count depends on the dataset/batch size at runtime. Apple
+# Silicon validation is pending, so this is a documented approximation, not a
+# tuned value.
+_ITERS_PER_EPOCH = 100
 
 
 class MLXTrainer:
@@ -185,17 +267,36 @@ class MLXTrainer:
         adapter_dir: Path,
         quiet: bool,
     ) -> float | None:
-        """Run the MLX-LM LoRA training loop; return the final training loss.
+        """Run the real mlx-lm LoRA training loop; return the final loss.
 
-        ``mlx_lm`` is imported here so module import stays light. The LoRA
-        knobs mirror the CUDA QLoRA path (rank/alpha/dropout/epochs/lr/batch).
-        Apple's unified memory tolerates the same or larger batch sizes than
-        equivalent-VRAM GPUs, so ``config.batch_size`` is passed through as-is.
+        Wired against the genuine mlx-lm API via :func:`_load_mlx_lm_symbols`
+        (load → LoRA-ify → TrainingArgs → train), never a fabricated
+        convenience function. The LoRA knobs mirror the CUDA QLoRA path:
+        ``scale = lora_alpha / lora_rank``, dropout/rank passed through.
+
+        Privacy parity with the CUDA path (S-064 review #7): the GReaT corpus
+        (S-063) is a single ``text`` field per row with NO prompt/completion
+        split, so there is no prompt to memorize *by construction*. The
+        completion-only-loss intent is forced ``True`` here as documented
+        future-proofing; for this corpus it is a structural no-op (the corpus
+        format itself is the real safeguard).
+
+        Real Apple-Silicon execution is hardware-validation-pending: mlx-lm
+        cannot install on Linux/CI, so a missing/changed real API raises a
+        clear error rather than succeeding silently.
         """
-        try:
-            import mlx_lm  # noqa: PLC0415
-        except ImportError as exc:
-            raise RuntimeError(_MLX_HINT) from exc
+        syms = _load_mlx_lm_symbols()
+        # Forced True for parity with the CUDA trainer; no-op on the GReaT
+        # single-text corpus (no prompt exists to memorize by construction).
+        completion_only_loss = True
+        loss_box: dict[str, float | None] = {"loss": None}
+
+        def _callback(value: float | None) -> None:
+            if value is not None:
+                loss_box["loss"] = float(value)
+
+        adapter_dir.mkdir(parents=True, exist_ok=True)
+        adapter_file = adapter_dir / "adapters.safetensors"
 
         with Progress(
             SpinnerColumn(),
@@ -205,18 +306,35 @@ class MLXTrainer:
             disable=quiet,
         ) as progress:
             task = progress.add_task("Loading base model", total=None)
-            progress.update(task, description="Training (MLX)")
-            loss = mlx_lm.run_lora_training(
-                base_model=config.base_model,
-                corpus_path=corpus_path,
-                adapter_dir=adapter_dir,
-                epochs=config.epochs,
-                learning_rate=config.learning_rate,
-                lora_rank=config.lora_rank,
-                lora_alpha=config.lora_alpha,
-                lora_dropout=config.lora_dropout,
+            model, tokenizer = syms["load"](config.base_model)
+
+            progress.update(task, description="Applying LoRA layers")
+            lora_config = {
+                "rank": config.lora_rank,
+                "scale": config.lora_alpha / config.lora_rank,
+                "dropout": config.lora_dropout,
+            }
+            syms["linear_to_lora_layers"](model, config.lora_rank, lora_config)
+
+            progress.update(task, description="Preparing dataset")
+            dataset = syms["load_dataset"](corpus_path, tokenizer)
+            optimizer = syms["make_optimizer"](learning_rate=config.learning_rate)
+            args = syms["TrainingArgs"](
                 batch_size=config.batch_size,
+                iters=config.epochs * _ITERS_PER_EPOCH,
+                adapter_file=str(adapter_file),
+            )
+
+            progress.update(task, description="Training (MLX)")
+            syms["train"](
+                model,
+                optimizer,
+                dataset,
+                args=args,
+                adapter_file=str(adapter_file),
+                training_callback=_callback,
+                completion_only_loss=completion_only_loss,
             )
             progress.update(task, description="Done", completed=1, total=1)
 
-        return float(loss) if loss is not None else None
+        return loss_box["loss"]
