@@ -190,7 +190,13 @@ def diff_proxy(
     ),
     output_format: str = typer.Option("rich", "--format", help="Output format: rich, json."),
     output_dir: str = typer.Option(
-        ".", "--output-dir", "-o", help="Project root containing .dbsprout/."
+        ".",
+        "--output-dir",
+        "-o",
+        help=(
+            "Project root containing .dbsprout/. Config and snapshots are read "
+            "from this directory — run from a trusted location."
+        ),
     ),
 ) -> None:
     """Report schema changes since the last snapshot."""

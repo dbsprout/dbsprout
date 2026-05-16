@@ -65,6 +65,12 @@ class TestDiffHelp:
         assert "--output-dir" in output
         assert "Report schema changes" in output
 
+    def test_output_dir_help_documents_trust_boundary(self) -> None:
+        """AC-9: --output-dir help warns the directory is a trust boundary."""
+        result = runner.invoke(app, ["diff", "--help"])
+        out = _strip_ansi(result.output)
+        assert "trusted location" in out.lower()
+
 
 class TestDiffArgValidation:
     def test_db_and_file_both_provided_exits_2(self) -> None:

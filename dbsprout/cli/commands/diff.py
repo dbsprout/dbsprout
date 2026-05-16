@@ -1,4 +1,10 @@
-"""``dbsprout diff`` command — report schema changes since the last snapshot."""
+"""``dbsprout diff`` command — report schema changes since the last snapshot.
+
+Trust boundary: ``--output-dir`` (default ``.``) is read for ``dbsprout.toml``
+and ``.dbsprout/snapshots/``. Treat it as trusted input — run from a directory
+you control. ``--file`` rejects symlinks and resolves paths strictly;
+``--snapshot`` accepts only lowercase hex prefixes.
+"""
 
 from __future__ import annotations
 
