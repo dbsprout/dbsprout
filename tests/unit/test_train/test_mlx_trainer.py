@@ -364,6 +364,44 @@ def test_train_handles_no_loss_history(
     assert adapter.final_loss is None
 
 
+def test_train_tolerates_non_callable_seed(
+    corpus: Path, tmp_path: Path, fake_mlx: dict[str, mock.MagicMock]
+) -> None:
+    # If the seam ever resolves a non-callable ``seed`` the trainer must skip
+    # seeding gracefully rather than crash (defensive guard in _run_mlx).
+    seam = mlx_mod._load_mlx_lm_symbols()
+    seam["seed"] = None  # type: ignore[assignment]
+    with (
+        mock.patch("dbsprout.train.mlx_trainer._cuda_available", return_value=False),
+        mock.patch("dbsprout.train.mlx_trainer._mlx_available", return_value=True),
+        mock.patch("dbsprout.train.mlx_trainer._load_mlx_lm_symbols", return_value=seam),
+    ):
+        adapter = MLXTrainer().train(
+            corpus_path=corpus, config=TrainConfig(epochs=1), output_dir=tmp_path / "a"
+        )
+    assert adapter.train_samples == 2
+    fake_mlx["seed"].assert_not_called()
+
+
+def test_train_tolerates_model_without_freeze_or_layers(
+    corpus: Path, tmp_path: Path, fake_mlx: dict[str, mock.MagicMock]
+) -> None:
+    # A bare model object (no .freeze / no .layers) must not crash: num_layers
+    # falls back to 0 and freeze is skipped (defensive guards in _run_mlx).
+    bare_model = object()
+    fake_mlx["load"].return_value = (bare_model, mock.MagicMock(name="tokenizer"))
+    with (
+        mock.patch("dbsprout.train.mlx_trainer._cuda_available", return_value=False),
+        mock.patch("dbsprout.train.mlx_trainer._mlx_available", return_value=True),
+    ):
+        MLXTrainer().train(
+            corpus_path=corpus, config=TrainConfig(epochs=1), output_dir=tmp_path / "a"
+        )
+    # num_layers defaulted to 0 -> threaded into linear_to_lora_layers + config
+    assert fake_mlx["linear_to_lora_layers"].call_args.args[1] == 0
+    assert fake_mlx["save_config"].call_args.args[0]["num_layers"] == 0
+
+
 # --- Task 6: error paths ----------------------------------------------------
 
 
