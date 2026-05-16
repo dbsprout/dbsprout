@@ -320,6 +320,10 @@ def _print_summary(
         f"  GGUF model        : [cyan]{gguf_path}[/cyan] "
         f"({_human_size(size_bytes)})"
     )
+    achieved_epsilon = getattr(adapter, "achieved_epsilon", None)
+    if achieved_epsilon is not None:
+        dp_delta = getattr(adapter, "dp_delta", None)
+        console.print(f"  DP guarantee      : (ε={achieved_epsilon}, δ={dp_delta})")
 
 
 @train_app.command("extract")
