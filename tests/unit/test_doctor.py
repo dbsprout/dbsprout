@@ -7,7 +7,7 @@ import shutil
 from collections import namedtuple
 from typing import TYPE_CHECKING
 
-from dbsprout.doctor import CheckResult
+from dbsprout.doctor import CheckResult, run_all_checks
 from dbsprout.doctor import checks as checks_mod
 from dbsprout.doctor.checks import (
     check_database,
@@ -129,3 +129,22 @@ def test_check_training_none_is_warn(monkeypatch: pytest.MonkeyPatch) -> None:
     assert r.category == "Training"
     assert r.status == "warn"
     assert r.fix is not None
+
+
+def test_run_all_checks_covers_all_categories() -> None:
+    results = run_all_checks(db_url=None, config_path=None)
+    cats = {r.category for r in results}
+    assert {
+        "Environment",
+        "Database",
+        "Models",
+        "Plugins",
+        "Privacy",
+        "Training",
+    } <= cats
+
+
+def test_run_all_checks_never_raises_on_bad_db() -> None:
+    results = run_all_checks(db_url="notadialect://x", config_path=None)
+    db = next(r for r in results if r.category == "Database")
+    assert db.status == "fail"

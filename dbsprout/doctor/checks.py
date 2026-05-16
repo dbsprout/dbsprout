@@ -261,9 +261,15 @@ def check_training() -> CheckResult:
 
 
 def run_all_checks(
-    *,
-    db_url: str | None = None,  # noqa: ARG001 - wired up in Task 8
-    config_path: Path | None = None,  # noqa: ARG001 - wired up in Task 8
+    *, db_url: str | None = None, config_path: Path | None = None
 ) -> list[CheckResult]:
-    """Placeholder — full orchestration implemented in Task 8."""
-    return []
+    """Run every environment check. Never raises; failures become results."""
+    results: list[CheckResult] = [check_python_version()]
+    results.extend(check_extras())
+    results.append(check_disk_space())
+    results.append(check_database(db_url))
+    results.append(check_model())
+    results.append(check_plugins())
+    results.append(check_secrets(config_path))
+    results.append(check_training())
+    return results
