@@ -114,57 +114,99 @@ def corpus(tmp_path: Path) -> Path:
     return p
 
 
+class _FakeTrainingCallback:
+    """Stand-in for the real ``mlx_lm.tuner.trainer.TrainingCallback`` base.
+
+    The real base class defines no-op ``on_train_loss_report(dict)`` /
+    ``on_val_loss_report(dict)`` hooks; the trainer subclasses it. Mirroring
+    the *real* base (not a MagicMock) means the subclass MRO/`super().__init__`
+    behaves as it would on Apple Silicon.
+    """
+
+    def on_train_loss_report(self, info: dict[str, object]) -> None:
+        pass
+
+    def on_val_loss_report(self, info: dict[str, object]) -> None:
+        pass
+
+
 @pytest.fixture
 def fake_mlx(monkeypatch: pytest.MonkeyPatch) -> Iterator[dict[str, mock.MagicMock]]:
-    """Patch the REAL mlx-lm symbol seam (no fabricated module API).
+    """Patch the VERIFIED-REAL mlx-lm symbol seam (no fabricated module API).
 
-    Mocks the *correct* entrypoints — ``load``/``linear_to_lora_layers``/
-    ``TrainingArgs``/``train`` (the actual ``mlx_lm.tuner`` surface) — so a
-    speculative non-existent API (e.g. ``mlx_lm.run_lora_training``) can no
-    longer hide behind the mock. ``_load_mlx_lm_symbols`` is the single seam.
+    Mocks exactly the entrypoints verified against the pinned ``mlx-lm``
+    source — ``load``/``save_config``/``TextDataset``/``CacheDataset``/
+    ``linear_to_lora_layers``/``TrainingArgs``/``train``/``TrainingCallback``/
+    ``make_optimizer``/``seed`` — so a speculative non-existent API (e.g.
+    ``mlx_lm.run_lora_training`` or a ``completion_only_loss`` ``train()``
+    kwarg) can no longer hide behind the mock. ``_load_mlx_lm_symbols`` is the
+    single seam. The fake ``train`` emulates the real contract: it reads
+    ``adapter_file`` from the ``TrainingArgs`` instance (NOT from a ``train()``
+    kwarg), persists ``adapters.safetensors``, and reports loss via
+    ``training_callback.on_train_loss_report({...})`` (NOT ``cb(value)``).
     """
     captured: dict[str, mock.MagicMock] = {}
 
     model = mock.MagicMock(name="model")
+    model.layers = [mock.MagicMock(name=f"layer{i}") for i in range(3)]
     tokenizer = mock.MagicMock(name="tokenizer")
     load = mock.MagicMock(name="load", return_value=(model, tokenizer))
+    save_config = mock.MagicMock(name="save_config")
+    text_dataset = mock.MagicMock(name="TextDataset", return_value="TEXT_DS")
+    cache_dataset = mock.MagicMock(name="CacheDataset", return_value="CACHED_DS")
     linear_to_lora_layers = mock.MagicMock(name="linear_to_lora_layers")
-    training_args = mock.MagicMock(name="TrainingArgs")
     optimizer = mock.MagicMock(name="optimizer")
     make_optimizer = mock.MagicMock(name="make_optimizer", return_value=optimizer)
-    load_dataset = mock.MagicMock(name="load_dataset", return_value="DATASET")
+    seed = mock.MagicMock(name="seed")
+
+    def _make_args(**kw: object) -> mock.MagicMock:
+        # Real TrainingArgs is a dataclass; the instance carries adapter_file
+        # and iters as attributes. Reflect the passed kwargs onto the instance.
+        inst = mock.MagicMock(name="TrainingArgsInstance")
+        for key, val in kw.items():
+            setattr(inst, key, val)
+        return inst
+
+    training_args = mock.MagicMock(name="TrainingArgs", side_effect=_make_args)
 
     def _train(*_a: object, **kw: object) -> None:
-        # The real mlx_lm.tuner.trainer.train reports loss via a callback and
-        # persists adapters.safetensors itself; emulate the persist so the
-        # adapter-dir contract is exercised.
-        adapter_file = kw.get("adapter_file")
+        # The real mlx_lm.tuner.trainer.train persists adapters.safetensors at
+        # args.adapter_file and reports loss to a TrainingCallback instance.
+        args = kw.get("args")
+        adapter_file = getattr(args, "adapter_file", None)
         if isinstance(adapter_file, str):
             Path(adapter_file).write_bytes(b"\x00")
         cb = kw.get("training_callback")
         if cb is not None:
-            cb(0.2468)  # type: ignore[operator]
+            cb.on_train_loss_report({"iteration": 1, "train_loss": 0.2468})
 
     train = mock.MagicMock(name="train", side_effect=_train)
 
     captured.update(
         load=load,
+        save_config=save_config,
+        TextDataset=text_dataset,
+        CacheDataset=cache_dataset,
         linear_to_lora_layers=linear_to_lora_layers,
         TrainingArgs=training_args,
         train=train,
         make_optimizer=make_optimizer,
-        load_dataset=load_dataset,
+        seed=seed,
     )
 
     monkeypatch.setattr(
         "dbsprout.train.mlx_trainer._load_mlx_lm_symbols",
         lambda: {
             "load": load,
+            "save_config": save_config,
+            "TextDataset": text_dataset,
+            "CacheDataset": cache_dataset,
             "linear_to_lora_layers": linear_to_lora_layers,
             "TrainingArgs": training_args,
             "train": train,
+            "TrainingCallback": _FakeTrainingCallback,
             "make_optimizer": make_optimizer,
-            "load_dataset": load_dataset,
+            "seed": seed,
         },
     )
     return captured
@@ -234,15 +276,26 @@ def test_train_threads_config_into_mlx(
         MLXTrainer().train(corpus_path=corpus, config=cfg, output_dir=tmp_path / "a")
     # base model -> real load() entrypoint
     assert fake_mlx["load"].call_args.args[0] == cfg.base_model
-    # LoRA rank/alpha/dropout -> real linear_to_lora_layers() config
-    lora_cfg = fake_mlx["linear_to_lora_layers"].call_args.args[2]
+    # real linear_to_lora_layers(model, num_layers, config): 2nd positional
+    # arg is num_layers (len(model.layers)==3 in the fixture), NOT the rank.
+    lora_call = fake_mlx["linear_to_lora_layers"].call_args
+    assert lora_call.args[1] == 3
+    lora_cfg = lora_call.args[2]
     assert lora_cfg["rank"] == 8
     assert lora_cfg["scale"] == pytest.approx(64 / 8)  # alpha / rank
     assert lora_cfg["dropout"] == pytest.approx(0.1)
-    # batch size + iters (epochs) -> real TrainingArgs
+    # batch size + iters (epochs) -> real TrainingArgs (dataclass) kwargs
     ta_kwargs = fake_mlx["TrainingArgs"].call_args.kwargs
     assert ta_kwargs["batch_size"] == 6
     assert ta_kwargs["iters"] >= 4  # epochs threaded through
+    # adapter_file is a TrainingArgs FIELD, never a train() kwarg
+    assert "adapter_file" in ta_kwargs
+    assert "adapter_file" not in fake_mlx["train"].call_args.kwargs
+    # real train() is called with keyword args (verified signature shape)
+    train_kwargs = fake_mlx["train"].call_args.kwargs
+    assert set(train_kwargs) >= {"model", "optimizer", "train_dataset", "args", "training_callback"}
+    # no fabricated completion_only_loss kwarg on real train()
+    assert "completion_only_loss" not in train_kwargs
     # learning rate -> optimizer
     assert fake_mlx["make_optimizer"].call_args.kwargs["learning_rate"] == pytest.approx(1e-3)
 
@@ -256,13 +309,25 @@ def test_train_passes_corpus_and_adapter_dir_to_backend(
         mock.patch("dbsprout.train.mlx_trainer._mlx_available", return_value=True),
     ):
         MLXTrainer().train(corpus_path=corpus, config=TrainConfig(epochs=1), output_dir=out)
-    # corpus path flows into the real dataset loader
-    assert fake_mlx["load_dataset"].call_args.args[0] == corpus
-    # adapters.safetensors is written into the adapter dir by the real train()
+    # parsed JSONL rows flow into the real TextDataset(rows, tokenizer)
+    td_rows = fake_mlx["TextDataset"].call_args.args[0]
+    assert [r["text"] for r in td_rows] == [
+        "[users] id is 1, name is Ada",
+        "[users] id is 2, name is Linus",
+    ]
+    # TextDataset is wrapped in the real CacheDataset
+    assert fake_mlx["CacheDataset"].call_args.args[0] == "TEXT_DS"
+    # adapters.safetensors written by real train() via TrainingArgs.adapter_file
     adapter_dir = out / "default"
-    train_kwargs = fake_mlx["train"].call_args.kwargs
-    assert train_kwargs["adapter_file"] == str(adapter_dir / "adapters.safetensors")
+    ta_kwargs = fake_mlx["TrainingArgs"].call_args.kwargs
+    assert ta_kwargs["adapter_file"] == str(adapter_dir / "adapters.safetensors")
     assert (adapter_dir / "adapters.safetensors").is_file()
+    # minimal real adapter_config.json written for the S-066 GGUF exporter
+    cfg_call = fake_mlx["save_config"].call_args
+    cfg_payload = cfg_call.args[0]
+    assert cfg_payload["fine_tune_type"] == "lora"
+    assert cfg_payload["base_model"] == TrainConfig().base_model
+    assert Path(cfg_call.args[1]) == adapter_dir / "adapter_config.json"
 
 
 def test_train_quiet_suppresses_progress_but_returns(
