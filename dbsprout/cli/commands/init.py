@@ -46,6 +46,12 @@ def init_command(  # noqa: PLR0913
         return _init_from_file(file, output_dir, dry_run)
 
     assert db is not None  # validated above: exactly one source is set
+
+    from dbsprout.schema.parsers.mongodb import is_mongo_url  # noqa: PLC0415
+
+    if is_mongo_url(db):
+        return _init_from_mongo(db, output_dir, dry_run)
+
     import sqlalchemy as sa  # noqa: PLC0415
 
     # ── Sanitize URL for display/storage ────────────────────────────────
@@ -293,6 +299,43 @@ def _init_from_django(
     _display_self_refs(resolved)
 
     _write_config(schema, "django", output_dir, dry_run)
+    _write_snapshot(schema, output_dir, dry_run)
+
+    console.print("\n[green bold]Done![/green bold] Run `dbsprout generate` to create seed data.")
+
+
+# ── MongoDB-based init ───────────────────────────────────────────────────
+
+
+def _init_from_mongo(db: str, output_dir: Path, dry_run: bool) -> None:
+    """Initialize from MongoDB document-sampling schema inference."""
+    from dbsprout.schema.parsers.mongodb import infer_mongo_schema  # noqa: PLC0415
+
+    try:
+        schema = infer_mongo_schema(db)
+    except ValueError as exc:
+        console.print(f"[red]Error:[/red] {exc}")
+        raise typer.Exit(code=1) from None
+
+    safe_url = schema.source or "mongodb"
+
+    if not schema.tables:
+        console.print("[yellow]Warning:[/yellow] No collections found in database.")
+        _write_config(schema, safe_url, output_dir, dry_run)
+        raise typer.Exit(code=0)
+
+    try:
+        resolved = resolve_cycles(schema)
+    except UnresolvableCycleError as exc:  # pragma: no cover — tested via --db path
+        console.print(f"[red]Error:[/red] {exc}")
+        raise typer.Exit(code=1) from None
+
+    _display_schema_table(schema)
+    _display_insertion_order(resolved)
+    _display_cycle_warnings(resolved)
+    _display_self_refs(resolved)
+
+    _write_config(schema, safe_url, output_dir, dry_run)
     _write_snapshot(schema, output_dir, dry_run)
 
     console.print("\n[green bold]Done![/green bold] Run `dbsprout generate` to create seed data.")
