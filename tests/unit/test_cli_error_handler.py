@@ -7,6 +7,7 @@ import typer
 from rich.console import Console
 from typer.testing import CliRunner
 
+from dbsprout.cli.app import app, run
 from dbsprout.cli.error_handler import format_error_panel, handle_cli_errors
 from dbsprout.errors import (
     ConnectionError,  # noqa: A004 — intentional user-facing name
@@ -75,3 +76,17 @@ def test_handle_cli_errors_passes_through_typer_exit() -> None:
     with pytest.raises(typer.Exit) as exc_info, handle_cli_errors(verbose=False):
         raise typer.Exit(code=3)
     assert exc_info.value.exit_code == 3
+
+
+def test_verbose_flag_is_accepted_by_app() -> None:
+    result = runner.invoke(app, ["--verbose", "--help"])
+    assert result.exit_code == 0
+
+
+def test_verbose_flag_short_form_is_accepted() -> None:
+    result = runner.invoke(app, ["-v", "--help"])
+    assert result.exit_code == 0
+
+
+def test_run_entrypoint_is_callable() -> None:
+    assert callable(run)

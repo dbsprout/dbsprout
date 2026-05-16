@@ -43,7 +43,7 @@ Repository = "https://github.com/dbsprout/dbsprout"
 "Bug Tracker" = "https://github.com/dbsprout/dbsprout/issues"
 
 [project.scripts]
-dbsprout = "dbsprout.cli.app:app"
+dbsprout = "dbsprout.cli.app:run"
 
 [project.entry-points."dbsprout.parsers"]
 ddl = "dbsprout.plugins.adapters:ddl_parser"
