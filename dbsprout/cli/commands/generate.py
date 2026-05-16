@@ -146,6 +146,22 @@ def generate_command(  # noqa: PLR0913
     cfg_path = config_path or Path("dbsprout.toml")
     config = DBSproutConfig.from_toml(cfg_path if cfg_path.exists() else None)
 
+    # S-067c: --lora (CLI) overrides [llm].lora_path (config). When the
+    # adapter comes from config (flag absent), apply the SAME guardrails the
+    # flag gets: --engine spec rule + the shared exists/is-file helper.
+    resolved_lora = lora_path if lora_path is not None else config.llm.lora_path
+    if lora_path is None and resolved_lora is not None:
+        if engine != "spec":
+            raise ModelError(
+                what="[llm].lora_path is set but --engine is not 'spec'.",
+                why=(
+                    f"The configured LoRA adapter only affects the LLM spec "
+                    f"engine; --engine {engine} ignores it."
+                ),
+                fix="Run with --engine spec, or remove [llm].lora_path.",
+            )
+        _validate_lora_adapter_path(resolved_lora)
+
     # Orchestrate
     ref = _load_reference_for_engine(reference_data, schema, engine)
     result = orchestrate(
@@ -155,7 +171,7 @@ def generate_command(  # noqa: PLR0913
         default_rows=rows,
         engine=engine,
         reference_data=ref,
-        lora_path=lora_path,
+        lora_path=resolved_lora,
     )
 
     if result.total_tables == 0:
