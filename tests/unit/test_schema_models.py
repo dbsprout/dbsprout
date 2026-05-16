@@ -8,6 +8,7 @@ import pytest
 from pydantic import ValidationError
 
 from dbsprout.schema.models import (
+    _CONTROL_CHAR_RE,
     ColumnSchema,
     ColumnType,
     DatabaseSchema,
@@ -942,3 +943,122 @@ class TestAdversarialInput:
                 ref_columns=["b"],
                 on_delete="DROP TABLE users",
             )
+
+
+# ── C1 control-char range ───────────────────────────────────────────────
+
+
+class TestC1ControlChars:
+    """AC: control-char regex blocks C1 range U+0080-U+009F."""
+
+    @pytest.mark.parametrize("cp", [0x80, 0x85, 0x90, 0x9F])
+    def test_c1_control_char_rejected_on_column(self, cp: int) -> None:
+        with pytest.raises(ValidationError):
+            ColumnSchema(name=f"id{chr(cp)}", data_type=ColumnType.INTEGER)
+
+    def test_c1_lower_boundary_0x80_rejected(self) -> None:
+        with pytest.raises(ValidationError):
+            TableSchema(name=f"t{chr(0x80)}", columns=[_make_col("id")])
+
+    def test_c1_upper_boundary_0x9f_rejected(self) -> None:
+        with pytest.raises(ValidationError):
+            TableSchema(name=f"t{chr(0x9F)}", columns=[_make_col("id")])
+
+    def test_char_past_c1_range_still_allowed(self) -> None:
+        """U+00E0 (à, just past the C1 control range) remains a valid identifier."""
+        col = ColumnSchema(name=f"id{chr(0xE0)}", data_type=ColumnType.INTEGER)
+        assert chr(0xE0) in col.name
+
+    def test_regex_boundary_excludes_0xa0(self) -> None:
+        """The control-char regex must not match U+00A0 (just past C1)."""
+        assert _CONTROL_CHAR_RE.search(chr(0xA0)) is None
+        assert _CONTROL_CHAR_RE.search(chr(0x9F)) is not None
+        assert _CONTROL_CHAR_RE.search(chr(0x80)) is not None
+
+
+# ── DeferTiming validation ──────────────────────────────────────────────
+
+
+class TestDeferTiming:
+    """AC: ForeignKeySchema.initially constrained to DEFERRED|IMMEDIATE|None."""
+
+    @pytest.mark.parametrize("val", ["DEFERRED", "IMMEDIATE"])
+    def test_valid_values(self, val: str) -> None:
+        fk = ForeignKeySchema(columns=["a"], ref_table="t", ref_columns=["b"], initially=val)
+        assert fk.initially == val
+
+    def test_none_accepted(self) -> None:
+        fk = ForeignKeySchema(columns=["a"], ref_table="t", ref_columns=["b"])
+        assert fk.initially is None
+
+    def test_case_insensitive_normalized(self) -> None:
+        fk = ForeignKeySchema(columns=["a"], ref_table="t", ref_columns=["b"], initially="deferred")
+        assert fk.initially == "DEFERRED"
+
+    def test_invalid_value_rejected(self) -> None:
+        with pytest.raises(ValidationError):
+            ForeignKeySchema(columns=["a"], ref_table="t", ref_columns=["b"], initially="SOON")
+
+    def test_injection_value_rejected(self) -> None:
+        with pytest.raises(ValidationError):
+            ForeignKeySchema(
+                columns=["a"],
+                ref_table="t",
+                ref_columns=["b"],
+                initially="DROP TABLE x",
+            )
+
+
+# ── FK / Index Identifier validation ────────────────────────────────────
+
+
+class TestFKIdentifierValidation:
+    """AC: FK columns/ref_table/ref_columns and Index columns are Identifiers."""
+
+    def test_ref_table_control_char_rejected(self) -> None:
+        with pytest.raises(ValidationError):
+            ForeignKeySchema(columns=["a"], ref_table="t\x00", ref_columns=["b"])
+
+    def test_ref_table_empty_rejected(self) -> None:
+        with pytest.raises(ValidationError):
+            ForeignKeySchema(columns=["a"], ref_table="", ref_columns=["b"])
+
+    def test_ref_table_path_traversal_rejected(self) -> None:
+        with pytest.raises(ValidationError):
+            ForeignKeySchema(columns=["a"], ref_table="../etc", ref_columns=["b"])
+
+    def test_ref_table_too_long_rejected(self) -> None:
+        with pytest.raises(ValidationError):
+            ForeignKeySchema(columns=["a"], ref_table="x" * 129, ref_columns=["b"])
+
+    def test_fk_columns_control_char_rejected(self) -> None:
+        with pytest.raises(ValidationError):
+            ForeignKeySchema(columns=["a\n"], ref_table="t", ref_columns=["b"])
+
+    def test_fk_ref_columns_control_char_rejected(self) -> None:
+        with pytest.raises(ValidationError):
+            ForeignKeySchema(columns=["a"], ref_table="t", ref_columns=["b\t"])
+
+    def test_fk_columns_whitespace_stripped(self) -> None:
+        fk = ForeignKeySchema(columns=["  a  "], ref_table="t", ref_columns=["b"])
+        assert fk.columns == ["a"]
+
+    def test_index_columns_control_char_rejected(self) -> None:
+        with pytest.raises(ValidationError):
+            IndexSchema(columns=["email\x00"])
+
+    def test_index_columns_path_traversal_rejected(self) -> None:
+        with pytest.raises(ValidationError):
+            IndexSchema(columns=["a/b"])
+
+    def test_index_columns_c1_control_rejected(self) -> None:
+        with pytest.raises(ValidationError):
+            IndexSchema(columns=[f"email{chr(0x90)}"])
+
+    def test_valid_fk_and_index_unchanged(self) -> None:
+        fk = ForeignKeySchema(columns=["user_id"], ref_table="users", ref_columns=["id"])
+        idx = IndexSchema(columns=["email"])
+        assert fk.ref_table == "users"
+        assert fk.columns == ["user_id"]
+        assert fk.ref_columns == ["id"]
+        assert idx.columns == ["email"]

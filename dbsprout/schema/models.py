@@ -15,7 +15,7 @@ from typing import Annotated, Any
 
 from pydantic import AfterValidator, BaseModel, BeforeValidator, ConfigDict, Field
 
-_CONTROL_CHAR_RE = re.compile(r"[\x00-\x1f\x7f]")
+_CONTROL_CHAR_RE = re.compile(r"[\x00-\x1f\x7f-\x9f]")
 
 
 def _validate_identifier(v: str) -> str:
@@ -33,6 +33,8 @@ def _validate_identifier(v: str) -> str:
 
 
 Identifier = Annotated[str, AfterValidator(_validate_identifier)]
+
+IdentifierList = list[Identifier]
 
 _VALID_REFERENTIAL_ACTIONS = frozenset(
     {"CASCADE", "SET NULL", "SET DEFAULT", "RESTRICT", "NO ACTION"}
@@ -52,6 +54,23 @@ def _normalize_referential_action(v: str | None) -> str | None:
 
 
 ReferentialAction = Annotated[str | None, BeforeValidator(_normalize_referential_action)]
+
+_VALID_DEFER_TIMINGS = frozenset({"DEFERRED", "IMMEDIATE"})
+
+
+def _normalize_defer_timing(v: str | None) -> str | None:
+    """Normalize and validate a SQL FK ``INITIALLY`` timing."""
+    if v is None:
+        return None
+    v = v.upper()
+    if v not in _VALID_DEFER_TIMINGS:
+        raise ValueError(
+            f"Invalid INITIALLY timing {v!r}; must be one of {sorted(_VALID_DEFER_TIMINGS)}"
+        )
+    return v
+
+
+DeferTiming = Annotated[str | None, BeforeValidator(_normalize_defer_timing)]
 
 
 def _quote_ident(name: str) -> str:
@@ -109,13 +128,13 @@ class ForeignKeySchema(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     name: str | None = None
-    columns: list[str]
-    ref_table: str
-    ref_columns: list[str]
+    columns: IdentifierList
+    ref_table: Identifier
+    ref_columns: IdentifierList
     on_delete: ReferentialAction = None
     on_update: ReferentialAction = None
     deferrable: bool = False
-    initially: str | None = None
+    initially: DeferTiming = None
 
 
 class IndexSchema(BaseModel):
@@ -124,7 +143,7 @@ class IndexSchema(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     name: str | None = None
-    columns: list[str]
+    columns: IdentifierList
     unique: bool = False
 
 
