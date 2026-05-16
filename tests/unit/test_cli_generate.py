@@ -362,3 +362,68 @@ class TestGenerateDirectFormat:
 
         mock_writer.write.assert_called_once()
         assert result.exit_code == 0
+
+
+class TestGenerateRecordsState:
+    """S-080: every ``generate`` records a run to the state DB."""
+
+    def test_state_db_written(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        from dbsprout.state.db import StateDB  # noqa: PLC0415
+
+        monkeypatch.chdir(tmp_path)
+        project_dir = _write_schema(tmp_path)
+
+        result = runner.invoke(
+            app,
+            [
+                "generate",
+                "--schema-snapshot",
+                str(project_dir / ".dbsprout" / "schema.json"),
+                "--output-dir",
+                str(project_dir / "seeds"),
+                "--rows",
+                "3",
+                "--seed",
+                "7",
+            ],
+        )
+
+        assert result.exit_code == 0
+        state_path = tmp_path / ".dbsprout" / "state.db"
+        assert state_path.exists()
+        runs = StateDB(state_path).get_runs()
+        assert len(runs) == 1
+        assert runs[0].engine == "heuristic"
+        assert runs[0].seed == 7
+        assert runs[0].total_rows == 3
+        assert {s.table_name for s in runs[0].table_stats} == {"items"}
+        assert len(runs[0].quality_results) >= 1
+
+    def test_state_failure_does_not_break_generate(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from dbsprout.state import writer  # noqa: PLC0415
+
+        monkeypatch.chdir(tmp_path)
+        project_dir = _write_schema(tmp_path)
+
+        def _boom(*_a: object, **_k: object) -> None:
+            raise RuntimeError("state disk full")
+
+        monkeypatch.setattr(writer, "StateDB", _boom)
+
+        result = runner.invoke(
+            app,
+            [
+                "generate",
+                "--schema-snapshot",
+                str(project_dir / ".dbsprout" / "schema.json"),
+                "--output-dir",
+                str(project_dir / "seeds"),
+                "--rows",
+                "3",
+            ],
+        )
+
+        assert result.exit_code == 0
+        assert list((project_dir / "seeds").glob("*.sql"))

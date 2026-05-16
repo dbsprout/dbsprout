@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import time
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -196,6 +197,9 @@ def generate_command(  # noqa: PLR0913
 
     report = validate_integrity(result.tables_data, schema)
     _print_validation(report)
+
+    # Record run telemetry (best-effort; never fails generation) — S-080
+    _record_state(result, report, engine=engine, seed=seed, lora_path=resolved_lora)
 
     # Summary
     _print_summary(result, output_dir, output_format)
@@ -459,6 +463,38 @@ def _run_direct_insert(
     )
 
 
+def _record_state(
+    result: GenerateResult,
+    report: IntegrityReport,
+    *,
+    engine: str,
+    seed: int,
+    lora_path: Path | None,
+) -> None:
+    """Record this generation run to the state DB (best-effort, S-080).
+
+    Runs *after* generation + integrity validation, so it adds no
+    generation overhead. ``record_generation_run`` never raises — a
+    state-write failure is logged and generation succeeds regardless.
+    """
+    from dbsprout.state.writer import (  # noqa: PLC0415
+        llm_call_for,
+        record_generation_run,
+    )
+
+    completed_at = datetime.now(tz=timezone.utc)
+    started_at = completed_at - timedelta(seconds=result.duration_seconds)
+    record_generation_run(
+        result,
+        report,
+        engine=engine,
+        seed=seed,
+        started_at=started_at,
+        completed_at=completed_at,
+        llm_call=llm_call_for(engine=engine, lora_path=lora_path, cached=False),
+    )
+
+
 def _print_summary(
     result: GenerateResult,
     output_dir: Path,
@@ -487,8 +523,11 @@ def _persist_result(  # noqa: PLR0913
     upsert: bool,
     insert_method: str,
     target_db: str | None = None,
+    *,
+    engine: str = "heuristic",
+    seed: int = 42,
 ) -> None:
-    """Write output, validate integrity, print summary.
+    """Write output, validate integrity, record state, print summary.
 
     Raises ``typer.Exit(1)`` if integrity validation fails.
     """
@@ -511,6 +550,7 @@ def _persist_result(  # noqa: PLR0913
     )
     report = validate_integrity(result.tables_data, schema)
     _print_validation(report)
+    _record_state(result, report, engine=engine, seed=seed, lora_path=None)
     _print_summary(result, output_dir, output_format)
 
     if not report.passed:  # pragma: no cover — heuristic engine produces valid data
@@ -630,6 +670,8 @@ def _run_full_gen_from_source(  # noqa: PLR0913
         upsert,
         insert_method,
         target_db=target_db,
+        engine=engine,
+        seed=seed,
     )
 
     try:
@@ -716,6 +758,8 @@ def _run_incremental(  # noqa: PLR0913
             upsert,
             insert_method,
             target_db=target_db,
+            engine=engine,
+            seed=seed,
         )
         try:
             store.save(new_schema)
@@ -749,6 +793,8 @@ def _run_incremental(  # noqa: PLR0913
         upsert,
         insert_method,
         target_db=target_db,
+        engine=engine,
+        seed=seed,
     )
     _print_actions_applied(update_result, unchanged_tables)
     try:
