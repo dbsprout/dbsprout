@@ -195,6 +195,21 @@ def audit_proxy(
     audit_command(last=last)
 
 
+@app.command(name="doctor")
+def doctor_proxy(
+    db: str | None = typer.Option(
+        None, "--db", help="Database URL to test.", envvar="DBSPROUT_TARGET_DB"
+    ),
+    config_path: str | None = typer.Option(
+        "dbsprout.toml", "--config", help="Config file to scan for secrets."
+    ),
+) -> None:
+    """Diagnose the local environment for common configuration issues."""
+    from dbsprout.cli.commands.doctor import doctor_command  # noqa: PLC0415
+
+    doctor_command(db=db, config_path=config_path)
+
+
 @app.callback()
 def main() -> None:
     """DBSprout — realistic database seed data from your schema."""
