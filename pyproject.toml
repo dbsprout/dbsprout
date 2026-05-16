@@ -88,6 +88,7 @@ great = "dbsprout.train.serializer:DataPreparer"
 dev = [
     "pytest>=8.0",
     "pytest-cov>=5.0",
+    "pytest-benchmark>=4.0",
     "ruff>=0.9.0",
     "mypy>=1.14",
     "bandit[toml]>=1.8",
@@ -245,10 +246,14 @@ skips = ["B101", "B311"]  # B101: assert in tests; B311: random is fine for seed
 # ─── Pytest ────────────────────────────────────────────────────────────
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# Default run only collects tests/ (testpaths); benchmarks/ holds bench_*.py
+# files collected only via an explicit `pytest benchmarks/` invocation.
+python_files = ["test_*.py", "bench_*.py"]
 addopts = "--strict-markers -ra"
 markers = [
     "slow: marks tests as slow",
     "integration: marks tests requiring external services",
+    "benchmark: marks performance benchmark tests (run via 'pytest benchmarks/')",
 ]
 
 # ─── Coverage ──────────────────────────────────────────────────────────
