@@ -6,6 +6,7 @@ import re
 from pathlib import Path
 
 import pytest
+import tomllib
 
 from dbsprout.errors import (
     ConfigError,
@@ -83,6 +84,7 @@ _VALID_EXTRAS = {
     "stats",
     "train-cuda",
     "train-mlx",
+    "train-dp",
     "web",
     "tui",
     "data",
@@ -102,3 +104,11 @@ def test_all_install_hints_reference_real_extras() -> None:
             if match.group(1) not in _VALID_EXTRAS:
                 offenders.append(f"{path}: dbsprout[{match.group(1)}]")
     assert not offenders, f"Invalid extras referenced: {offenders}"
+
+
+def test_train_dp_extra_declared() -> None:
+    root = Path(__file__).resolve().parents[2]
+    data = tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))
+    extras = data["project"]["optional-dependencies"]
+    assert "train-dp" in extras
+    assert any("opacus" in dep for dep in extras["train-dp"])

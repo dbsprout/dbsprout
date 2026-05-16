@@ -1109,6 +1109,9 @@ train = [
 train-cuda = [
     { name = "unsloth" },
 ]
+train-dp = [
+    { name = "opacus" },
+]
 train-mlx = [
     { name = "mlx" },
     { name = "mlx-lm" },
@@ -1151,6 +1154,7 @@ requires-dist = [
     { name = "networkx", specifier = ">=3.0" },
     { name = "numpy", specifier = ">=1.26" },
     { name = "numpy", marker = "extra == 'gen'", specifier = ">=1.26" },
+    { name = "opacus", marker = "extra == 'train-dp'", specifier = ">=1.4" },
     { name = "polars", marker = "extra == 'data'", specifier = ">=1.0" },
     { name = "polars", marker = "extra == 'train'", specifier = ">=1.0" },
     { name = "pre-commit", marker = "extra == 'dev'", specifier = ">=4.0" },
@@ -1183,7 +1187,7 @@ requires-dist = [
     { name = "unsloth", marker = "extra == 'train-cuda'", specifier = ">=2024.0" },
     { name = "uvicorn", marker = "extra == 'web'", specifier = ">=0.34" },
 ]
-provides-extras = ["dev", "db", "mssql", "pg", "gen", "llm", "migrate", "cloud", "privacy", "mongo", "stats", "docs", "train-cuda", "train-mlx", "web", "tui", "data", "train", "all"]
+provides-extras = ["dev", "db", "mssql", "pg", "gen", "llm", "migrate", "cloud", "privacy", "mongo", "stats", "docs", "train-cuda", "train-mlx", "train-dp", "web", "tui", "data", "train", "all"]
 
 [[package]]
 name = "defusedxml"
@@ -3113,6 +3117,23 @@ wheels = [
 ]
 
 [[package]]
+name = "opacus"
+version = "1.6.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "numpy", version = "2.4.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
+    { name = "opt-einsum" },
+    { name = "scipy", version = "1.15.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "scipy", version = "1.17.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
+    { name = "torch" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/31/39/a92b485f5a9c65bdd18c574d24c3b17800e39f02d66e665ab9bfbde77c52/opacus-1.6.0.tar.gz", hash = "sha256:20d77252c1e8528cd5826fbaba345cd39ed5c3edb841707eafb6403fe276140a", size = 184592, upload-time = "2026-05-05T18:15:26.103Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/45/2d/cb1b04cc674f3e06dbe1afc02ed977f066f39c7a4a313372353f82c26117/opacus-1.6.0-py3-none-any.whl", hash = "sha256:342123624c56c09d47eaba44010ed216d51c63132b543d67cba53a49ed6dc41e", size = 308911, upload-time = "2026-05-05T18:15:24.479Z" },
+]
+
+[[package]]
 name = "openai"
 version = "2.30.0"
 source = { registry = "https://pypi.org/simple" }
@@ -3141,6 +3162,15 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/3d/f9/88d94a75de065ea32619465d2f77b29a0469500e99012523b91cc4141cd1/openpyxl-3.1.5.tar.gz", hash = "sha256:cf0e3cf56142039133628b5acffe8ef0c12bc902d2aadd3e0fe5878dc08d1050", size = 186464, upload-time = "2024-06-28T14:03:44.161Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/c0/da/977ded879c29cbd04de313843e76868e6e13408a94ed6b987245dc7c8506/openpyxl-3.1.5-py2.py3-none-any.whl", hash = "sha256:5282c12b107bffeef825f4617dc029afaf41d0ea60823bbb665ef3079dc79de2", size = 250910, upload-time = "2024-06-28T14:03:41.161Z" },
+]
+
+[[package]]
+name = "opt-einsum"
+version = "3.4.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/8c/b9/2ac072041e899a52f20cf9510850ff58295003aa75525e58343591b0cbfb/opt_einsum-3.4.0.tar.gz", hash = "sha256:96ca72f1b886d148241348783498194c577fa30a8faac108586b14f1ba4473ac", size = 63004, upload-time = "2024-09-26T14:33:24.483Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/23/cd/066e86230ae37ed0be70aae89aabf03ca8d9f39c8aea0dec8029455b5540/opt_einsum-3.4.0-py3-none-any.whl", hash = "sha256:69bb92469f86a1565195ece4ac0323943e83477171b91d24c35afe028a90d7cd", size = 71932, upload-time = "2024-09-26T14:33:23.039Z" },
 ]
 
 [[package]]
