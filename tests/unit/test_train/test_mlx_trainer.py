@@ -23,6 +23,7 @@ from dbsprout.train.mlx_trainer import (
     _select_backend,
     select_trainer,
 )
+from dbsprout.train.privacy import TrainPrivacyConfig
 from dbsprout.train.trainer import QLoRATrainer
 
 if TYPE_CHECKING:
@@ -636,3 +637,18 @@ def test_real_mlx_lm_symbol_surface_exists() -> None:
         "make_optimizer",
         "seed",
     }
+
+
+# --- S-097: MLX backend rejects DP-SGD -------------------------------------
+
+
+def test_mlx_train_rejects_dp_sgd(tmp_path: Path) -> None:
+    corpus = tmp_path / "c.jsonl"
+    corpus.write_text('{"text": "x"}\n', encoding="utf-8")
+    cfg = TrainConfig(privacy=TrainPrivacyConfig(dp_sgd=True, dp_target_epsilon=8.0))
+    with (
+        mock.patch("dbsprout.train.mlx_trainer._cuda_available", return_value=False),
+        mock.patch("dbsprout.train.mlx_trainer._mlx_available", return_value=True),
+        pytest.raises(RuntimeError, match="not supported on the MLX"),
+    ):
+        MLXTrainer().train(corpus_path=corpus, config=cfg, output_dir=tmp_path / "a")
