@@ -232,6 +232,34 @@ def check_secrets(config_path: Path | None) -> CheckResult:
     )
 
 
+def _cuda_available() -> bool:
+    if importlib.util.find_spec("torch") is None:
+        return False
+    try:
+        import torch  # noqa: PLC0415
+
+        return bool(torch.cuda.is_available())
+    except Exception:  # broken torch must not crash doctor
+        return False
+
+
+def check_training() -> CheckResult:
+    """Report CUDA / MLX availability for the training pipeline."""
+    cuda = _cuda_available()
+    mlx = importlib.util.find_spec("mlx") is not None
+    if cuda or mlx:
+        backend = "CUDA" if cuda else "MLX"
+        return CheckResult("Training", "accelerator", "pass", f"{backend} available")
+    return CheckResult(
+        "Training",
+        "accelerator",
+        "warn",
+        "No CUDA or MLX accelerator detected",
+        fix="Install dbsprout[train-cuda] (NVIDIA) or dbsprout[train-mlx] "
+        "(Apple Silicon) to enable fine-tuning.",
+    )
+
+
 def run_all_checks(
     *,
     db_url: str | None = None,  # noqa: ARG001 - wired up in Task 8

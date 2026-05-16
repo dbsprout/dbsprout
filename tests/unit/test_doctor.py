@@ -16,6 +16,7 @@ from dbsprout.doctor.checks import (
     check_plugins,
     check_python_version,
     check_secrets,
+    check_training,
 )
 
 if TYPE_CHECKING:
@@ -119,4 +120,12 @@ def test_check_secrets_detects_key_without_echo(tmp_path: Path) -> None:
     r = check_secrets(cfg)
     assert r.status == "warn"
     assert "sk-abcdefghijklmnop1234" not in r.message
+    assert r.fix is not None
+
+
+def test_check_training_none_is_warn(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(importlib.util, "find_spec", lambda _n: None)
+    r = check_training()
+    assert r.category == "Training"
+    assert r.status == "warn"
     assert r.fix is not None
