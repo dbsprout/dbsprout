@@ -65,6 +65,11 @@ def generate_proxy(  # noqa: PLR0913
     dialect: str = typer.Option("postgresql", "--dialect", "-d"),
     engine: str = typer.Option("heuristic", "--engine", "-e"),
     privacy: str = typer.Option("local", "--privacy"),
+    reference_data: str | None = typer.Option(
+        None,
+        "--reference-data",
+        help="Reference CSV (file or per-table dir) for --engine statistical.",
+    ),
     db: str | None = typer.Option(
         None, "--db", help="Target database URL for direct insertion.", envvar="DBSPROUT_TARGET_DB"
     ),
@@ -105,6 +110,7 @@ def generate_proxy(  # noqa: PLR0913
         dialect=dialect,
         engine=engine,
         privacy=privacy,
+        reference_data=Path(reference_data) if reference_data else None,
         target_db=db,
         upsert=upsert,
         insert_method=insert_method,
