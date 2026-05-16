@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import re
 import string
+import time
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
@@ -1921,3 +1922,235 @@ class TestDiffMarkupEscape:
         # drift detected → exit 1; the literal bracketed name must be present.
         assert result.exit_code == 1
         assert "[blink]evil[blink]" in _strip_ansi(result.output)
+
+
+class TestDiffEdgeCases:
+    """S-054b: rare-but-possible edge cases in ``dbsprout diff`` (DBS-108).
+
+    Regression tripwires layered on the S-054a hardened harness. No
+    production code changes — these guard behaviour at the margins so a
+    future refactor fails fast instead of shipping silently.
+    """
+
+    @patch("dbsprout.migrate.snapshot.SnapshotStore")
+    @patch("dbsprout.cli.commands.diff._introspect_db")
+    def test_rich_renders_unicode_table_names(
+        self,
+        mock_introspect: MagicMock,
+        mock_store_cls: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        """AC-1: non-ASCII table names render verbatim (escape() is identity)."""
+        old = _simple_schema_for_diff()
+        new = DatabaseSchema(
+            tables=[
+                *old.tables,
+                TableSchema(
+                    name="日本語_users",
+                    columns=[ColumnSchema(name="id", data_type=ColumnType.INTEGER, nullable=False)],
+                    primary_key=["id"],
+                ),
+                TableSchema(
+                    name="users_😀",
+                    columns=[ColumnSchema(name="id", data_type=ColumnType.INTEGER, nullable=False)],
+                    primary_key=["id"],
+                ),
+            ],
+            dialect="sqlite",
+        )
+        mock_introspect.return_value = new
+        mock_store = MagicMock()
+        mock_store.load_latest.return_value = old
+        mock_store_cls.return_value = mock_store
+
+        result = runner.invoke(
+            app,
+            ["diff", "--db", "sqlite:///x.db", "--output-dir", str(tmp_path)],
+        )
+        assert result.exit_code == 1
+        output = _strip_ansi(result.output)
+        assert "日本語_users" in output
+        assert "users_😀" in output
+
+    @patch("dbsprout.migrate.snapshot.SnapshotStore")
+    @patch("dbsprout.cli.commands.diff._introspect_db")
+    def test_rich_renders_100_table_drift(
+        self,
+        mock_introspect: MagicMock,
+        mock_store_cls: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        """AC-2: 100 added tables all render and the command stays under 2s."""
+        old = _simple_schema_for_diff()
+        added = [
+            TableSchema(
+                name=f"t{i:03d}",
+                columns=[ColumnSchema(name="id", data_type=ColumnType.INTEGER, nullable=False)],
+                primary_key=["id"],
+            )
+            for i in range(100)
+        ]
+        new = DatabaseSchema(tables=[*old.tables, *added], dialect="sqlite")
+        mock_introspect.return_value = new
+        mock_store = MagicMock()
+        mock_store.load_latest.return_value = old
+        mock_store_cls.return_value = mock_store
+
+        start = time.perf_counter()
+        result = runner.invoke(
+            app,
+            ["diff", "--db", "sqlite:///x.db", "--output-dir", str(tmp_path)],
+        )
+        elapsed = time.perf_counter() - start
+
+        assert result.exit_code == 1
+        output = _strip_ansi(result.output)
+        for i in range(100):
+            assert f"t{i:03d}" in output
+        assert elapsed < 2.0, f"100-table diff took {elapsed:.2f}s (regression guard)"
+
+    @patch("dbsprout.migrate.snapshot.SnapshotStore")
+    @patch("dbsprout.cli.commands.diff._introspect_db")
+    def test_enum_and_table_with_same_name(
+        self,
+        mock_introspect: MagicMock,
+        mock_store_cls: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        """AC-3: a table named ``orders`` and an enum named ``orders`` are
+        rendered in separate groups with no data loss or sentinel leak."""
+        old = DatabaseSchema(
+            tables=[
+                TableSchema(
+                    name="users",
+                    columns=[ColumnSchema(name="id", data_type=ColumnType.INTEGER, nullable=False)],
+                    primary_key=["id"],
+                )
+            ],
+            dialect="postgresql",
+        )
+        new = DatabaseSchema(
+            tables=[
+                TableSchema(
+                    name="users",
+                    columns=[ColumnSchema(name="id", data_type=ColumnType.INTEGER, nullable=False)],
+                    primary_key=["id"],
+                ),
+                TableSchema(
+                    name="orders",
+                    columns=[ColumnSchema(name="id", data_type=ColumnType.INTEGER, nullable=False)],
+                    primary_key=["id"],
+                ),
+            ],
+            enums={"orders": ["pending", "shipped"]},
+            dialect="postgresql",
+        )
+        mock_introspect.return_value = new
+        mock_store = MagicMock()
+        mock_store.load_latest.return_value = old
+        mock_store_cls.return_value = mock_store
+
+        result = runner.invoke(
+            app,
+            ["diff", "--db", "postgresql://host/db", "--output-dir", str(tmp_path)],
+        )
+        assert result.exit_code == 1
+        output = _strip_ansi(result.output)
+        assert "Tables" in output
+        assert "Enums" in output
+        assert "+ orders" in output
+        assert "enum: orders" in output
+        assert "__enums__" not in output
+
+    @patch("dbsprout.migrate.snapshot.SnapshotStore")
+    def test_snapshot_hash_with_file_source(
+        self,
+        mock_store_cls: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        """AC-4: ``--snapshot HASH --file schema.sql`` → pinned hash is the
+        old side, the file parses as the new side."""
+        sql_file = tmp_path / "schema.sql"
+        sql_file.write_text(
+            "CREATE TABLE users (id INTEGER PRIMARY KEY);\n"
+            "CREATE TABLE orders (id INTEGER PRIMARY KEY);"
+        )
+        old = _simple_schema_for_diff()  # users only → drift vs file (orders added)
+        mock_store = MagicMock()
+        mock_store.load_by_hash.return_value = old
+        mock_store_cls.return_value = mock_store
+
+        result = runner.invoke(
+            app,
+            [
+                "diff",
+                "--snapshot",
+                "abc12345",
+                "--file",
+                str(sql_file),
+                "--output-dir",
+                str(tmp_path),
+            ],
+        )
+        assert result.exit_code == 1
+        output = _strip_ansi(result.output)
+        assert "+tables: 1" in output
+        assert "+ orders" in output
+        mock_store.load_by_hash.assert_called_once_with("abc12345")
+        mock_store.load_latest.assert_not_called()
+
+    def test_nonexistent_output_dir_exits_2(self, tmp_path: Path) -> None:
+        """AC-5: ``--output-dir`` pointing at a missing path → exit 2 because
+        the real SnapshotStore.load_latest() returns None."""
+        missing_dir = tmp_path / "does_not_exist"
+        result = runner.invoke(
+            app,
+            ["diff", "--db", "sqlite:///x.db", "--output-dir", str(missing_dir)],
+        )
+        assert result.exit_code == 2
+        output = _strip_ansi(result.output)
+        assert "no snapshots found" in output.lower()
+
+    @patch("dbsprout.migrate.snapshot.SnapshotStore")
+    def test_rich_file_source_large_ddl_under_cap(
+        self,
+        mock_store_cls: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        """AC-6: a ~9 MB .sql file (just under the 10 MB cap) parses without
+        OOM, timeout, or a 'File too large' rejection."""
+        sql_file = tmp_path / "big.sql"
+        stmt = "CREATE TABLE big_{i} (id INTEGER PRIMARY KEY, c1 INTEGER, c2 INTEGER);\n"
+        target = 9 * 1000 * 1000  # ~9 MB, comfortably under 10 * 1024 * 1024
+        lines: list[str] = []
+        size = 0
+        i = 0
+        while size < target:
+            line = stmt.format(i=i)
+            lines.append(line)
+            size += len(line)
+            i += 1
+        sql_file.write_text("".join(lines))
+
+        file_size = sql_file.stat().st_size
+        assert 9_000_000 <= file_size < 10 * 1024 * 1024, f"setup size {file_size}"
+
+        mock_store = MagicMock()
+        mock_store.load_latest.return_value = _simple_schema_for_diff()
+        mock_store_cls.return_value = mock_store
+
+        start = time.perf_counter()
+        result = runner.invoke(
+            app,
+            ["diff", "--file", str(sql_file), "--output-dir", str(tmp_path)],
+        )
+        elapsed = time.perf_counter() - start
+
+        assert result.exit_code in (0, 1), _strip_ansi(result.output)
+        assert "File too large" not in _strip_ansi(result.output)
+        # The pure-Python DDL parser is linear (~4.4 s/MB, profiled), so a
+        # ~9 MB file legitimately takes tens of seconds. This generous bound
+        # is a hang / O(n²)-regression tripwire, NOT a perf budget — a 9 MB
+        # O(n²) parse would run for many minutes. See story "Finding during
+        # AC-6 implementation" note.
+        assert elapsed < 180.0, f"9MB DDL parse took {elapsed:.1f}s (hang guard)"
