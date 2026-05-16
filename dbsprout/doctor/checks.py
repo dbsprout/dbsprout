@@ -6,6 +6,8 @@ I/O. ``run_all_checks`` orchestrates every check and never raises.
 
 from __future__ import annotations
 
+import importlib.metadata
+import importlib.util
 import sys
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
@@ -16,6 +18,17 @@ if TYPE_CHECKING:
 Status = Literal["pass", "warn", "fail"]
 
 _MIN_PY = (3, 10)
+
+_EXTRA_MODULES: tuple[tuple[str, str], ...] = (
+    ("sqlalchemy", "db"),
+    ("mimesis", "gen"),
+    ("numpy", "gen"),
+    ("llama_cpp", "llm"),
+    ("huggingface_hub", "llm"),
+    ("scipy", "stats"),
+    ("sklearn", "stats"),
+    ("polars", "data"),
+)
 
 
 @dataclass(frozen=True)
@@ -44,6 +57,41 @@ def check_python_version(
         f"Python {found} is too old; 3.10+ required",
         fix="Install Python 3.10 or newer and recreate the virtualenv.",
     )
+
+
+def _module_version(module: str) -> str:
+    dist = {"sklearn": "scikit-learn", "llama_cpp": "llama-cpp-python"}.get(module, module)
+    try:
+        return importlib.metadata.version(dist)
+    except importlib.metadata.PackageNotFoundError:
+        return "unknown"
+
+
+def check_extras() -> list[CheckResult]:
+    """Report which optional dependency modules are importable."""
+    results: list[CheckResult] = []
+    for module, extra in _EXTRA_MODULES:
+        present = importlib.util.find_spec(module) is not None
+        if present:
+            results.append(
+                CheckResult(
+                    "Environment",
+                    f"extra:{module}",
+                    "pass",
+                    f"{module} {_module_version(module)} installed",
+                )
+            )
+        else:
+            results.append(
+                CheckResult(
+                    "Environment",
+                    f"extra:{module}",
+                    "warn",
+                    f"{module} not installed (optional)",
+                    fix=f"Install with: pip install dbsprout[{extra}]",
+                )
+            )
+    return results
 
 
 def run_all_checks(
