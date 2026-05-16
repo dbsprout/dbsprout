@@ -10,4 +10,4 @@ requires-python = ">=3.10"
 dependencies = ["dbsprout", "pyyaml>=6.0"]
 
 [project.entry-points."dbsprout.parsers"]
-yaml = "dbsprout_plugin_yaml:YamlParser"
+yaml = "dbsprout_plugin_yaml:yaml_parser"

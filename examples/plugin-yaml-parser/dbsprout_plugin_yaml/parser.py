@@ -124,4 +124,12 @@ class YamlParser:
         return build_schema(text, source_file=source_file)
 
 
-__all__ = ["YamlParser", "build_schema"]
+# Module-level instance: ``parse_schema_file`` calls ``can_parse`` /
+# ``parse`` directly on the registry object without instantiating, and
+# the registry's runtime ``isinstance`` check needs an instance. The
+# in-tree parser entry points follow the same convention (see
+# ``dbsprout.plugins.adapters``), so the ``pyproject.toml`` entry point
+# points at this object, not the class.
+yaml_parser = YamlParser()
+
+__all__ = ["YamlParser", "build_schema", "yaml_parser"]

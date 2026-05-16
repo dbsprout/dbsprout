@@ -7,6 +7,6 @@ Registered via the ``dbsprout.parsers`` entry point in this package's
 
 from __future__ import annotations
 
-from dbsprout_plugin_yaml.parser import YamlParser, build_schema
+from dbsprout_plugin_yaml.parser import YamlParser, build_schema, yaml_parser
 
-__all__ = ["YamlParser", "build_schema"]
+__all__ = ["YamlParser", "build_schema", "yaml_parser"]
