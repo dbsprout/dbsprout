@@ -8,16 +8,17 @@ from __future__ import annotations
 
 import importlib.metadata
 import importlib.util
+import shutil
 import sys
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Literal
-
-if TYPE_CHECKING:
-    from pathlib import Path
+from pathlib import Path
+from typing import Literal
 
 Status = Literal["pass", "warn", "fail"]
 
 _MIN_PY = (3, 10)
+_MODEL_FILE = "qwen2.5-1.5b-instruct-q4_k_m.gguf"
+_MIN_FREE_BYTES = 1024**3  # 1 GiB
 
 _EXTRA_MODULES: tuple[tuple[str, str], ...] = (
     ("sqlalchemy", "db"),
@@ -127,6 +128,49 @@ def check_database(db_url: str | None) -> CheckResult:
             fix="Verify the DB URL/credentials and that the server is reachable.",
         )
     return CheckResult("Database", "connectivity", "pass", f"Connected to {safe}")
+
+
+def _default_model_root() -> Path:
+    return Path.home() / ".cache" / "dbsprout" / "models"
+
+
+def check_model(model_root: Path | None = None) -> CheckResult:
+    """Report whether the embedded GGUF model has been downloaded."""
+    root = model_root if model_root is not None else _default_model_root()
+    found = root.exists() and any(root.rglob(_MODEL_FILE))
+    if found:
+        return CheckResult("Models", "embedded", "pass", f"Embedded model present in {root}")
+    return CheckResult(
+        "Models",
+        "embedded",
+        "warn",
+        f"Embedded model not downloaded (looked in {root})",
+        fix="Run an LLM-engine command (e.g. dbsprout generate --engine spec) "
+        "to fetch it, or `pip install dbsprout[llm]`.",
+    )
+
+
+def _existing_ancestor(path: Path) -> Path:
+    p = path.resolve()
+    while not p.exists() and p != p.parent:
+        p = p.parent
+    return p
+
+
+def check_disk_space(dbsprout_parent: Path | None = None) -> CheckResult:
+    """Warn when free space near ``.dbsprout/`` is below 1 GiB."""
+    target = _existing_ancestor((dbsprout_parent or Path.cwd()) / ".dbsprout")
+    free = shutil.disk_usage(target).free
+    gib = free / 1024**3
+    if free >= _MIN_FREE_BYTES:
+        return CheckResult("Environment", "disk", "pass", f"{gib:.1f} GiB free at {target}")
+    return CheckResult(
+        "Environment",
+        "disk",
+        "warn",
+        f"Only {gib:.2f} GiB free at {target}",
+        fix="Free up disk space before downloading models or large seeds.",
+    )
 
 
 def run_all_checks(

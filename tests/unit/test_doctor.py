@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import importlib.util
+import shutil
+from collections import namedtuple
 from typing import TYPE_CHECKING
 
 from dbsprout.doctor import CheckResult
@@ -10,6 +12,7 @@ from dbsprout.doctor import checks as checks_mod
 from dbsprout.doctor.checks import (
     check_database,
     check_extras,
+    check_model,
     check_python_version,
 )
 
@@ -74,3 +77,24 @@ def test_check_database_bad_url_is_fail() -> None:
     r = check_database("notadialect://x")
     assert r.status == "fail"
     assert r.fix is not None
+
+
+def test_check_model_absent_is_warn(tmp_path: Path) -> None:
+    r = check_model(model_root=tmp_path)
+    assert r.status == "warn"
+    assert r.fix is not None
+
+
+def test_check_model_present_is_pass(tmp_path: Path) -> None:
+    nested = tmp_path / "models--Qwen" / "snap"
+    nested.mkdir(parents=True)
+    (nested / "qwen2.5-1.5b-instruct-q4_k_m.gguf").write_bytes(b"x")
+    r = check_model(model_root=tmp_path)
+    assert r.status == "pass"
+
+
+def test_check_disk_space_low_is_warn(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    usage = namedtuple("usage", ["total", "used", "free"])
+    monkeypatch.setattr(shutil, "disk_usage", lambda _p: usage(100, 100, 1024))
+    r = checks_mod.check_disk_space(tmp_path)
+    assert r.status == "warn"
