@@ -289,17 +289,38 @@ def _load_new_schema(
             raise typer.Exit(code=2) from None
         return new_schema, safe_new_source
 
-    # File source: parse the schema file and echo the path unmodified.
+    # File source: parse with symlink/traversal guards (see _parse_schema_file).
+    new_schema = _parse_schema_file(source_value)
+    return new_schema, source_value
+
+
+def _parse_schema_file(file_path: str) -> DatabaseSchema:
+    """Parse a schema file with symlink/traversal guards (S-054a).
+
+    Order matters: reject symlinks BEFORE ``resolve()`` (resolve follows
+    symlinks); ``resolve(strict=True)`` raises ``FileNotFoundError`` for
+    missing paths so the existing "File not found" exit-2 is preserved;
+    parser failures are sanitized so partial file text never leaks.
+    """
     from pathlib import Path  # noqa: PLC0415
 
+    from dbsprout.cli.console import console  # noqa: PLC0415
     from dbsprout.schema.parsers import parse_schema_file  # noqa: PLC0415
 
+    raw_path = Path(file_path)
+    if raw_path.is_symlink():
+        console.print(f"[red]Error:[/red] Refusing to read symlink: {file_path}")
+        raise typer.Exit(code=2)
     try:
-        new_schema = parse_schema_file(Path(source_value))
-    except (FileNotFoundError, ValueError, OSError) as exc:
-        console.print(f"[red]Error:[/red] {exc}")
+        resolved = raw_path.resolve(strict=True)
+    except (FileNotFoundError, OSError):
+        console.print(f"[red]Error:[/red] File not found: {file_path}")
         raise typer.Exit(code=2) from None
-    return new_schema, source_value
+    try:
+        return parse_schema_file(resolved)
+    except (ValueError, OSError) as exc:
+        console.print(f"[red]Error:[/red] {exc.__class__.__name__}: failed to parse {file_path}")
+        raise typer.Exit(code=2) from None
 
 
 def diff_command(

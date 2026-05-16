@@ -1801,3 +1801,60 @@ class TestDiffHashValidation:
         out = _strip_ansi(result.output)
         assert "snapshot not found" in out.lower()
         assert "abcdef12" in out
+
+
+class TestDiffPathValidation:
+    """S-054a AC-1/AC-2/AC-3: --file symlink/traversal/sanitize guards."""
+
+    @patch("dbsprout.migrate.snapshot.SnapshotStore")
+    def test_symlink_file_rejected_exit_2(self, mock_store_cls: MagicMock, tmp_path: Path) -> None:
+        """AC-1: a symlinked --file is refused before being read."""
+        mock_store = MagicMock()
+        mock_store.load_latest.return_value = _simple_schema_for_diff()
+        mock_store_cls.return_value = mock_store
+        target = tmp_path / "real.sql"
+        target.write_text("CREATE TABLE t (id INTEGER PRIMARY KEY);")
+        link = tmp_path / "link.sql"
+        link.symlink_to(target)
+        result = runner.invoke(app, ["diff", "--file", str(link), "--output-dir", str(tmp_path)])
+        assert result.exit_code == 2
+        out = _strip_ansi(result.output)
+        assert "refusing to read symlink" in out.lower()
+        assert str(link) in out
+
+    @patch("dbsprout.migrate.snapshot.SnapshotStore")
+    def test_missing_file_still_says_file_not_found(
+        self, mock_store_cls: MagicMock, tmp_path: Path
+    ) -> None:
+        """AC-2: non-existent --file still exits 2 with the existing message."""
+        mock_store = MagicMock()
+        mock_store.load_latest.return_value = _simple_schema_for_diff()
+        mock_store_cls.return_value = mock_store
+        missing = tmp_path / "nope.sql"
+        result = runner.invoke(app, ["diff", "--file", str(missing), "--output-dir", str(tmp_path)])
+        assert result.exit_code == 2
+        out = _strip_ansi(result.output)
+        assert "file not found" in out.lower()
+        assert str(missing) in out
+
+    @patch("dbsprout.migrate.snapshot.SnapshotStore")
+    def test_parse_error_does_not_echo_file_contents(
+        self, mock_store_cls: MagicMock, tmp_path: Path
+    ) -> None:
+        """AC-3: parser errors are sanitized — no file text leaked.
+
+        Uses a ``.sql`` file because the SQL DDL parser echoes the offending
+        source line in its raw exception message — the real leak vector AC-3
+        closes (other parsers truncate, so they would not exercise this).
+        """
+        mock_store = MagicMock()
+        mock_store.load_latest.return_value = _simple_schema_for_diff()
+        mock_store_cls.return_value = mock_store
+        leak_marker = "PAYLOAD_TOKEN_LEAK_MARKER"
+        bad = tmp_path / "broken.sql"
+        bad.write_text(f"CREATE TABLE {leak_marker} ((( @@@ not valid sql")
+        result = runner.invoke(app, ["diff", "--file", str(bad), "--output-dir", str(tmp_path)])
+        assert result.exit_code == 2
+        out = _strip_ansi(result.output)
+        assert leak_marker not in out
+        assert "failed to parse" in out.lower()
