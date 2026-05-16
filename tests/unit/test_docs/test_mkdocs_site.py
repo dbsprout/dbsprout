@@ -45,8 +45,6 @@ def test_mkdocs_strict_build(tmp_path: Path) -> None:
     )
 
     assert result.returncode == 0, (
-        f"mkdocs build --strict failed:\n"
-        f"STDOUT:\n{result.stdout}\n"
-        f"STDERR:\n{result.stderr}"
+        f"mkdocs build --strict failed:\nSTDOUT:\n{result.stdout}\nSTDERR:\n{result.stderr}"
     )
     assert (site_dir / "index.html").is_file(), "index.html not generated"
