@@ -65,6 +65,11 @@ def generate_proxy(  # noqa: PLR0913
     dialect: str = typer.Option("postgresql", "--dialect", "-d"),
     engine: str = typer.Option("heuristic", "--engine", "-e"),
     privacy: str = typer.Option("local", "--privacy"),
+    reference_data: str | None = typer.Option(
+        None,
+        "--reference-data",
+        help="Reference CSV (file or per-table dir) for --engine statistical.",
+    ),
     db: str | None = typer.Option(
         None, "--db", help="Target database URL for direct insertion.", envvar="DBSPROUT_TARGET_DB"
     ),
@@ -105,6 +110,7 @@ def generate_proxy(  # noqa: PLR0913
         dialect=dialect,
         engine=engine,
         privacy=privacy,
+        reference_data=Path(reference_data) if reference_data else None,
         target_db=db,
         upsert=upsert,
         insert_method=insert_method,
@@ -189,6 +195,43 @@ def audit_proxy(
     audit_command(last=last)
 
 
+@app.command(name="doctor")
+def doctor_proxy(
+    db: str | None = typer.Option(
+        None, "--db", help="Database URL to test.", envvar="DBSPROUT_TARGET_DB"
+    ),
+    config_path: str | None = typer.Option(
+        "dbsprout.toml", "--config", help="Config file to scan for secrets."
+    ),
+) -> None:
+    """Diagnose the local environment for common configuration issues."""
+    from dbsprout.cli.commands.doctor import doctor_command  # noqa: PLC0415
+
+    doctor_command(db=db, config_path=config_path)
+
+
 @app.callback()
-def main() -> None:
-    """DBSprout — realistic database seed data from your schema."""
+def main(
+    verbose: bool = typer.Option(False, "--verbose", "-v", help="Show full tracebacks on error."),
+) -> None:
+    """DBSprout — realistic database seed data from your schema.
+
+    ``--verbose`` is declared here so Typer accepts it as a global option;
+    it is actually consumed by :func:`run` before Typer dispatches (the
+    error guard needs to know whether to print a traceback).
+    """
+
+
+def run() -> None:
+    """Console-script entrypoint: render DBSproutError as a Rich panel.
+
+    ``--verbose`` is parsed manually here (it is consumed before Typer is even
+    invoked) so the global guard knows whether to print a traceback.
+    """
+    import sys  # noqa: PLC0415
+
+    from dbsprout.cli.error_handler import handle_cli_errors  # noqa: PLC0415
+
+    verbose = "--verbose" in sys.argv or "-v" in sys.argv
+    with handle_cli_errors(verbose=verbose):
+        app()

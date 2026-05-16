@@ -65,8 +65,8 @@ class AlembicParser:
             )
         except ImportError as exc:
             raise MigrationParseError(
-                "alembic is required for compare_metadata(); "
-                "install with `pip install dbsprout[migrate]`"
+                "alembic is required for compare_metadata(). "
+                "Install it with: pip install dbsprout[migrate]"
             ) from exc
 
         import sqlalchemy as sa  # noqa: PLC0415

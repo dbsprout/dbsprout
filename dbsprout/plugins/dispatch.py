@@ -85,6 +85,12 @@ def resolve_engine(engine: str, *, seed: int) -> Any:
         from dbsprout.generate.engines.spec_driven import SpecDrivenEngine  # noqa: PLC0415
 
         return SpecDrivenEngine(seed=seed)
+    if engine == "statistical":
+        from dbsprout.generate.engines.statistical import (  # noqa: PLC0415
+            StatisticalEngine,
+        )
+
+        return StatisticalEngine(seed=seed)
     raise ValueError(f"Unknown generation engine: {engine!r}")
 
 
