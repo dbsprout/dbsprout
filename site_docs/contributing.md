@@ -29,3 +29,9 @@ uv run mkdocs build --strict   # Same check CI and the test gate run
 Documentation source lives in `site_docs/`; `mkdocs.yml` is at the
 repository root. The site deploys to GitHub Pages automatically on push to
 `main`.
+
+## Writing plugins
+
+dbsprout is extensible via Python entry points. See the
+[plugin development guide](contributing/plugins.md) for the six
+extension points and a complete worked example.
