@@ -2098,3 +2098,15 @@ class TestDiffEdgeCases:
         assert "+ orders" in output
         mock_store.load_by_hash.assert_called_once_with("abc12345")
         mock_store.load_latest.assert_not_called()
+
+    def test_nonexistent_output_dir_exits_2(self, tmp_path: Path) -> None:
+        """AC-5: ``--output-dir`` pointing at a missing path → exit 2 because
+        the real SnapshotStore.load_latest() returns None."""
+        missing_dir = tmp_path / "does_not_exist"
+        result = runner.invoke(
+            app,
+            ["diff", "--db", "sqlite:///x.db", "--output-dir", str(missing_dir)],
+        )
+        assert result.exit_code == 2
+        output = _strip_ansi(result.output)
+        assert "no snapshots found" in output.lower()
