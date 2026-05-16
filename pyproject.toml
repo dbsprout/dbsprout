@@ -95,6 +95,7 @@ dev = [
     "sqlalchemy>=2.0",
     "types-networkx>=3.0",
     "testcontainers[postgres,mysql]>=4.0",
+    "mongomock>=4.0",
 ]
 db = [
     "sqlalchemy>=2.0",
@@ -128,6 +129,10 @@ cloud = [
 ]
 privacy = [
     "presidio-analyzer>=2.0",
+]
+mongo = [
+    "pymongo>=4.0",
+    "pymongo-schema>=0.4",
 ]
 stats = [
     "scipy>=1.14",
@@ -230,7 +235,7 @@ module = "tests.*"
 disallow_untyped_defs = false
 
 [[tool.mypy.overrides]]
-module = ["polars", "polars.*", "alembic", "alembic.*", "psycopg", "psycopg.*", "unsloth", "unsloth.*", "trl", "trl.*", "datasets", "datasets.*", "torch", "torch.*", "mlx", "mlx.*", "mlx_lm", "mlx_lm.*", "litellm", "litellm.*", "instructor", "instructor.*", "llama_cpp", "llama_cpp.*", "huggingface_hub", "huggingface_hub.*", "peft", "peft.*", "transformers", "transformers.*"]
+module = ["polars", "polars.*", "alembic", "alembic.*", "psycopg", "psycopg.*", "unsloth", "unsloth.*", "trl", "trl.*", "datasets", "datasets.*", "torch", "torch.*", "mlx", "mlx.*", "mlx_lm", "mlx_lm.*", "litellm", "litellm.*", "instructor", "instructor.*", "llama_cpp", "llama_cpp.*", "huggingface_hub", "huggingface_hub.*", "peft", "peft.*", "transformers", "transformers.*", "pymongo", "pymongo.*", "pymongo_schema", "pymongo_schema.*", "mongomock", "mongomock.*"]
 ignore_missing_imports = true
 
 # ─── Bandit ────────────────────────────────────────────────────────────
@@ -256,6 +261,7 @@ omit = [
     "dbsprout/output/parquet_writer.py",   # requires polars ([data] extra)
     "dbsprout/quality/fidelity.py",         # requires scipy  ([stats] extra)
     "dbsprout/quality/detection.py",        # requires sklearn ([stats] extra)
+    "dbsprout/schema/parsers/mongodb.py",  # requires pymongo-schema ([mongo] extra)
 ]
 
 [tool.coverage.report]
