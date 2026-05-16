@@ -7,9 +7,15 @@ from typing import TYPE_CHECKING
 
 from dbsprout.doctor import CheckResult
 from dbsprout.doctor import checks as checks_mod
-from dbsprout.doctor.checks import check_extras, check_python_version
+from dbsprout.doctor.checks import (
+    check_database,
+    check_extras,
+    check_python_version,
+)
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     import pytest
 
 
@@ -49,3 +55,22 @@ def test_check_extras_missing_is_warn(monkeypatch: pytest.MonkeyPatch) -> None:
     results = checks_mod.check_extras()
     assert all(r.status == "warn" for r in results)
     assert all(r.fix is not None for r in results)
+
+
+def test_check_database_no_url_is_pass() -> None:
+    r = check_database(None)
+    assert r.status == "pass"
+    assert "no database" in r.message.lower()
+
+
+def test_check_database_sqlite_roundtrip(tmp_path: Path) -> None:
+    url = f"sqlite:///{tmp_path / 'd.db'}"
+    r = check_database(url)
+    assert r.status == "pass"
+    assert r.category == "Database"
+
+
+def test_check_database_bad_url_is_fail() -> None:
+    r = check_database("notadialect://x")
+    assert r.status == "fail"
+    assert r.fix is not None

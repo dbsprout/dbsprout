@@ -94,6 +94,41 @@ def check_extras() -> list[CheckResult]:
     return results
 
 
+def check_database(db_url: str | None) -> CheckResult:
+    """Attempt ``SELECT 1`` against a configured database URL."""
+    if not db_url:
+        return CheckResult(
+            "Database",
+            "connectivity",
+            "pass",
+            "No database configured (skipped)",
+        )
+    import sqlalchemy as sa  # noqa: PLC0415
+
+    from dbsprout.schema.introspect import _create_engine  # noqa: PLC0415
+
+    try:
+        safe = sa.engine.make_url(db_url).render_as_string(hide_password=True)
+    except Exception:
+        safe = "<unparseable url>"
+    try:
+        engine = _create_engine(db_url)
+        try:
+            with engine.connect() as conn:
+                conn.execute(sa.text("SELECT 1"))
+        finally:
+            engine.dispose()
+    except Exception as exc:
+        return CheckResult(
+            "Database",
+            "connectivity",
+            "fail",
+            f"Could not connect to {safe}: {type(exc).__name__}",
+            fix="Verify the DB URL/credentials and that the server is reachable.",
+        )
+    return CheckResult("Database", "connectivity", "pass", f"Connected to {safe}")
+
+
 def run_all_checks(
     *,
     db_url: str | None = None,  # noqa: ARG001 - wired up in Task 8
