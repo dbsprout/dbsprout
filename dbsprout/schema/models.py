@@ -53,6 +53,23 @@ def _normalize_referential_action(v: str | None) -> str | None:
 
 ReferentialAction = Annotated[str | None, BeforeValidator(_normalize_referential_action)]
 
+_VALID_DEFER_TIMINGS = frozenset({"DEFERRED", "IMMEDIATE"})
+
+
+def _normalize_defer_timing(v: str | None) -> str | None:
+    """Normalize and validate a SQL FK ``INITIALLY`` timing."""
+    if v is None:
+        return None
+    v = v.upper()
+    if v not in _VALID_DEFER_TIMINGS:
+        raise ValueError(
+            f"Invalid INITIALLY timing {v!r}; must be one of {sorted(_VALID_DEFER_TIMINGS)}"
+        )
+    return v
+
+
+DeferTiming = Annotated[str | None, BeforeValidator(_normalize_defer_timing)]
+
 
 def _quote_ident(name: str) -> str:
     """Double-quote a SQL identifier, escaping internal double quotes."""
@@ -115,7 +132,7 @@ class ForeignKeySchema(BaseModel):
     on_delete: ReferentialAction = None
     on_update: ReferentialAction = None
     deferrable: bool = False
-    initially: str | None = None
+    initially: DeferTiming = None
 
 
 class IndexSchema(BaseModel):

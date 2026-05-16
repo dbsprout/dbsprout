@@ -974,3 +974,36 @@ class TestC1ControlChars:
         assert _CONTROL_CHAR_RE.search(chr(0xA0)) is None
         assert _CONTROL_CHAR_RE.search(chr(0x9F)) is not None
         assert _CONTROL_CHAR_RE.search(chr(0x80)) is not None
+
+
+# ── DeferTiming validation ──────────────────────────────────────────────
+
+
+class TestDeferTiming:
+    """AC: ForeignKeySchema.initially constrained to DEFERRED|IMMEDIATE|None."""
+
+    @pytest.mark.parametrize("val", ["DEFERRED", "IMMEDIATE"])
+    def test_valid_values(self, val: str) -> None:
+        fk = ForeignKeySchema(columns=["a"], ref_table="t", ref_columns=["b"], initially=val)
+        assert fk.initially == val
+
+    def test_none_accepted(self) -> None:
+        fk = ForeignKeySchema(columns=["a"], ref_table="t", ref_columns=["b"])
+        assert fk.initially is None
+
+    def test_case_insensitive_normalized(self) -> None:
+        fk = ForeignKeySchema(columns=["a"], ref_table="t", ref_columns=["b"], initially="deferred")
+        assert fk.initially == "DEFERRED"
+
+    def test_invalid_value_rejected(self) -> None:
+        with pytest.raises(ValidationError):
+            ForeignKeySchema(columns=["a"], ref_table="t", ref_columns=["b"], initially="SOON")
+
+    def test_injection_value_rejected(self) -> None:
+        with pytest.raises(ValidationError):
+            ForeignKeySchema(
+                columns=["a"],
+                ref_table="t",
+                ref_columns=["b"],
+                initially="DROP TABLE x",
+            )
