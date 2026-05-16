@@ -2008,3 +2008,56 @@ class TestDiffEdgeCases:
         for i in range(100):
             assert f"t{i:03d}" in output
         assert elapsed < 2.0, f"100-table diff took {elapsed:.2f}s (regression guard)"
+
+    @patch("dbsprout.migrate.snapshot.SnapshotStore")
+    @patch("dbsprout.cli.commands.diff._introspect_db")
+    def test_enum_and_table_with_same_name(
+        self,
+        mock_introspect: MagicMock,
+        mock_store_cls: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        """AC-3: a table named ``orders`` and an enum named ``orders`` are
+        rendered in separate groups with no data loss or sentinel leak."""
+        old = DatabaseSchema(
+            tables=[
+                TableSchema(
+                    name="users",
+                    columns=[ColumnSchema(name="id", data_type=ColumnType.INTEGER, nullable=False)],
+                    primary_key=["id"],
+                )
+            ],
+            dialect="postgresql",
+        )
+        new = DatabaseSchema(
+            tables=[
+                TableSchema(
+                    name="users",
+                    columns=[ColumnSchema(name="id", data_type=ColumnType.INTEGER, nullable=False)],
+                    primary_key=["id"],
+                ),
+                TableSchema(
+                    name="orders",
+                    columns=[ColumnSchema(name="id", data_type=ColumnType.INTEGER, nullable=False)],
+                    primary_key=["id"],
+                ),
+            ],
+            enums={"orders": ["pending", "shipped"]},
+            dialect="postgresql",
+        )
+        mock_introspect.return_value = new
+        mock_store = MagicMock()
+        mock_store.load_latest.return_value = old
+        mock_store_cls.return_value = mock_store
+
+        result = runner.invoke(
+            app,
+            ["diff", "--db", "postgresql://host/db", "--output-dir", str(tmp_path)],
+        )
+        assert result.exit_code == 1
+        output = _strip_ansi(result.output)
+        assert "Tables" in output
+        assert "Enums" in output
+        assert "+ orders" in output
+        assert "enum: orders" in output
+        assert "__enums__" not in output
