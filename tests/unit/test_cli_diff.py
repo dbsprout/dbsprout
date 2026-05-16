@@ -1712,3 +1712,92 @@ class TestDiffSchemaChangeTypeGrouping:
             f"SchemaChangeType variants not grouped in _render_rich_changes: {missing}. "
             "Update dbsprout/cli/commands/diff.py::_render_rich_changes to group these."
         )
+
+
+# ── S-054a security hardening (cohesive block; sibling S-054b layers on top) ──
+
+
+class TestDiffHashValidation:
+    """S-054a AC-4/AC-6: --snapshot hex validation + escaped not-found message."""
+
+    def test_non_hex_snapshot_rejected_by_callback(self, tmp_path: Path) -> None:
+        """A non-hex --snapshot prefix is rejected by the Typer callback
+        (usage error), not the generic 'not found' fallback."""
+        result = runner.invoke(
+            app,
+            [
+                "diff",
+                "--db",
+                "sqlite:///x.db",
+                "--snapshot",
+                "zz//../etc",
+                "--output-dir",
+                str(tmp_path),
+            ],
+        )
+        assert result.exit_code == 2
+        out = _strip_ansi(result.output)
+        assert "Invalid value for '--snapshot'" in out
+        assert "hex" in out.lower()
+        # It must be rejected BEFORE the not-found fallback runs.
+        assert "snapshot not found" not in out.lower()
+
+    def test_uppercase_hex_snapshot_rejected_by_callback(self, tmp_path: Path) -> None:
+        """Uppercase hex is rejected by the callback (filenames use lowercase)."""
+        result = runner.invoke(
+            app,
+            [
+                "diff",
+                "--db",
+                "sqlite:///x.db",
+                "--snapshot",
+                "DEADBEEF",
+                "--output-dir",
+                str(tmp_path),
+            ],
+        )
+        assert result.exit_code == 2
+        out = _strip_ansi(result.output)
+        assert "Invalid value for '--snapshot'" in out
+
+    def test_valid_lowercase_hex_snapshot_passes_callback(self, tmp_path: Path) -> None:
+        """A valid lowercase-hex prefix passes the callback (no BadParameter)."""
+        result = runner.invoke(
+            app,
+            [
+                "diff",
+                "--db",
+                "sqlite:///x.db",
+                "--snapshot",
+                "deadbeef",
+                "--output-dir",
+                str(tmp_path),
+            ],
+        )
+        assert "Invalid value for '--snapshot'" not in _strip_ansi(result.output)
+
+    @patch("dbsprout.migrate.snapshot.SnapshotStore")
+    def test_snapshot_not_found_message_is_markup_escaped(
+        self, mock_store_cls: MagicMock, tmp_path: Path
+    ) -> None:
+        """AC-6: the echoed hash is markup-escaped (no-op for hex, but the
+        escape() call is exercised and the literal hash is shown)."""
+        mock_store = MagicMock()
+        mock_store.load_by_hash.return_value = None
+        mock_store_cls.return_value = mock_store
+        result = runner.invoke(
+            app,
+            [
+                "diff",
+                "--db",
+                "sqlite:///x.db",
+                "--snapshot",
+                "abcdef12",
+                "--output-dir",
+                str(tmp_path),
+            ],
+        )
+        assert result.exit_code == 2
+        out = _strip_ansi(result.output)
+        assert "snapshot not found" in out.lower()
+        assert "abcdef12" in out

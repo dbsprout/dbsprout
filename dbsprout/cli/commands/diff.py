@@ -223,7 +223,9 @@ def _load_old_schema(output_dir: Path, snapshot: str | None) -> DatabaseSchema:
     if snapshot is not None:
         old_schema = store.load_by_hash(snapshot)
         if old_schema is None:
-            console.print(f"[red]Error:[/red] Snapshot not found: {snapshot}")
+            from rich.markup import escape  # noqa: PLC0415
+
+            console.print(f"[red]Error:[/red] Snapshot not found: {escape(snapshot)}")
             raise typer.Exit(code=2)
         return old_schema
 
