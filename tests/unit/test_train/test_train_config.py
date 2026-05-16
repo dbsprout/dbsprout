@@ -141,3 +141,34 @@ def test_lora_adapter_validation_errors(kwargs: dict[str, object]) -> None:
     base.update(kwargs)
     with pytest.raises(ValidationError):
         LoRAAdapter(**base)  # type: ignore[arg-type]
+
+
+# --- S-097: LoRAAdapter DP guarantee fields --------------------------------
+
+
+def test_lora_adapter_dp_fields_default_none() -> None:
+    a = LoRAAdapter(
+        adapter_path=Path("x"),
+        base_model="m",
+        epochs=1,
+        train_samples=2,
+        final_loss=0.1,
+        duration_seconds=1.0,
+    )
+    assert a.achieved_epsilon is None
+    assert a.dp_delta is None
+
+
+def test_lora_adapter_dp_fields_set() -> None:
+    a = LoRAAdapter(
+        adapter_path=Path("x"),
+        base_model="m",
+        epochs=1,
+        train_samples=2,
+        final_loss=0.1,
+        duration_seconds=1.0,
+        achieved_epsilon=7.9,
+        dp_delta=1e-5,
+    )
+    assert a.achieved_epsilon == pytest.approx(7.9)
+    assert a.dp_delta == pytest.approx(1e-5)
