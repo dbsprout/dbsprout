@@ -37,6 +37,29 @@ console = Console()
 _SNAPSHOT_DIR = Path(".dbsprout") / "snapshots"
 
 
+def _validate_lora_adapter_path(lora_path: Path) -> None:
+    """Validate a LoRA adapter path exists and is a file.
+
+    Single source of truth for the adapter-path check shared by the
+    ``--lora`` CLI flag and the ``[llm].lora_path`` config value (S-067c).
+    Raises :class:`~dbsprout.errors.ModelError` (rendered by the CLI panel).
+    The ``what``/``why``/``fix`` text is byte-for-byte the S-067b text so
+    the flag behaviour is unchanged.
+    """
+    if not lora_path.exists():
+        raise ModelError(
+            what="The --lora adapter path does not exist.",
+            why=f"No file was found at {lora_path}.",
+            fix="Pass the path to an existing .gguf LoRA adapter file.",
+        )
+    if not lora_path.is_file():
+        raise ModelError(
+            what="The --lora adapter path is not a file.",
+            why=f"{lora_path} is a directory, not a LoRA adapter file.",
+            fix="Pass the path to the .gguf adapter file itself.",
+        )
+
+
 def generate_command(  # noqa: PLR0913
     schema_snapshot: Path | None = None,
     config_path: Path | None = None,
@@ -69,18 +92,7 @@ def generate_command(  # noqa: PLR0913
                 ),
                 fix="Re-run with --engine spec, or drop --lora.",
             )
-        if not lora_path.exists():
-            raise ModelError(
-                what="The --lora adapter path does not exist.",
-                why=f"No file was found at {lora_path}.",
-                fix="Pass the path to an existing .gguf LoRA adapter file.",
-            )
-        if not lora_path.is_file():
-            raise ModelError(
-                what="The --lora adapter path is not a file.",
-                why=f"{lora_path} is a directory, not a LoRA adapter file.",
-                fix="Pass the path to the .gguf adapter file itself.",
-            )
+        _validate_lora_adapter_path(lora_path)
 
     # Validate insert_method
     valid_methods = {"auto", "copy", "load_data", "batch"}
@@ -134,6 +146,22 @@ def generate_command(  # noqa: PLR0913
     cfg_path = config_path or Path("dbsprout.toml")
     config = DBSproutConfig.from_toml(cfg_path if cfg_path.exists() else None)
 
+    # S-067c: --lora (CLI) overrides [llm].lora_path (config). When the
+    # adapter comes from config (flag absent), apply the SAME guardrails the
+    # flag gets: --engine spec rule + the shared exists/is-file helper.
+    resolved_lora = lora_path if lora_path is not None else config.llm.lora_path
+    if lora_path is None and resolved_lora is not None:
+        if engine != "spec":
+            raise ModelError(
+                what="[llm].lora_path is set but --engine is not 'spec'.",
+                why=(
+                    f"The configured LoRA adapter only affects the LLM spec "
+                    f"engine; --engine {engine} ignores it."
+                ),
+                fix="Run with --engine spec, or remove [llm].lora_path.",
+            )
+        _validate_lora_adapter_path(resolved_lora)
+
     # Orchestrate
     ref = _load_reference_for_engine(reference_data, schema, engine)
     result = orchestrate(
@@ -143,7 +171,7 @@ def generate_command(  # noqa: PLR0913
         default_rows=rows,
         engine=engine,
         reference_data=ref,
-        lora_path=lora_path,
+        lora_path=resolved_lora,
     )
 
     if result.total_tables == 0:

@@ -6,7 +6,8 @@ reject unknown TOML keys with clear validation errors.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Literal
+from pathlib import Path  # noqa: TC003 - runtime use by Pydantic field annotations
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -18,9 +19,6 @@ from pydantic import BaseModel, ConfigDict, Field
 # breaking the <500 ms startup budget. Importing the submodule directly here
 # keeps ``DBSproutConfig`` fully defined for Pydantic without that cost.
 from dbsprout.train.config import TrainConfig
-
-if TYPE_CHECKING:
-    from pathlib import Path
 
 
 class SchemaConfig(BaseModel):
@@ -62,6 +60,20 @@ class PrivacyConfig(BaseModel):
     tier: Literal["local", "redacted", "cloud"] = "local"
 
 
+class LLMConfig(BaseModel):
+    """LLM settings from the ``[llm]`` section.
+
+    ``lora_path`` is the on-disk fine-tuned adapter used by the ``spec``
+    engine (S-067/S-067b). It is the persistent home for ``--lora``: the CLI
+    flag overrides this value (S-067c). All fields optional so a config with
+    no ``[llm]`` section loads unchanged.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    lora_path: Path | None = None
+
+
 class DBSproutConfig(BaseModel):
     """Root configuration loaded from ``dbsprout.toml``."""
 
@@ -71,6 +83,7 @@ class DBSproutConfig(BaseModel):
     generation: GenerationConfig = Field(default_factory=GenerationConfig)
     privacy: PrivacyConfig = Field(default_factory=PrivacyConfig)
     train: TrainConfig = Field(default_factory=TrainConfig)
+    llm: LLMConfig = Field(default_factory=LLMConfig)
     tables: dict[str, TableOverride] = Field(default_factory=dict)
 
     @classmethod

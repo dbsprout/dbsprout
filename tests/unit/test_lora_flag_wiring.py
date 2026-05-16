@@ -14,7 +14,10 @@ from typer.testing import CliRunner
 
 from dbsprout.cli.app import app
 from dbsprout.cli.commands import generate as gen_mod
-from dbsprout.cli.commands.generate import generate_command
+from dbsprout.cli.commands.generate import (
+    _validate_lora_adapter_path,
+    generate_command,
+)
 from dbsprout.config.models import DBSproutConfig
 from dbsprout.errors import ModelError
 from dbsprout.generate.orchestrator import GenerateResult, orchestrate
@@ -177,6 +180,141 @@ class TestGenerateCommandLoraValidation:
             )
 
         assert captured["lora_path"] == adapter
+
+
+class TestLoraConfigPrecedence:
+    """S-067c: --lora (CLI) overrides [llm].lora_path (config)."""
+
+    @staticmethod
+    def _setup(tmp_path: Path, lora: Path | None) -> Path:
+        """Write a schema snapshot + dbsprout.toml; return the snapshot path."""
+        snap_dir = tmp_path / ".dbsprout"
+        snap_dir.mkdir(exist_ok=True)
+        snap = snap_dir / "schema.json"
+        snap.write_text(_schema().model_dump_json(indent=2), encoding="utf-8")
+        cfg = tmp_path / "dbsprout.toml"
+        cfg.write_text("" if lora is None else f'[llm]\nlora_path = "{lora}"\n')
+        return snap
+
+    @staticmethod
+    def _capturing_orchestrate(captured: dict[str, object]):  # type: ignore[no-untyped-def]
+        def _fake(schema: object, config: object, **kwargs: object) -> object:
+            captured.update(kwargs)
+            return GenerateResult(
+                tables_data={"users": [{"id": 1, "email": "a@b.c"}]},
+                insertion_order=["users"],
+                total_rows=1,
+                total_tables=1,
+            )
+
+        return _fake
+
+    def test_config_only_used_when_flag_absent(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.chdir(tmp_path)
+        adapter = tmp_path / "cfg.gguf"
+        adapter.write_bytes(b"x")
+        snap = self._setup(tmp_path, adapter)
+        captured: dict[str, object] = {}
+
+        with patch.object(gen_mod, "orchestrate", self._capturing_orchestrate(captured)):
+            gen_mod.generate_command(
+                schema_snapshot=snap,
+                config_path=tmp_path / "dbsprout.toml",
+                engine="spec",
+                lora_path=None,
+                output_dir=tmp_path / "seeds",
+            )
+
+        assert captured["lora_path"] == adapter
+
+    def test_flag_overrides_config(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.chdir(tmp_path)
+        cfg_adapter = tmp_path / "cfg.gguf"
+        cfg_adapter.write_bytes(b"x")
+        flag_adapter = tmp_path / "flag.gguf"
+        flag_adapter.write_bytes(b"x")
+        snap = self._setup(tmp_path, cfg_adapter)
+        captured: dict[str, object] = {}
+
+        with patch.object(gen_mod, "orchestrate", self._capturing_orchestrate(captured)):
+            gen_mod.generate_command(
+                schema_snapshot=snap,
+                config_path=tmp_path / "dbsprout.toml",
+                engine="spec",
+                lora_path=flag_adapter,
+                output_dir=tmp_path / "seeds",
+            )
+
+        assert captured["lora_path"] == flag_adapter
+
+    def test_neither_passes_none(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.chdir(tmp_path)
+        snap = self._setup(tmp_path, None)
+        captured: dict[str, object] = {}
+
+        with patch.object(gen_mod, "orchestrate", self._capturing_orchestrate(captured)):
+            gen_mod.generate_command(
+                schema_snapshot=snap,
+                config_path=tmp_path / "dbsprout.toml",
+                engine="heuristic",
+                lora_path=None,
+                output_dir=tmp_path / "seeds",
+            )
+
+        assert captured["lora_path"] is None
+
+    def test_config_invalid_path_raises_model_error(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.chdir(tmp_path)
+        snap = self._setup(tmp_path, tmp_path / "missing.gguf")
+
+        with pytest.raises(ModelError) as exc:
+            gen_mod.generate_command(
+                schema_snapshot=snap,
+                config_path=tmp_path / "dbsprout.toml",
+                engine="spec",
+                lora_path=None,
+                output_dir=tmp_path / "seeds",
+            )
+        assert exc.value.exit_code == 1
+
+    def test_config_path_with_non_spec_engine_raises(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.chdir(tmp_path)
+        adapter = tmp_path / "cfg.gguf"
+        adapter.write_bytes(b"x")
+        snap = self._setup(tmp_path, adapter)
+
+        with pytest.raises(ModelError) as exc:
+            gen_mod.generate_command(
+                schema_snapshot=snap,
+                config_path=tmp_path / "dbsprout.toml",
+                engine="heuristic",
+                lora_path=None,
+                output_dir=tmp_path / "seeds",
+            )
+        assert exc.value.exit_code == 1
+
+
+class TestValidateLoraAdapterPathHelper:
+    def test_missing_path_raises_model_error(self, tmp_path: Path) -> None:
+        with pytest.raises(ModelError) as exc:
+            _validate_lora_adapter_path(tmp_path / "nope.gguf")
+        assert "does not exist" in exc.value.what
+
+    def test_directory_path_raises_model_error(self, tmp_path: Path) -> None:
+        with pytest.raises(ModelError) as exc:
+            _validate_lora_adapter_path(tmp_path)
+        assert "not a file" in exc.value.what
+
+    def test_valid_file_returns_none(self, tmp_path: Path) -> None:
+        f = tmp_path / "a.gguf"
+        f.write_bytes(b"x")
+        assert _validate_lora_adapter_path(f) is None
 
 
 class TestLoraCliEndToEnd:
