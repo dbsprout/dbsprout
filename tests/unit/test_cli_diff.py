@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import re
 import string
+import time
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
@@ -1970,3 +1971,40 @@ class TestDiffEdgeCases:
         output = _strip_ansi(result.output)
         assert "日本語_users" in output
         assert "users_😀" in output
+
+    @patch("dbsprout.migrate.snapshot.SnapshotStore")
+    @patch("dbsprout.cli.commands.diff._introspect_db")
+    def test_rich_renders_100_table_drift(
+        self,
+        mock_introspect: MagicMock,
+        mock_store_cls: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        """AC-2: 100 added tables all render and the command stays under 2s."""
+        old = _simple_schema_for_diff()
+        added = [
+            TableSchema(
+                name=f"t{i:03d}",
+                columns=[ColumnSchema(name="id", data_type=ColumnType.INTEGER, nullable=False)],
+                primary_key=["id"],
+            )
+            for i in range(100)
+        ]
+        new = DatabaseSchema(tables=[*old.tables, *added], dialect="sqlite")
+        mock_introspect.return_value = new
+        mock_store = MagicMock()
+        mock_store.load_latest.return_value = old
+        mock_store_cls.return_value = mock_store
+
+        start = time.perf_counter()
+        result = runner.invoke(
+            app,
+            ["diff", "--db", "sqlite:///x.db", "--output-dir", str(tmp_path)],
+        )
+        elapsed = time.perf_counter() - start
+
+        assert result.exit_code == 1
+        output = _strip_ansi(result.output)
+        for i in range(100):
+            assert f"t{i:03d}" in output
+        assert elapsed < 2.0, f"100-table diff took {elapsed:.2f}s (regression guard)"
