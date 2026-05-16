@@ -18,13 +18,18 @@ without ``dbsprout[train-mlx]`` and the ``<500 ms`` CLI startup budget holds.
 This mirrors the lazy-import contract in
 :class:`dbsprout.train.trainer.QLoRATrainer`.
 
-The training loop is wired against the **real** ``mlx-lm`` LoRA API surface
-(``mlx_lm.utils.load`` → ``(model, tokenizer)``;
+The training loop is wired against the **verified-real** ``mlx-lm`` LoRA API
+(``mlx_lm.utils.load`` → ``(model, tokenizer)``; ``mlx_lm.utils.save_config``;
+``mlx_lm.tuner.datasets.TextDataset``/``CacheDataset``;
 ``mlx_lm.tuner.utils.linear_to_lora_layers``;
-``mlx_lm.tuner.trainer.TrainingArgs`` + ``train``; an ``mlx.optimizers``
-optimizer) resolved behind the single :func:`_load_mlx_lm_symbols` seam. If
-those real symbols are unavailable at runtime a clear actionable error is
-raised — the trainer never *silently* succeeds.
+``mlx_lm.tuner.trainer.TrainingArgs`` + ``train`` + ``TrainingCallback``; an
+``mlx.optimizers.Adam`` optimizer; ``mlx.core.random.seed``) resolved behind
+the single :func:`_load_mlx_lm_symbols` seam. Every symbol was verified
+against the pinned ``mlx-lm>=0.20`` upstream source (``ml-explore/mlx-lm``):
+there is no ``run_lora_training``, no ``completion_only_loss`` ``train()``
+keyword, and ``adapter_file`` is a ``TrainingArgs`` field. If those real
+symbols are unavailable at runtime a clear actionable error is raised — the
+trainer never *silently* succeeds.
 
 .. note::
    Real Apple-Silicon execution is **hardware-validation-pending** (like the
@@ -134,16 +139,30 @@ def select_trainer() -> _Trainer:
 
 
 def _load_mlx_lm_symbols() -> dict[str, Any]:
-    """Resolve the **real** mlx-lm LoRA training symbols (single mock seam).
+    """Resolve the **verified-real** mlx-lm LoRA training symbols (mock seam).
 
-    Returns the genuine public entrypoints — there is no fabricated
-    ``run_lora_training``-style convenience API in mlx-lm:
+    Every symbol is a genuine public entrypoint of the pinned ``mlx-lm>=0.20``
+    package (verified against the ``ml-explore/mlx-lm`` source — ``lora.py``,
+    ``tuner/trainer.py``, ``tuner/utils.py``, ``tuner/datasets.py``,
+    ``tuner/callbacks.py``). There is **no** ``run_lora_training`` convenience
+    API, no ``completion_only_loss`` parameter, and ``adapter_file`` is a
+    :class:`mlx_lm.tuner.trainer.TrainingArgs` *field* — never a ``train()``
+    keyword:
 
-    * ``load``                 — ``mlx_lm.utils.load`` → ``(model, tokenizer)``
-    * ``linear_to_lora_layers``— ``mlx_lm.tuner.utils.linear_to_lora_layers``
+    * ``load``                  — ``mlx_lm.utils.load`` → ``(model, tokenizer)``
+    * ``save_config``           — ``mlx_lm.utils.save_config`` (writes JSON)
+    * ``TextDataset``           — ``mlx_lm.tuner.datasets.TextDataset``
+      (``__init__(data: list[dict], tokenizer, text_key="text")``)
+    * ``CacheDataset``          — ``mlx_lm.tuner.datasets.CacheDataset``
+    * ``linear_to_lora_layers`` — ``mlx_lm.tuner.utils.linear_to_lora_layers``
+      (``(model, num_layers, config, use_dora=False)``)
     * ``TrainingArgs``/``train``— ``mlx_lm.tuner.trainer``
-    * ``make_optimizer``       — an ``mlx.optimizers.Adam`` factory
-    * ``load_dataset``         — JSONL → mlx-lm completion dataset
+      (``train(model, optimizer, train_dataset, val_dataset=None, args=,
+      loss=, iterate_batches=, training_callback=)``)
+    * ``TrainingCallback``      — ``mlx_lm.tuner.trainer.TrainingCallback``
+      (base class: ``on_train_loss_report(dict)`` / ``on_val_loss_report``)
+    * ``make_optimizer``        — an ``mlx.optimizers.Adam`` factory
+    * ``seed``                  — ``mlx.core.random.seed`` (best-effort RNG seed)
 
     Raises a clear, actionable :class:`RuntimeError` (never a silent success)
     if mlx-lm is missing or its real API has moved. This is the *only* place
@@ -151,11 +170,16 @@ def _load_mlx_lm_symbols() -> dict[str, Any]:
     exactly these correct symbols and a non-existent API cannot hide.
     """
     try:
+        import mlx.core as mx  # noqa: PLC0415
         import mlx.optimizers as optim  # noqa: PLC0415
-        from mlx_lm.tuner.datasets import load_dataset  # noqa: PLC0415
-        from mlx_lm.tuner.trainer import TrainingArgs, train  # noqa: PLC0415
+        from mlx_lm.tuner.datasets import CacheDataset, TextDataset  # noqa: PLC0415
+        from mlx_lm.tuner.trainer import (  # noqa: PLC0415
+            TrainingArgs,
+            TrainingCallback,
+            train,
+        )
         from mlx_lm.tuner.utils import linear_to_lora_layers  # noqa: PLC0415
-        from mlx_lm.utils import load  # noqa: PLC0415
+        from mlx_lm.utils import load, save_config  # noqa: PLC0415
     except ImportError as exc:
         raise RuntimeError(_MLX_HINT) from exc
 
@@ -164,11 +188,15 @@ def _load_mlx_lm_symbols() -> dict[str, Any]:
 
     return {
         "load": load,
+        "save_config": save_config,
+        "TextDataset": TextDataset,
+        "CacheDataset": CacheDataset,
         "linear_to_lora_layers": linear_to_lora_layers,
         "TrainingArgs": TrainingArgs,
         "train": train,
+        "TrainingCallback": TrainingCallback,
         "make_optimizer": make_optimizer,
-        "load_dataset": load_dataset,
+        "seed": mx.random.seed,
     }
 
 

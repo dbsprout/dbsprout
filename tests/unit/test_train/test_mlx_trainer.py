@@ -8,6 +8,7 @@ No real training ever runs; ``mlx``/``mlx-lm`` are never imported for real.
 from __future__ import annotations
 
 import sys
+import types
 from pathlib import Path
 from typing import TYPE_CHECKING
 from unittest import mock
@@ -391,6 +392,89 @@ def test_select_trainer_satisfies_trainer_protocol() -> None:
     # the S-068 `# type: ignore[attr-defined]` on trainer.train()).
     assert isinstance(cuda, _Trainer)
     assert isinstance(mlx, _Trainer)
+
+
+# --- Task 1: _load_mlx_lm_symbols resolves the verified-real surface --------
+
+
+_VERIFIED_SYMBOLS = {
+    "load",
+    "save_config",
+    "TextDataset",
+    "CacheDataset",
+    "linear_to_lora_layers",
+    "TrainingArgs",
+    "train",
+    "TrainingCallback",
+    "make_optimizer",
+    "seed",
+}
+
+
+def test_load_mlx_lm_symbols_returns_verified_real_set(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Seam resolves exactly the verified-real mlx-lm symbols (no fabrications).
+
+    mlx-lm cannot install on Linux/CI, so the real lazy imports are stubbed
+    with fake modules placed on ``sys.modules`` at the *verified* paths
+    (``mlx_lm.utils``, ``mlx_lm.tuner.datasets``, ``mlx_lm.tuner.trainer``,
+    ``mlx_lm.tuner.utils``, ``mlx.optimizers``, ``mlx.core``). A fabricated
+    name (e.g. ``run_lora_training``) cannot satisfy this test because the
+    key set is asserted for *exact* equality.
+    """
+    adam = mock.MagicMock(name="Adam", return_value="OPTIMIZER")
+    mlx_pkg = types.ModuleType("mlx")
+    mlx_core = types.ModuleType("mlx.core")
+    mlx_core.random = mock.MagicMock(name="mlx.core.random")
+    mlx_optim = types.ModuleType("mlx.optimizers")
+    mlx_optim.Adam = adam  # type: ignore[attr-defined]
+
+    mlx_lm_pkg = types.ModuleType("mlx_lm")
+    mlx_lm_utils = types.ModuleType("mlx_lm.utils")
+    mlx_lm_utils.load = mock.MagicMock(name="load")  # type: ignore[attr-defined]
+    mlx_lm_utils.save_config = mock.MagicMock(name="save_config")  # type: ignore[attr-defined]
+    mlx_lm_tuner = types.ModuleType("mlx_lm.tuner")
+    mlx_lm_datasets = types.ModuleType("mlx_lm.tuner.datasets")
+    mlx_lm_datasets.TextDataset = mock.MagicMock(name="TextDataset")  # type: ignore[attr-defined]
+    mlx_lm_datasets.CacheDataset = mock.MagicMock(name="CacheDataset")  # type: ignore[attr-defined]
+    mlx_lm_trainer = types.ModuleType("mlx_lm.tuner.trainer")
+    mlx_lm_trainer.TrainingArgs = mock.MagicMock(name="TrainingArgs")  # type: ignore[attr-defined]
+    mlx_lm_trainer.train = mock.MagicMock(name="train")  # type: ignore[attr-defined]
+    mlx_lm_trainer.TrainingCallback = type("TrainingCallback", (), {})  # type: ignore[attr-defined]
+    mlx_lm_tuner_utils = types.ModuleType("mlx_lm.tuner.utils")
+    mlx_lm_tuner_utils.linear_to_lora_layers = mock.MagicMock(  # type: ignore[attr-defined]
+        name="linear_to_lora_layers"
+    )
+
+    for name, module in {
+        "mlx": mlx_pkg,
+        "mlx.core": mlx_core,
+        "mlx.optimizers": mlx_optim,
+        "mlx_lm": mlx_lm_pkg,
+        "mlx_lm.utils": mlx_lm_utils,
+        "mlx_lm.tuner": mlx_lm_tuner,
+        "mlx_lm.tuner.datasets": mlx_lm_datasets,
+        "mlx_lm.tuner.trainer": mlx_lm_trainer,
+        "mlx_lm.tuner.utils": mlx_lm_tuner_utils,
+    }.items():
+        monkeypatch.setitem(sys.modules, name, module)
+
+    syms = mlx_mod._load_mlx_lm_symbols()
+
+    assert set(syms) == _VERIFIED_SYMBOLS
+    # make_optimizer must wrap the real mlx.optimizers.Adam factory.
+    assert syms["make_optimizer"](learning_rate=1e-3) == "OPTIMIZER"
+    adam.assert_called_once_with(learning_rate=1e-3)
+
+
+def test_load_mlx_lm_symbols_raises_clear_error_when_missing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Missing mlx-lm raises an actionable RuntimeError (never silent success)."""
+    monkeypatch.setitem(sys.modules, "mlx_lm", None)
+    with pytest.raises(RuntimeError, match=r"dbsprout\[train-mlx\]"):
+        mlx_mod._load_mlx_lm_symbols()
 
 
 # --- Review #6: real mlx-lm symbol surface (integration, never mocked) ------
