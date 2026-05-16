@@ -2110,3 +2110,47 @@ class TestDiffEdgeCases:
         assert result.exit_code == 2
         output = _strip_ansi(result.output)
         assert "no snapshots found" in output.lower()
+
+    @patch("dbsprout.migrate.snapshot.SnapshotStore")
+    def test_rich_file_source_large_ddl_under_cap(
+        self,
+        mock_store_cls: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        """AC-6: a ~9 MB .sql file (just under the 10 MB cap) parses without
+        OOM, timeout, or a 'File too large' rejection."""
+        sql_file = tmp_path / "big.sql"
+        stmt = "CREATE TABLE big_{i} (id INTEGER PRIMARY KEY, c1 INTEGER, c2 INTEGER);\n"
+        target = 9 * 1000 * 1000  # ~9 MB, comfortably under 10 * 1024 * 1024
+        lines: list[str] = []
+        size = 0
+        i = 0
+        while size < target:
+            line = stmt.format(i=i)
+            lines.append(line)
+            size += len(line)
+            i += 1
+        sql_file.write_text("".join(lines))
+
+        file_size = sql_file.stat().st_size
+        assert 9_000_000 <= file_size < 10 * 1024 * 1024, f"setup size {file_size}"
+
+        mock_store = MagicMock()
+        mock_store.load_latest.return_value = _simple_schema_for_diff()
+        mock_store_cls.return_value = mock_store
+
+        start = time.perf_counter()
+        result = runner.invoke(
+            app,
+            ["diff", "--file", str(sql_file), "--output-dir", str(tmp_path)],
+        )
+        elapsed = time.perf_counter() - start
+
+        assert result.exit_code in (0, 1), _strip_ansi(result.output)
+        assert "File too large" not in _strip_ansi(result.output)
+        # The pure-Python DDL parser is linear (~4.4 s/MB, profiled), so a
+        # ~9 MB file legitimately takes tens of seconds. This generous bound
+        # is a hang / O(n²)-regression tripwire, NOT a perf budget — a 9 MB
+        # O(n²) parse would run for many minutes. See story "Finding during
+        # AC-6 implementation" note.
+        assert elapsed < 180.0, f"9MB DDL parse took {elapsed:.1f}s (hang guard)"
