@@ -351,13 +351,7 @@ class MLXTrainer:
 
         adapter_dir.mkdir(parents=True, exist_ok=True)
         adapter_file = adapter_dir / "adapters.safetensors"
-
-        rows = [
-            json.loads(line)
-            for line in corpus_path.read_text(encoding="utf-8").splitlines()
-            if line.strip()
-        ]
-
+        rows = self._read_corpus_rows(corpus_path)
         iters = config.epochs * _ITERS_PER_EPOCH
         logger.info(
             "MLX completion-only-loss intent=%s (structural no-op on the "
@@ -380,22 +374,8 @@ class MLXTrainer:
             task = progress.add_task("Loading base model", total=iters)
             model, tokenizer = syms["load"](config.base_model)
 
-            # Deterministic LoRA init (mirrors real lora.py ``mx.random.seed``).
-            seed = syms.get("seed")
-            if callable(seed):
-                seed(0)
-
             progress.update(task, description="Applying LoRA layers")
-            freeze = getattr(model, "freeze", None)
-            if callable(freeze):
-                freeze()
-            num_layers = len(getattr(model, "layers", []))
-            lora_cfg = {
-                "rank": config.lora_rank,
-                "scale": config.lora_alpha / config.lora_rank,
-                "dropout": config.lora_dropout,
-            }
-            syms["linear_to_lora_layers"](model, num_layers, lora_cfg)
+            num_layers, lora_cfg = self._apply_lora(syms, model, config)
 
             progress.update(task, description="Preparing dataset")
             train_dataset = syms["CacheDataset"](syms["TextDataset"](rows, tokenizer))
@@ -429,6 +409,55 @@ class MLXTrainer:
             progress.update(task, description="Done", completed=iters)
 
         return loss_box["loss"]
+
+    @staticmethod
+    def _read_corpus_rows(corpus_path: Path) -> list[dict[str, Any]]:
+        """Parse the GReaT JSONL corpus into a list of ``{"text": ...}`` dicts.
+
+        The corpus is produced by the S-063 serializer (a trusted internal
+        artifact); blank lines are skipped so a trailing newline is harmless.
+        Constructed directly for ``mlx_lm.tuner.datasets.TextDataset`` —
+        deliberately bypassing the real ``load_dataset(args, tokenizer)``
+        which needs a fake argparse namespace plus a directory of
+        ``train/valid/test.jsonl``.
+        """
+        return [
+            json.loads(line)
+            for line in corpus_path.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+
+    @staticmethod
+    def _apply_lora(
+        syms: dict[str, Any],
+        model: Any,
+        config: TrainConfig,
+    ) -> tuple[int, dict[str, float]]:
+        """Seed, freeze, and LoRA-ify all transformer blocks of *model*.
+
+        Mirrors the real ``mlx_lm/lora.py`` setup: ``mx.random.seed`` →
+        ``model.freeze()`` → ``linear_to_lora_layers(model, num_layers,
+        cfg)`` over every block (``num_layers = len(model.layers)``). The
+        ``seed``/``freeze``/``layers`` accesses are guarded so a bare model
+        stub never crashes. The LoRA knobs mirror the CUDA QLoRA path
+        (``scale = lora_alpha / lora_rank``). Returns ``(num_layers,
+        lora_cfg)`` for the adapter-config write.
+        """
+        # Deterministic LoRA init (mirrors real lora.py ``mx.random.seed``).
+        seed = syms.get("seed")
+        if callable(seed):
+            seed(0)
+        freeze = getattr(model, "freeze", None)
+        if callable(freeze):
+            freeze()
+        num_layers = len(getattr(model, "layers", []))
+        lora_cfg = {
+            "rank": config.lora_rank,
+            "scale": config.lora_alpha / config.lora_rank,
+            "dropout": config.lora_dropout,
+        }
+        syms["linear_to_lora_layers"](model, num_layers, lora_cfg)
+        return num_layers, lora_cfg
 
     @staticmethod
     def _make_progress_callback(
