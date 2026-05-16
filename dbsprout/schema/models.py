@@ -34,6 +34,8 @@ def _validate_identifier(v: str) -> str:
 
 Identifier = Annotated[str, AfterValidator(_validate_identifier)]
 
+IdentifierList = list[Identifier]
+
 _VALID_REFERENTIAL_ACTIONS = frozenset(
     {"CASCADE", "SET NULL", "SET DEFAULT", "RESTRICT", "NO ACTION"}
 )
@@ -126,9 +128,9 @@ class ForeignKeySchema(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     name: str | None = None
-    columns: list[str]
-    ref_table: str
-    ref_columns: list[str]
+    columns: IdentifierList
+    ref_table: Identifier
+    ref_columns: IdentifierList
     on_delete: ReferentialAction = None
     on_update: ReferentialAction = None
     deferrable: bool = False
@@ -141,7 +143,7 @@ class IndexSchema(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     name: str | None = None
-    columns: list[str]
+    columns: IdentifierList
     unique: bool = False
 
 

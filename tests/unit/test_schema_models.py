@@ -1007,3 +1007,58 @@ class TestDeferTiming:
                 ref_columns=["b"],
                 initially="DROP TABLE x",
             )
+
+
+# ── FK / Index Identifier validation ────────────────────────────────────
+
+
+class TestFKIdentifierValidation:
+    """AC: FK columns/ref_table/ref_columns and Index columns are Identifiers."""
+
+    def test_ref_table_control_char_rejected(self) -> None:
+        with pytest.raises(ValidationError):
+            ForeignKeySchema(columns=["a"], ref_table="t\x00", ref_columns=["b"])
+
+    def test_ref_table_empty_rejected(self) -> None:
+        with pytest.raises(ValidationError):
+            ForeignKeySchema(columns=["a"], ref_table="", ref_columns=["b"])
+
+    def test_ref_table_path_traversal_rejected(self) -> None:
+        with pytest.raises(ValidationError):
+            ForeignKeySchema(columns=["a"], ref_table="../etc", ref_columns=["b"])
+
+    def test_ref_table_too_long_rejected(self) -> None:
+        with pytest.raises(ValidationError):
+            ForeignKeySchema(columns=["a"], ref_table="x" * 129, ref_columns=["b"])
+
+    def test_fk_columns_control_char_rejected(self) -> None:
+        with pytest.raises(ValidationError):
+            ForeignKeySchema(columns=["a\n"], ref_table="t", ref_columns=["b"])
+
+    def test_fk_ref_columns_control_char_rejected(self) -> None:
+        with pytest.raises(ValidationError):
+            ForeignKeySchema(columns=["a"], ref_table="t", ref_columns=["b\t"])
+
+    def test_fk_columns_whitespace_stripped(self) -> None:
+        fk = ForeignKeySchema(columns=["  a  "], ref_table="t", ref_columns=["b"])
+        assert fk.columns == ["a"]
+
+    def test_index_columns_control_char_rejected(self) -> None:
+        with pytest.raises(ValidationError):
+            IndexSchema(columns=["email\x00"])
+
+    def test_index_columns_path_traversal_rejected(self) -> None:
+        with pytest.raises(ValidationError):
+            IndexSchema(columns=["a/b"])
+
+    def test_index_columns_c1_control_rejected(self) -> None:
+        with pytest.raises(ValidationError):
+            IndexSchema(columns=[f"email{chr(0x90)}"])
+
+    def test_valid_fk_and_index_unchanged(self) -> None:
+        fk = ForeignKeySchema(columns=["user_id"], ref_table="users", ref_columns=["id"])
+        idx = IndexSchema(columns=["email"])
+        assert fk.ref_table == "users"
+        assert fk.columns == ["user_id"]
+        assert fk.ref_columns == ["id"]
+        assert idx.columns == ["email"]
