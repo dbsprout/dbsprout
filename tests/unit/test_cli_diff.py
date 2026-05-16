@@ -1921,3 +1921,12 @@ class TestDiffMarkupEscape:
         # drift detected → exit 1; the literal bracketed name must be present.
         assert result.exit_code == 1
         assert "[blink]evil[blink]" in _strip_ansi(result.output)
+
+
+class TestDiffEdgeCases:
+    """S-054b: rare-but-possible edge cases in ``dbsprout diff`` (DBS-108).
+
+    Regression tripwires layered on the S-054a hardened harness. No
+    production code changes — these guard behaviour at the margins so a
+    future refactor fails fast instead of shipping silently.
+    """
