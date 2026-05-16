@@ -446,3 +446,68 @@ def test_make_private_raises_when_opacus_missing(
     priv = TrainPrivacyConfig(dp_sgd=True, dp_target_epsilon=8.0)
     with pytest.raises(RuntimeError, match=r"dbsprout\[train-dp\]"):
         _make_private(privacy=priv, model="M", optimizer="O", data_loader="D", epochs=1)
+
+
+# --- S-097: DP-SGD wired into QLoRATrainer._run_unsloth --------------------
+
+
+def test_train_no_dp_leaves_adapter_epsilon_none(
+    corpus: Path, tmp_path: Path, fake_unsloth: dict[str, mock.MagicMock]
+) -> None:
+    with mock.patch("dbsprout.train.trainer._cuda_available", return_value=True):
+        adapter = QLoRATrainer().train(
+            corpus_path=corpus, config=TrainConfig(epochs=1), output_dir=tmp_path / "a"
+        )
+    assert adapter.achieved_epsilon is None
+    assert adapter.dp_delta is None
+
+
+def test_train_dp_epsilon_mode_threads_guarantee(
+    corpus: Path,
+    tmp_path: Path,
+    fake_unsloth: dict[str, mock.MagicMock],
+    fake_opacus: dict[str, mock.MagicMock],
+) -> None:
+    cfg = TrainConfig(
+        epochs=2,
+        privacy=TrainPrivacyConfig(dp_sgd=True, dp_target_epsilon=6.0),
+    )
+    with mock.patch("dbsprout.train.trainer._cuda_available", return_value=True):
+        adapter = QLoRATrainer().train(corpus_path=corpus, config=cfg, output_dir=tmp_path / "a")
+    fake_opacus["engine"].make_private_with_epsilon.assert_called_once()
+    assert adapter.achieved_epsilon == pytest.approx(6.0)
+    assert adapter.dp_delta == pytest.approx(1e-5)
+    # privatized objects reassigned onto the SFTTrainer before train()
+    assert fake_unsloth["trainer_obj"].train.called
+
+
+def test_train_dp_noise_mode_threads_accountant_epsilon(
+    corpus: Path,
+    tmp_path: Path,
+    fake_unsloth: dict[str, mock.MagicMock],
+    fake_opacus: dict[str, mock.MagicMock],
+) -> None:
+    cfg = TrainConfig(
+        epochs=1,
+        privacy=TrainPrivacyConfig(dp_sgd=True, dp_noise_multiplier=1.1),
+    )
+    with mock.patch("dbsprout.train.trainer._cuda_available", return_value=True):
+        adapter = QLoRATrainer().train(corpus_path=corpus, config=cfg, output_dir=tmp_path / "a")
+    fake_opacus["engine"].make_private.assert_called_once()
+    assert adapter.achieved_epsilon == pytest.approx(5.5)
+    assert adapter.dp_delta == pytest.approx(1e-5)
+
+
+def test_train_dp_missing_opacus_raises_hint(
+    corpus: Path,
+    tmp_path: Path,
+    fake_unsloth: dict[str, mock.MagicMock],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setitem(sys.modules, "opacus", None)  # forces ImportError
+    cfg = TrainConfig(privacy=TrainPrivacyConfig(dp_sgd=True, dp_target_epsilon=6.0))
+    with (
+        mock.patch("dbsprout.train.trainer._cuda_available", return_value=True),
+        pytest.raises(RuntimeError, match=r"dbsprout\[train-dp\]"),
+    ):
+        QLoRATrainer().train(corpus_path=corpus, config=cfg, output_dir=tmp_path / "a")

@@ -196,7 +196,7 @@ class QLoRATrainer:
             adapter_dir,
         )
 
-        final_loss = self._run_unsloth(
+        final_loss, achieved_epsilon = self._run_unsloth(
             corpus_path=corpus_path,
             config=config,
             adapter_dir=adapter_dir,
@@ -217,6 +217,8 @@ class QLoRATrainer:
             train_samples=sample_count,
             final_loss=final_loss,
             duration_seconds=duration,
+            achieved_epsilon=achieved_epsilon,
+            dp_delta=config.privacy.dp_target_delta if achieved_epsilon is not None else None,
         )
 
     def _run_unsloth(
@@ -226,8 +228,13 @@ class QLoRATrainer:
         config: TrainConfig,
         adapter_dir: Path,
         quiet: bool,
-    ) -> float | None:
-        """Run the Unsloth QLoRA training loop; return the final training loss.
+    ) -> tuple[float | None, float | None]:
+        """Run the Unsloth QLoRA training loop.
+
+        Returns the ``(final training loss, achieved epsilon)`` pair. The
+        achieved epsilon is ``None`` unless DP-SGD ran
+        (``config.privacy.dp_sgd``), in which case the optimizer + dataloader
+        are wrapped with Opacus :func:`_make_private` before training.
 
         Heavy deps are imported here so module import stays light. The
         completion-only-loss flag is forced ``True`` independently of
@@ -275,7 +282,7 @@ class QLoRATrainer:
                 "json", data_files=str(corpus_path), split="train"
             )
 
-            progress.update(task, description="Training")
+            progress.update(task, description="Building trainer")
             sft_config = SFTConfig(
                 output_dir=str(adapter_dir),
                 num_train_epochs=config.epochs,
@@ -297,17 +304,38 @@ class QLoRATrainer:
                 train_dataset=dataset,
                 args=sft_config,
             )
+
+            achieved_epsilon: float | None = None
+            if config.privacy.dp_sgd:
+                progress.update(task, description="Wrapping with Opacus DP-SGD")
+                priv_model, priv_opt, priv_loader, achieved_epsilon = _make_private(
+                    privacy=config.privacy,
+                    model=trainer.model,
+                    optimizer=trainer.optimizer,
+                    data_loader=trainer.get_train_dataloader(),
+                    epochs=config.epochs,
+                )
+                trainer.model = priv_model
+                trainer.optimizer = priv_opt
+                trainer.train_dataloader = priv_loader
+                logger.info(
+                    "DP-SGD enabled (Opacus): achieved (epsilon=%s, delta=%s)",
+                    achieved_epsilon,
+                    config.privacy.dp_target_delta,
+                )
+
+            progress.update(task, description="Training")
             stats = trainer.train()
             trainer.save_model(str(adapter_dir))
             progress.update(task, description="Done", completed=1, total=1)
 
         loss = getattr(stats, "training_loss", None)
         if loss is None:
-            return None
+            return None, achieved_epsilon
         try:
-            return float(loss)
+            return float(loss), achieved_epsilon
         except (TypeError, ValueError):
             # A backend reporting a non-numeric loss must not crash a
             # completed run; degrade to "no loss history" instead.
             logger.warning("non-numeric training_loss %r; reporting final_loss=None", loss)
-            return None
+            return None, achieved_epsilon
