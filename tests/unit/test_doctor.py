@@ -13,7 +13,9 @@ from dbsprout.doctor.checks import (
     check_database,
     check_extras,
     check_model,
+    check_plugins,
     check_python_version,
+    check_secrets,
 )
 
 if TYPE_CHECKING:
@@ -98,3 +100,23 @@ def test_check_disk_space_low_is_warn(monkeypatch: pytest.MonkeyPatch, tmp_path:
     monkeypatch.setattr(shutil, "disk_usage", lambda _p: usage(100, 100, 1024))
     r = checks_mod.check_disk_space(tmp_path)
     assert r.status == "warn"
+
+
+def test_check_plugins_returns_result() -> None:
+    r = check_plugins()
+    assert r.category == "Plugins"
+    assert r.status in {"pass", "warn"}
+
+
+def test_check_secrets_no_file_is_pass(tmp_path: Path) -> None:
+    r = check_secrets(tmp_path / "missing.toml")
+    assert r.status == "pass"
+
+
+def test_check_secrets_detects_key_without_echo(tmp_path: Path) -> None:
+    cfg = tmp_path / "dbsprout.toml"
+    cfg.write_text('api_key = "sk-abcdefghijklmnop1234"\n')
+    r = check_secrets(cfg)
+    assert r.status == "warn"
+    assert "sk-abcdefghijklmnop1234" not in r.message
+    assert r.fix is not None

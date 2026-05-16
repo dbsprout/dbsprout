@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import importlib.metadata
 import importlib.util
+import re
 import shutil
 import sys
 from dataclasses import dataclass
@@ -19,6 +20,15 @@ Status = Literal["pass", "warn", "fail"]
 _MIN_PY = (3, 10)
 _MODEL_FILE = "qwen2.5-1.5b-instruct-q4_k_m.gguf"
 _MIN_FREE_BYTES = 1024**3  # 1 GiB
+
+_SECRET_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
+    ("openai-style key", re.compile(r"sk-[A-Za-z0-9]{16,}")),
+    ("aws access key", re.compile(r"AKIA[0-9A-Z]{16}")),
+    (
+        "inline credential",
+        re.compile(r"(?i)(api[_-]?key|secret|token|password)\s*=\s*['\"][^'\"]{8,}"),
+    ),
+)
 
 _EXTRA_MODULES: tuple[tuple[str, str], ...] = (
     ("sqlalchemy", "db"),
@@ -170,6 +180,55 @@ def check_disk_space(dbsprout_parent: Path | None = None) -> CheckResult:
         "warn",
         f"Only {gib:.2f} GiB free at {target}",
         fix="Free up disk space before downloading models or large seeds.",
+    )
+
+
+def check_plugins() -> CheckResult:
+    """Report discovered plugins and any that failed to load."""
+    from dbsprout.plugins.registry import get_registry  # noqa: PLC0415
+
+    infos = get_registry().list()
+    errored = [i for i in infos if i.status == "error"]
+    if errored:
+        names = ", ".join(f"{i.group}:{i.name}" for i in errored)
+        return CheckResult(
+            "Plugins",
+            "registry",
+            "warn",
+            f"{len(infos)} discovered, {len(errored)} failed: {names}",
+            fix="Run `dbsprout plugins check <group>:<name>` for details.",
+        )
+    return CheckResult(
+        "Plugins",
+        "registry",
+        "pass",
+        f"{len(infos)} plugin(s) discovered, all loaded",
+    )
+
+
+def check_secrets(config_path: Path | None) -> CheckResult:
+    """Warn when API-key-like patterns appear in a tracked config file."""
+    if config_path is None or not config_path.exists():
+        return CheckResult("Privacy", "secrets", "pass", "No config file to scan")
+    text = config_path.read_text(encoding="utf-8", errors="replace")
+    hits: list[str] = []
+    for lineno, line in enumerate(text.splitlines(), start=1):
+        for label, pattern in _SECRET_PATTERNS:
+            if pattern.search(line):
+                hits.append(f"{label} (line {lineno})")
+    if not hits:
+        return CheckResult(
+            "Privacy",
+            "secrets",
+            "pass",
+            f"No secret-like patterns in {config_path.name}",
+        )
+    return CheckResult(
+        "Privacy",
+        "secrets",
+        "warn",
+        f"Possible secrets in {config_path.name}: {'; '.join(hits)}",
+        fix="Move secrets out of the config file into environment variables.",
     )
 
 
