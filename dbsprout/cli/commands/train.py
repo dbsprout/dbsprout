@@ -53,6 +53,11 @@ def pipeline(  # noqa: PLR0913 - CLI flags are inherently positional/named
         help="Base directory for training artifacts (samples, corpus, adapter, GGUF).",
     ),
     seed: int = typer.Option(0, "--seed"),
+    no_pii_redaction: bool = typer.Option(
+        False,
+        "--no-pii-redaction",
+        help="Disable PII value redaction before serialization (non-sensitive data only).",
+    ),
     quiet: bool = typer.Option(False, "--quiet"),
 ) -> None:
     """Run the full fine-tuning pipeline: extract -> serialize -> train -> export.
@@ -77,6 +82,7 @@ def pipeline(  # noqa: PLR0913 - CLI flags are inherently positional/named
         output=output,
         seed=seed,
         quiet=quiet,
+        no_pii_redaction=no_pii_redaction,
     )
 
 
@@ -92,6 +98,7 @@ class _PipelineComponents:
     """
 
     make_extractor: Callable[[], Any]
+    make_redactor: Callable[[], Any]
     make_preparer: Callable[[], Any]
     select_trainer: Callable[[], Any]
     make_exporter: Callable[[], Any]
@@ -105,14 +112,55 @@ def _default_components() -> _PipelineComponents:
     from dbsprout.train.exporter import Exporter  # noqa: PLC0415
     from dbsprout.train.extractor import SampleExtractor  # noqa: PLC0415
     from dbsprout.train.mlx_trainer import select_trainer  # noqa: PLC0415
+    from dbsprout.train.privacy import TrainingRedactor  # noqa: PLC0415
     from dbsprout.train.serializer import DataPreparer  # noqa: PLC0415
 
     return _PipelineComponents(
         make_extractor=SampleExtractor,
+        make_redactor=TrainingRedactor,
         make_preparer=DataPreparer,
         select_trainer=select_trainer,
         make_exporter=Exporter,
     )
+
+
+def _apply_privacy(  # noqa: PLR0913 - explicit deps keep the seam testable
+    privacy_cfg: Any,
+    *,
+    comps: _PipelineComponents,
+    sample_dir: Path,
+    db: str,
+    no_pii_redaction: bool,
+    scrub_secrets: Callable[[str, str], str],
+) -> None:
+    """Run privacy layers 3 + 4 between extract and serialize (S-070).
+
+    Enforces the DP-SGD guard, then (unless ``--no-pii-redaction`` or the
+    ``[train.privacy]`` config disables it) redacts the extracted Parquet
+    in place via the injected ``make_redactor`` seam so the serializer reads
+    masked values. All errors are scrubbed of DB credentials and mapped to
+    exit code 1, mirroring the four stage handlers.
+    """
+    from dbsprout.train.privacy import dp_sgd_guard  # noqa: PLC0415
+
+    try:
+        dp_sgd_guard(privacy_cfg)
+    except RuntimeError as exc:
+        console.print(f"[red]Error:[/red] {scrub_secrets(str(exc), db)}")
+        raise typer.Exit(code=1) from exc
+
+    if no_pii_redaction:
+        privacy_cfg = privacy_cfg.model_copy(update={"pii_redaction": False})
+    if not privacy_cfg.pii_redaction:
+        return
+
+    console.print("[bold blue]\\[1.5/4][/bold blue] Redacting PII before serialization...")
+    try:
+        redaction_stats = comps.make_redactor().redact_dir(sample_dir, config=privacy_cfg)
+    except Exception as exc:
+        console.print(f"[red]Error:[/red] {scrub_secrets(str(exc), db)}")
+        raise typer.Exit(code=1) from exc
+    _print_redaction_summary(redaction_stats)
 
 
 def _run_pipeline(  # noqa: PLR0913 - one knob per pipeline stage
@@ -123,6 +171,7 @@ def _run_pipeline(  # noqa: PLR0913 - one knob per pipeline stage
     output: Path,
     seed: int,
     quiet: bool,
+    no_pii_redaction: bool = False,
     components: _PipelineComponents | None = None,
 ) -> None:
     """Glue the four pipeline stages together via the injectable seam."""
@@ -156,6 +205,17 @@ def _run_pipeline(  # noqa: PLR0913 - one knob per pipeline stage
         console.print(f"[red]Error:[/red] {scrub_secrets(str(exc), db)}")
         raise typer.Exit(code=1) from exc
     samples = sum(t.sampled + t.fk_closure_added for t in extract_result.tables)
+
+    # Privacy layers 3 + 4 (S-070): DP-SGD guard, then PII value redaction of
+    # the extracted Parquet *before* serialization (the S-063 dependency).
+    _apply_privacy(
+        train_config.privacy,
+        comps=comps,
+        sample_dir=sample_dir,
+        db=db,
+        no_pii_redaction=no_pii_redaction,
+        scrub_secrets=scrub_secrets,
+    )
 
     # Stage 2: serialize Parquet samples into GReaT-style JSONL.
     console.print("[bold blue]\\[2/4][/bold blue] Serializing rows to JSONL corpus...")
@@ -207,6 +267,26 @@ def _run_pipeline(  # noqa: PLR0913 - one knob per pipeline stage
         serialize_result=serialize_result,
         adapter=adapter,
         export_result=export_result,
+    )
+
+
+def _print_redaction_summary(stats: Any) -> None:
+    """One-line PII-redaction summary (always shown, even with --quiet).
+
+    When Presidio is not installed the redactor reports
+    ``presidio_available=False``; surface that clearly so the operator knows
+    layer-3 redaction did NOT run rather than assuming the data was masked.
+    """
+    if not stats.presidio_available:
+        console.print(
+            "[yellow]PII redaction skipped:[/yellow] Presidio not installed "
+            "(install 'dbsprout[privacy]' or set [train.privacy] "
+            "pii_redaction = false to silence)."
+        )
+        return
+    types = ", ".join(sorted(stats.entity_totals)) or "none"
+    console.print(
+        f"[green]Redacted[/green] {stats.total_values_masked} PII value(s) (types: {types})."
     )
 
 

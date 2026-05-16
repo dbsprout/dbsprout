@@ -74,7 +74,8 @@ class OllamaProvider:
             import litellm  # noqa: PLC0415
         except ImportError:
             msg = (
-                "litellm is required for Ollama provider. Install with: pip install dbsprout[cloud]"
+                "litellm is required for Ollama provider. "
+                "Install it with: pip install dbsprout[cloud]"
             )
             raise ImportError(msg) from None
 

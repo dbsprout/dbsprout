@@ -1,0 +1,246 @@
+"""Tests for the dbsprout doctor check engine."""
+
+from __future__ import annotations
+
+import importlib.util
+import shutil
+import sys
+from collections import namedtuple
+from types import SimpleNamespace
+from typing import TYPE_CHECKING
+
+import sqlalchemy as sa
+
+import dbsprout.plugins.registry as reg_mod
+from dbsprout.doctor import CheckResult, run_all_checks
+from dbsprout.doctor import checks as checks_mod
+from dbsprout.doctor.checks import (
+    _cuda_available,
+    _existing_ancestor,
+    _module_version,
+    check_database,
+    check_disk_space,
+    check_extras,
+    check_model,
+    check_plugins,
+    check_python_version,
+    check_secrets,
+    check_training,
+)
+
+if TYPE_CHECKING:
+    from pathlib import Path
+
+    import pytest
+
+
+def test_check_result_is_frozen() -> None:
+    r = CheckResult(category="Environment", name="python", status="pass", message="ok")
+    assert r.fix is None
+    try:
+        r.status = "fail"  # type: ignore[misc]
+    except AttributeError:
+        pass
+    else:  # pragma: no cover - guard
+        raise AssertionError("CheckResult must be frozen")
+
+
+def test_check_python_version_pass() -> None:
+    r = check_python_version((3, 11, 0))
+    assert r.status == "pass"
+    assert r.category == "Environment"
+
+
+def test_check_python_version_fail() -> None:
+    r = check_python_version((3, 9, 0))
+    assert r.status == "fail"
+    assert r.fix is not None
+
+
+def test_check_extras_reports_results() -> None:
+    results = check_extras()
+    assert results
+    assert all(r.category == "Environment" for r in results)
+    names = {r.name for r in results}
+    assert "extra:sqlalchemy" in names
+
+
+def test_check_extras_missing_is_warn(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(importlib.util, "find_spec", lambda _name: None)
+    results = checks_mod.check_extras()
+    assert all(r.status == "warn" for r in results)
+    assert all(r.fix is not None for r in results)
+
+
+def test_check_database_no_url_is_pass() -> None:
+    r = check_database(None)
+    assert r.status == "pass"
+    assert "no database" in r.message.lower()
+
+
+def test_check_database_sqlite_roundtrip(tmp_path: Path) -> None:
+    url = f"sqlite:///{tmp_path / 'd.db'}"
+    r = check_database(url)
+    assert r.status == "pass"
+    assert r.category == "Database"
+
+
+def test_check_database_bad_url_is_fail() -> None:
+    r = check_database("notadialect://x")
+    assert r.status == "fail"
+    assert r.fix is not None
+
+
+def test_check_model_absent_is_warn(tmp_path: Path) -> None:
+    r = check_model(model_root=tmp_path)
+    assert r.status == "warn"
+    assert r.fix is not None
+
+
+def test_check_model_present_is_pass(tmp_path: Path) -> None:
+    nested = tmp_path / "models--Qwen" / "snap"
+    nested.mkdir(parents=True)
+    (nested / "qwen2.5-1.5b-instruct-q4_k_m.gguf").write_bytes(b"x")
+    r = check_model(model_root=tmp_path)
+    assert r.status == "pass"
+
+
+def test_check_disk_space_low_is_warn(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    usage = namedtuple("usage", ["total", "used", "free"])
+    monkeypatch.setattr(shutil, "disk_usage", lambda _p: usage(100, 100, 1024))
+    r = checks_mod.check_disk_space(tmp_path)
+    assert r.status == "warn"
+
+
+def test_check_plugins_returns_result() -> None:
+    r = check_plugins()
+    assert r.category == "Plugins"
+    assert r.status in {"pass", "warn"}
+
+
+def test_check_secrets_no_file_is_pass(tmp_path: Path) -> None:
+    r = check_secrets(tmp_path / "missing.toml")
+    assert r.status == "pass"
+
+
+def test_check_secrets_detects_key_without_echo(tmp_path: Path) -> None:
+    cfg = tmp_path / "dbsprout.toml"
+    cfg.write_text('api_key = "sk-abcdefghijklmnop1234"\n')
+    r = check_secrets(cfg)
+    assert r.status == "warn"
+    assert "sk-abcdefghijklmnop1234" not in r.message
+    assert r.fix is not None
+
+
+def test_check_training_none_is_warn(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(importlib.util, "find_spec", lambda _n: None)
+    r = check_training()
+    assert r.category == "Training"
+    assert r.status == "warn"
+    assert r.fix is not None
+
+
+def test_run_all_checks_covers_all_categories() -> None:
+    results = run_all_checks(db_url=None, config_path=None)
+    cats = {r.category for r in results}
+    assert {
+        "Environment",
+        "Database",
+        "Models",
+        "Plugins",
+        "Privacy",
+        "Training",
+    } <= cats
+
+
+def test_run_all_checks_never_raises_on_bad_db() -> None:
+    results = run_all_checks(db_url="notadialect://x", config_path=None)
+    db = next(r for r in results if r.category == "Database")
+    assert db.status == "fail"
+
+
+def test_check_disk_space_default_path_pass() -> None:
+    r = check_disk_space()
+    assert r.category == "Environment"
+
+
+def test_existing_ancestor_walks_up(tmp_path: Path) -> None:
+    deep = tmp_path / "a" / "b" / "c"
+    assert _existing_ancestor(deep).exists()
+
+
+def test_check_secrets_clean_file(tmp_path: Path) -> None:
+    cfg = tmp_path / "dbsprout.toml"
+    cfg.write_text("[generation]\ndefault_rows = 100\n")
+    assert check_secrets(cfg).status == "pass"
+
+
+def test_check_python_version_default_arg() -> None:
+    r = check_python_version()
+    assert r.status == "pass"
+
+
+def test_module_version_unknown() -> None:
+    assert _module_version("definitely-not-a-real-package-xyz") == "unknown"
+
+
+def test_cuda_available_no_torch(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(importlib.util, "find_spec", lambda _n: None)
+    assert _cuda_available() is False
+
+
+def test_cuda_available_with_fake_torch(monkeypatch: pytest.MonkeyPatch) -> None:
+    fake_torch = SimpleNamespace(cuda=SimpleNamespace(is_available=lambda: True))
+    monkeypatch.setattr(importlib.util, "find_spec", lambda _n: object())
+    monkeypatch.setitem(sys.modules, "torch", fake_torch)
+    assert _cuda_available() is True
+
+
+def test_cuda_available_broken_torch(monkeypatch: pytest.MonkeyPatch) -> None:
+    def boom() -> bool:
+        raise RuntimeError("broken driver")
+
+    fake_torch = SimpleNamespace(cuda=SimpleNamespace(is_available=boom))
+    monkeypatch.setattr(importlib.util, "find_spec", lambda _n: object())
+    monkeypatch.setitem(sys.modules, "torch", fake_torch)
+    assert _cuda_available() is False
+
+
+def test_check_training_cuda_pass(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(checks_mod, "_cuda_available", lambda: True)
+    r = check_training()
+    assert r.status == "pass"
+    assert "CUDA" in r.message
+
+
+def test_check_training_mlx_pass(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(checks_mod, "_cuda_available", lambda: False)
+    monkeypatch.setattr(importlib.util, "find_spec", lambda n: object() if n == "mlx" else None)
+    r = check_training()
+    assert r.status == "pass"
+    assert "MLX" in r.message
+
+
+def test_check_database_unparseable_url(monkeypatch: pytest.MonkeyPatch) -> None:
+    def bad_make_url(_u: str) -> object:
+        raise sa.exc.ArgumentError("nope")
+
+    monkeypatch.setattr(sa.engine, "make_url", bad_make_url)
+    r = check_database("sqlite:///x.db")
+    assert r.status == "fail"
+    assert "unparseable" in r.message
+
+
+def test_check_model_default_root() -> None:
+    r = check_model()
+    assert r.category == "Models"
+    assert r.status in {"pass", "warn"}
+
+
+def test_check_plugins_with_errored(monkeypatch: pytest.MonkeyPatch) -> None:
+    errored = SimpleNamespace(group="dbsprout.parsers", name="broken", status="error")
+    fake_registry = SimpleNamespace(list=lambda: [errored])
+    monkeypatch.setattr(reg_mod, "get_registry", lambda: fake_registry)
+    r = check_plugins()
+    assert r.status == "warn"
+    assert "broken" in r.message

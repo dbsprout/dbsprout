@@ -117,7 +117,7 @@ class EmbeddedProvider:
         except ImportError:
             msg = (
                 "llama-cpp-python is required for embedded LLM inference. "
-                "Install with: pip install dbsprout[llm]"
+                "Install it with: pip install dbsprout[llm]"
             )
             raise ImportError(msg) from None
 
@@ -158,7 +158,7 @@ class EmbeddedProvider:
         except ImportError:
             msg = (
                 "llama-cpp-python is required for embedded LLM inference. "
-                "Install with: pip install dbsprout[llm]"
+                "Install it with: pip install dbsprout[llm]"
             )
             raise ImportError(msg) from None
 
@@ -220,7 +220,7 @@ def _import_hf_hub_download() -> Any:
     except ImportError:
         msg = (
             "huggingface-hub is required for model download. "
-            "Install with: pip install dbsprout[llm]"
+            "Install it with: pip install dbsprout[llm]"
         )
         raise ImportError(msg) from None
     return hf_hub_download

@@ -68,7 +68,7 @@ def parse_dbml(
     try:
         from pydbml import PyDBML  # type: ignore[import-untyped]  # noqa: PLC0415
     except ImportError:  # pragma: no cover
-        msg = "pydbml is required for DBML parsing. Install with: pip install dbsprout"
+        msg = "pydbml is required for DBML parsing. Install it with: pip install dbsprout"
         raise ImportError(msg) from None
 
     try:

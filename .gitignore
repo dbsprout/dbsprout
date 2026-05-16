@@ -49,5 +49,8 @@ Thumbs.db
 seeds/
 models/*.gguf
 
+# Docs site build output
+/site/
+
 # Config with secrets (keep dbsprout.toml template, ignore user overrides)
 dbsprout.local.toml

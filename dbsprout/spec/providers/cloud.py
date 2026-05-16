@@ -64,7 +64,7 @@ class CloudProvider:
         except ImportError:
             msg = (
                 "litellm and instructor are required for cloud LLM. "
-                "Install with: pip install dbsprout[cloud]"
+                "Install it with: pip install dbsprout[cloud]"
             )
             raise ImportError(msg) from None
 
