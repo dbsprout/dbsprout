@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import sys
+
 import pytest
 import typer
 from rich.console import Console
@@ -90,3 +92,32 @@ def test_verbose_flag_short_form_is_accepted() -> None:
 
 def test_run_entrypoint_is_callable() -> None:
     assert callable(run)
+
+
+def test_run_invokes_app_non_verbose(monkeypatch: pytest.MonkeyPatch) -> None:
+    app_module = sys.modules["dbsprout.cli.app"]
+
+    called: dict[str, bool] = {}
+
+    def fake_app() -> None:
+        called["ran"] = True
+
+    monkeypatch.setattr(app_module, "app", fake_app)
+    monkeypatch.setattr("sys.argv", ["dbsprout", "init"])
+    run()
+    assert called["ran"] is True
+
+
+def test_run_renders_panel_for_dbsprout_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app_module = sys.modules["dbsprout.cli.app"]
+
+    def fake_app() -> None:
+        raise DBSproutError(what="boom", why="because", fix="do this", exit_code=7)
+
+    monkeypatch.setattr(app_module, "app", fake_app)
+    monkeypatch.setattr("sys.argv", ["dbsprout", "--verbose", "init"])
+    with pytest.raises(typer.Exit) as exc_info:
+        run()
+    assert exc_info.value.exit_code == 7
