@@ -14,7 +14,10 @@ from typer.testing import CliRunner
 
 from dbsprout.cli.app import app
 from dbsprout.cli.commands import generate as gen_mod
-from dbsprout.cli.commands.generate import generate_command
+from dbsprout.cli.commands.generate import (
+    _validate_lora_adapter_path,
+    generate_command,
+)
 from dbsprout.config.models import DBSproutConfig
 from dbsprout.errors import ModelError
 from dbsprout.generate.orchestrator import GenerateResult, orchestrate
@@ -177,6 +180,23 @@ class TestGenerateCommandLoraValidation:
             )
 
         assert captured["lora_path"] == adapter
+
+
+class TestValidateLoraAdapterPathHelper:
+    def test_missing_path_raises_model_error(self, tmp_path: Path) -> None:
+        with pytest.raises(ModelError) as exc:
+            _validate_lora_adapter_path(tmp_path / "nope.gguf")
+        assert "does not exist" in exc.value.what
+
+    def test_directory_path_raises_model_error(self, tmp_path: Path) -> None:
+        with pytest.raises(ModelError) as exc:
+            _validate_lora_adapter_path(tmp_path)
+        assert "not a file" in exc.value.what
+
+    def test_valid_file_returns_none(self, tmp_path: Path) -> None:
+        f = tmp_path / "a.gguf"
+        f.write_bytes(b"x")
+        assert _validate_lora_adapter_path(f) is None
 
 
 class TestLoraCliEndToEnd:
