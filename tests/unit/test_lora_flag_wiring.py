@@ -1,0 +1,260 @@
+"""S-067b: tests for the --lora flag wiring (CLI → command → orchestrator → provider)."""
+
+from __future__ import annotations
+
+import logging
+import sys
+import types
+from pathlib import Path
+from unittest.mock import MagicMock, patch
+
+import pytest
+from typer.testing import CliRunner
+
+from dbsprout.cli.app import app
+from dbsprout.cli.commands import generate as gen_mod
+from dbsprout.cli.commands.generate import generate_command
+from dbsprout.config.models import DBSproutConfig
+from dbsprout.errors import ModelError
+from dbsprout.generate.orchestrator import GenerateResult, orchestrate
+from dbsprout.schema.models import (
+    ColumnSchema,
+    ColumnType,
+    DatabaseSchema,
+    TableSchema,
+)
+from dbsprout.spec.analyzer import heuristic_fallback
+from dbsprout.train.loader import ModelLoader
+
+runner = CliRunner()
+
+_SYNTHETIC_LORA = "/tmp/adapter.gguf"  # noqa: S108 — never read; mock boundary
+
+
+def _schema() -> DatabaseSchema:
+    return DatabaseSchema(
+        tables=[
+            TableSchema(
+                name="users",
+                columns=[
+                    ColumnSchema(
+                        name="id",
+                        data_type=ColumnType.INTEGER,
+                        nullable=False,
+                        primary_key=True,
+                        autoincrement=True,
+                    ),
+                    ColumnSchema(
+                        name="email",
+                        data_type=ColumnType.VARCHAR,
+                        nullable=False,
+                    ),
+                ],
+                primary_key=["id"],
+            ),
+        ],
+    )
+
+
+class TestOrchestratorLoraWiring:
+    def test_spec_engine_with_lora_uses_embedded_provider_via_analyzer(self) -> None:
+        """engine='spec' + lora_path builds SpecAnalyzer(EmbeddedProvider(lora_path=...))."""
+        schema = _schema()
+        config = DBSproutConfig()
+        lora = Path(_SYNTHETIC_LORA)
+
+        fake_spec = heuristic_fallback(schema)
+
+        with (
+            patch("dbsprout.generate.orchestrator.EmbeddedProvider") as m_provider,
+            patch("dbsprout.generate.orchestrator.SpecAnalyzer") as m_analyzer,
+        ):
+            m_analyzer.return_value.analyze.return_value = fake_spec
+            result = orchestrate(
+                schema, config, seed=42, default_rows=3, engine="spec", lora_path=lora
+            )
+
+        m_provider.assert_called_once_with(lora_path=lora)
+        m_analyzer.assert_called_once_with(m_provider.return_value)
+        m_analyzer.return_value.analyze.assert_called_once_with(schema)
+        assert len(result.tables_data["users"]) == 3
+
+    def test_spec_engine_without_lora_uses_heuristic_fallback(self) -> None:
+        """No lora_path → heuristic_fallback path, EmbeddedProvider never constructed."""
+        schema = _schema()
+        config = DBSproutConfig()
+
+        with patch("dbsprout.generate.orchestrator.EmbeddedProvider") as m_provider:
+            result = orchestrate(schema, config, seed=42, default_rows=3, engine="spec")
+
+        m_provider.assert_not_called()
+        assert len(result.tables_data["users"]) == 3
+
+    def test_heuristic_engine_with_lora_ignores_provider(self) -> None:
+        """lora_path only affects the spec engine; heuristic path never builds provider."""
+        schema = _schema()
+        config = DBSproutConfig()
+
+        with patch("dbsprout.generate.orchestrator.EmbeddedProvider") as m_provider:
+            result = orchestrate(
+                schema,
+                config,
+                seed=42,
+                default_rows=3,
+                engine="heuristic",
+                lora_path=Path(_SYNTHETIC_LORA),
+            )
+
+        m_provider.assert_not_called()
+        assert len(result.tables_data["users"]) == 3
+
+
+class TestGenerateCommandLoraValidation:
+    def test_lora_without_spec_engine_raises_model_error(self, tmp_path: Path) -> None:
+        adapter = tmp_path / "a.gguf"
+        adapter.write_bytes(b"x")
+
+        with pytest.raises(ModelError) as exc:
+            generate_command(engine="heuristic", lora_path=adapter)
+
+        assert "spec" in exc.value.fix.lower()
+        assert exc.value.exit_code == 1
+
+    def test_lora_missing_path_raises_model_error(self, tmp_path: Path) -> None:
+        missing = tmp_path / "nope.gguf"
+
+        with pytest.raises(ModelError) as exc:
+            generate_command(engine="spec", lora_path=missing)
+
+        assert str(missing) in exc.value.why
+        assert exc.value.exit_code == 1
+
+    def test_lora_directory_path_raises_model_error(self, tmp_path: Path) -> None:
+        with pytest.raises(ModelError):
+            generate_command(engine="spec", lora_path=tmp_path)
+
+    def test_lora_valid_forwards_to_orchestrate(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A valid --lora path is threaded into orchestrate(lora_path=...)."""
+        monkeypatch.chdir(tmp_path)
+        adapter = tmp_path / "a.gguf"
+        adapter.write_bytes(b"x")
+        snap_dir = tmp_path / ".dbsprout"
+        snap_dir.mkdir()
+        (snap_dir / "schema.json").write_text(_schema().model_dump_json(indent=2), encoding="utf-8")
+
+        captured: dict[str, object] = {}
+
+        def _fake_orchestrate(schema: object, config: object, **kwargs: object) -> object:
+            captured.update(kwargs)
+            return GenerateResult(
+                tables_data={"users": [{"id": 1, "email": "a@b.c"}]},
+                insertion_order=["users"],
+                total_rows=1,
+                total_tables=1,
+            )
+
+        with patch.object(gen_mod, "orchestrate", _fake_orchestrate):
+            gen_mod.generate_command(
+                schema_snapshot=snap_dir / "schema.json",
+                engine="spec",
+                lora_path=adapter,
+                output_dir=tmp_path / "seeds",
+            )
+
+        assert captured["lora_path"] == adapter
+
+
+class TestLoraCliEndToEnd:
+    def test_lora_option_in_help(self) -> None:
+        result = runner.invoke(app, ["generate", "--help"])
+        assert result.exit_code == 0
+        assert "--lora" in result.stdout
+
+    def test_generate_lora_end_to_end_with_mocked_llama(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """`dbsprout generate --engine spec --lora <file>` runs end to end.
+
+        The only mock is the real heavy boundary: `llama_cpp.Llama` (consumed
+        by ModelLoader._load_llama / EmbeddedProvider._ensure_llm) plus the HF
+        download. Everything else is the real CLI → command → orchestrator →
+        SpecAnalyzer → EmbeddedProvider → ModelLoader path.
+        """
+        monkeypatch.chdir(tmp_path)
+        snap_dir = tmp_path / ".dbsprout"
+        snap_dir.mkdir()
+        (snap_dir / "schema.json").write_text(_schema().model_dump_json(indent=2), encoding="utf-8")
+        adapter = tmp_path / "adapter.gguf"
+        adapter.write_bytes(b"\x00")
+
+        fake_llama = MagicMock(name="LlamaInstance")
+        fake_llama.create_chat_completion.return_value = {
+            "choices": [
+                {
+                    "message": {
+                        "content": (
+                            '{"tables": [{"table_name": "users", "columns": '
+                            '{"id": {"provider": "builtin.autoincrement", '
+                            '"params": {}}, "email": {"provider": '
+                            '"mimesis.Person.email", "params": {}}}}], '
+                            '"schema_hash": "x", "model_used": "lora"}'
+                        )
+                    }
+                }
+            ]
+        }
+        fake_module = types.ModuleType("llama_cpp")
+        fake_module.Llama = MagicMock(return_value=fake_llama)  # type: ignore[attr-defined]
+        fake_module.LlamaGrammar = MagicMock()  # type: ignore[attr-defined]
+        fake_module.LlamaGrammar.from_string.return_value = object()
+        monkeypatch.setitem(sys.modules, "llama_cpp", fake_module)
+
+        with patch(
+            "dbsprout.spec.providers.embedded.EmbeddedProvider._download_model",
+            return_value=adapter,
+        ):
+            result = runner.invoke(
+                app,
+                [
+                    "generate",
+                    "--engine",
+                    "spec",
+                    "--lora",
+                    str(adapter),
+                    "--rows",
+                    "2",
+                    "--output-dir",
+                    str(tmp_path / "seeds"),
+                ],
+            )
+
+        assert result.exit_code == 0, result.stdout
+        assert (tmp_path / "seeds").exists()
+
+    def test_generate_lora_missing_path_cli_exit_1(self, tmp_path: Path) -> None:
+        result = runner.invoke(
+            app,
+            ["generate", "--engine", "spec", "--lora", str(tmp_path / "nope.gguf")],
+        )
+        assert result.exit_code == 1
+
+
+class TestLoraLoadTimeFallback:
+    def test_loader_missing_adapter_falls_back_to_base_no_crash(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """ModelLoader.load with a non-existent adapter warns + returns base handle."""
+        base = tmp_path / "base.gguf"
+        base.write_bytes(b"\x00")
+        missing_adapter = tmp_path / "missing.gguf"
+
+        with patch.object(ModelLoader, "_load_llama") as m_load:
+            m_load.return_value = MagicMock(return_value="HANDLE")
+            with caplog.at_level(logging.WARNING):
+                loaded = ModelLoader().load(base, lora_path=missing_adapter)
+
+        assert loaded.lora_path is None
+        assert loaded.handle == "HANDLE"
+        assert "falling back to base model" in caplog.text
