@@ -12,6 +12,8 @@ from graphlib import CycleError
 from typing import TYPE_CHECKING, Any, cast
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from dbsprout.config.models import DBSproutConfig
     from dbsprout.schema.models import DatabaseSchema
 
@@ -40,6 +42,7 @@ def orchestrate(  # noqa: PLR0913
     default_rows: int,
     engine: str = "heuristic",
     reference_data: dict[str, list[dict[str, Any]]] | None = None,
+    lora_path: Path | None = None,
 ) -> GenerateResult:
     """Run the full generation pipeline.
 
@@ -58,7 +61,7 @@ def orchestrate(  # noqa: PLR0913
     # Map columns to generators (once for whole schema)
     all_mappings = map_columns(schema)
 
-    selection = _select_engines(engine, schema, seed)
+    selection = _select_engines(engine, schema, seed, lora_path)
     parent_data: dict[str, list[dict[str, Any]]] = {}
 
     for table_name in insertion_order:
@@ -107,19 +110,41 @@ class _EngineSelection:
     table_specs: dict[str, Any] = field(default_factory=dict)
 
 
-def _select_engines(engine: str, schema: DatabaseSchema, seed: int) -> _EngineSelection:
+def _select_engines(
+    engine: str,
+    schema: DatabaseSchema,
+    seed: int,
+    lora_path: Path | None = None,
+) -> _EngineSelection:
     """Resolve the engine(s) needed for *engine*.
 
     Registry-first dispatch so third-party engines registered via
     ``[project.entry-points."dbsprout.generators"]`` win over the
     hard-wired fallback. The heuristic engine is always resolved — the
     ``spec`` and ``statistical`` engines fall back to it per-table.
+
+    When *engine* is ``"spec"`` and a ``lora_path`` is supplied (S-067b),
+    the DataSpec is produced by the real local LLM provider
+    (:class:`~dbsprout.spec.providers.embedded.EmbeddedProvider` wrapped in
+    :class:`~dbsprout.spec.analyzer.SpecAnalyzer`, which already retries and
+    then falls back to ``heuristic_fallback`` on provider failure). Without
+    a ``lora_path`` the original S-025 ``heuristic_fallback`` path is used
+    unchanged.
     """
     heuristic = resolve_engine("heuristic", seed=seed)
     if engine == "spec":
-        from dbsprout.spec.analyzer import heuristic_fallback  # noqa: PLC0415
+        if lora_path is not None:
+            from dbsprout.spec.analyzer import SpecAnalyzer  # noqa: PLC0415
+            from dbsprout.spec.providers.embedded import (  # noqa: PLC0415
+                EmbeddedProvider,
+            )
 
-        dataspec = heuristic_fallback(schema)
+            provider = EmbeddedProvider(lora_path=lora_path)
+            dataspec = SpecAnalyzer(provider).analyze(schema)
+        else:
+            from dbsprout.spec.analyzer import heuristic_fallback  # noqa: PLC0415
+
+            dataspec = heuristic_fallback(schema)
         return _EngineSelection(
             engine="spec",
             heuristic=heuristic,

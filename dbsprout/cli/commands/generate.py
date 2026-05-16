@@ -11,6 +11,7 @@ from rich.console import Console
 from rich.table import Table
 
 from dbsprout.config.models import DBSproutConfig
+from dbsprout.errors import ModelError
 from dbsprout.generate.orchestrator import GenerateResult, orchestrate
 from dbsprout.plugins.dispatch import resolve_writer as _resolve_writer
 from dbsprout.schema.models import DatabaseSchema
@@ -53,8 +54,34 @@ def generate_command(  # noqa: PLR0913
     file: str | None = None,
     incremental: bool = False,
     snapshot: str | None = None,
+    lora_path: Path | None = None,
 ) -> None:
     """Generate seed data from a schema snapshot."""
+    # S-067b: --lora is only meaningful for the LLM-backed spec engine and the
+    # adapter must exist as a real file before any model work begins.
+    if lora_path is not None:
+        if engine != "spec":
+            raise ModelError(
+                what="--lora was given but --engine is not 'spec'.",
+                why=(
+                    f"The LoRA adapter only affects the LLM spec engine; "
+                    f"--engine {engine} ignores it."
+                ),
+                fix="Re-run with --engine spec, or drop --lora.",
+            )
+        if not lora_path.exists():
+            raise ModelError(
+                what="The --lora adapter path does not exist.",
+                why=f"No file was found at {lora_path}.",
+                fix="Pass the path to an existing .gguf LoRA adapter file.",
+            )
+        if not lora_path.is_file():
+            raise ModelError(
+                what="The --lora adapter path is not a file.",
+                why=f"{lora_path} is a directory, not a LoRA adapter file.",
+                fix="Pass the path to the .gguf adapter file itself.",
+            )
+
     # Validate insert_method
     valid_methods = {"auto", "copy", "load_data", "batch"}
     if insert_method not in valid_methods:
@@ -116,6 +143,7 @@ def generate_command(  # noqa: PLR0913
         default_rows=rows,
         engine=engine,
         reference_data=ref,
+        lora_path=lora_path,
     )
 
     if result.total_tables == 0:

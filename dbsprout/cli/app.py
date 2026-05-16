@@ -94,6 +94,11 @@ def generate_proxy(  # noqa: PLR0913
         "--snapshot",
         help="Base snapshot hash prefix (default: latest).",
     ),
+    lora: str | None = typer.Option(
+        None,
+        "--lora",
+        help="Path to a .gguf LoRA adapter (requires --engine spec).",
+    ),
 ) -> None:
     """Generate seed data from a schema snapshot."""
     from pathlib import Path  # noqa: PLC0415
@@ -117,6 +122,7 @@ def generate_proxy(  # noqa: PLR0913
         file=file,
         incremental=incremental,
         snapshot=snapshot,
+        lora_path=Path(lora) if lora else None,
     )
 
 
