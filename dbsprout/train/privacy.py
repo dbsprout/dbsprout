@@ -25,7 +25,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -47,9 +47,14 @@ class TrainPrivacyConfig(BaseModel):
     """The ``[train.privacy]`` TOML section.
 
     ``pii_redaction`` defaults ``True`` (mask PII values before
-    serialization). ``dp_sgd`` is opt-in and currently guarded -- see
-    :func:`dp_sgd_guard`. ``pii_entities`` overrides the Presidio default
-    entity set when provided (``None`` = Presidio defaults).
+    serialization). ``dp_sgd`` is opt-in -- see :func:`dp_sgd_guard`.
+    ``pii_entities`` overrides the Presidio default entity set when provided
+    (``None`` = Presidio defaults).
+
+    DP-SGD (S-097): when ``dp_sgd`` is ``True`` exactly one accounting mode
+    must be chosen -- ``dp_target_epsilon`` (epsilon-targeted, the headline
+    formal guarantee) or ``dp_noise_multiplier`` (explicit noise). The DP
+    fields are inert when ``dp_sgd`` is ``False``.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
@@ -57,6 +62,26 @@ class TrainPrivacyConfig(BaseModel):
     pii_redaction: bool = True
     dp_sgd: bool = False
     pii_entities: tuple[str, ...] | None = None
+
+    dp_target_epsilon: float | None = Field(default=None, gt=0)
+    dp_target_delta: float = Field(default=1e-5, gt=0, lt=1)
+    dp_max_grad_norm: float = Field(default=1.0, gt=0)
+    dp_noise_multiplier: float | None = Field(default=None, gt=0)
+
+    @model_validator(mode="after")
+    def _check_dp_accounting_mode(self) -> TrainPrivacyConfig:
+        """Require exactly one DP accounting mode when DP-SGD is enabled."""
+        if not self.dp_sgd:
+            return self
+        has_epsilon = self.dp_target_epsilon is not None
+        has_noise = self.dp_noise_multiplier is not None
+        if has_epsilon == has_noise:
+            raise ValueError(
+                "DP-SGD requires exactly one accounting mode: set either "
+                "[train.privacy] dp_target_epsilon (epsilon-targeted) or "
+                "dp_noise_multiplier (explicit noise), not both and not neither."
+            )
+        return self
 
 
 class TableRedactionStats(BaseModel):
