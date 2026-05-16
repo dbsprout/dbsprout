@@ -54,4 +54,6 @@ nav:
       - Configuration: user-guide/configuration.md
   - Architecture:
       - Overview: architecture/overview.md
-  - Contributing: contributing.md
+  - Contributing:
+      - Overview: contributing.md
+      - Writing Plugins: contributing/plugins.md
