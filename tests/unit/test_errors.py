@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import re
+from pathlib import Path
+
 import pytest
 
 from dbsprout.errors import (
@@ -65,3 +68,35 @@ def test_require_dependency_raises_for_missing_module() -> None:
     with pytest.raises(MissingDependencyError) as exc_info:
         require_dependency("definitely_not_a_real_module_xyz", extra="stats")
     assert "pip install dbsprout[stats]" in exc_info.value.fix
+
+
+_VALID_EXTRAS = {
+    "dev",
+    "db",
+    "mssql",
+    "pg",
+    "gen",
+    "llm",
+    "migrate",
+    "cloud",
+    "privacy",
+    "stats",
+    "train-cuda",
+    "train-mlx",
+    "web",
+    "tui",
+    "data",
+    "train",
+    "all",
+}
+
+
+def test_all_install_hints_reference_real_extras() -> None:
+    root = Path(__file__).resolve().parents[2] / "dbsprout"
+    pattern = re.compile(r"pip install dbsprout\[([a-z-]+)\]")
+    offenders: list[str] = []
+    for path in root.rglob("*.py"):
+        for match in pattern.finditer(path.read_text(encoding="utf-8")):
+            if match.group(1) not in _VALID_EXTRAS:
+                offenders.append(f"{path}: dbsprout[{match.group(1)}]")
+    assert not offenders, f"Invalid extras referenced: {offenders}"
