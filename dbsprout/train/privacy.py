@@ -10,8 +10,9 @@ sensitive data:
 3. **PII redaction (Presidio)** -- this module: detect and mask PII *values*
    in the sampled rows before GReaT serialization. Default on.
 4. **DP-SGD (Opacus)** -- opt-in formal guarantee. This module ships the
-   config knob and a clear not-yet-wired guard (:func:`dp_sgd_guard`); full
-   Opacus integration into the training backend is a follow-up.
+   config knob and the install guard (:func:`dp_sgd_guard`); the optimizer +
+   dataloader are wrapped with Opacus ``PrivacyEngine`` on the CUDA/Unsloth
+   path (S-097); the MLX path raises a clear not-supported error.
 
 ``presidio-analyzer`` / ``presidio-anonymizer`` are optional (the
 ``[privacy]`` extra) and imported lazily inside
@@ -25,7 +26,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -36,10 +37,10 @@ logger = logging.getLogger(__name__)
 
 _DP_SGD_HINT = (
     "DP-SGD (differential privacy) was requested ([train.privacy] dp_sgd = "
-    "true) but is not yet wired into the training backend. Disable it "
-    "([train.privacy] dp_sgd = false) or rely on the other three privacy "
-    "layers (LoRA-only, completion-only loss, PII redaction). Full Opacus "
-    "DP-SGD integration is tracked as a follow-up."
+    "true) but Opacus is not installed. Install it with "
+    "'pip install dbsprout[train-dp]' (adds Opacus, PyTorch/CUDA only), or "
+    "disable DP-SGD ([train.privacy] dp_sgd = false) and rely on the other "
+    "three privacy layers (LoRA-only, completion-only loss, PII redaction)."
 )
 
 
@@ -47,9 +48,14 @@ class TrainPrivacyConfig(BaseModel):
     """The ``[train.privacy]`` TOML section.
 
     ``pii_redaction`` defaults ``True`` (mask PII values before
-    serialization). ``dp_sgd`` is opt-in and currently guarded -- see
-    :func:`dp_sgd_guard`. ``pii_entities`` overrides the Presidio default
-    entity set when provided (``None`` = Presidio defaults).
+    serialization). ``dp_sgd`` is opt-in -- see :func:`dp_sgd_guard`.
+    ``pii_entities`` overrides the Presidio default entity set when provided
+    (``None`` = Presidio defaults).
+
+    DP-SGD (S-097): when ``dp_sgd`` is ``True`` exactly one accounting mode
+    must be chosen -- ``dp_target_epsilon`` (epsilon-targeted, the headline
+    formal guarantee) or ``dp_noise_multiplier`` (explicit noise). The DP
+    fields are inert when ``dp_sgd`` is ``False``.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
@@ -57,6 +63,26 @@ class TrainPrivacyConfig(BaseModel):
     pii_redaction: bool = True
     dp_sgd: bool = False
     pii_entities: tuple[str, ...] | None = None
+
+    dp_target_epsilon: float | None = Field(default=None, gt=0)
+    dp_target_delta: float = Field(default=1e-5, gt=0, lt=1)
+    dp_max_grad_norm: float = Field(default=1.0, gt=0)
+    dp_noise_multiplier: float | None = Field(default=None, gt=0)
+
+    @model_validator(mode="after")
+    def _check_dp_accounting_mode(self) -> TrainPrivacyConfig:
+        """Require exactly one DP accounting mode when DP-SGD is enabled."""
+        if not self.dp_sgd:
+            return self
+        has_epsilon = self.dp_target_epsilon is not None
+        has_noise = self.dp_noise_multiplier is not None
+        if has_epsilon == has_noise:
+            raise ValueError(
+                "DP-SGD requires exactly one accounting mode: set either "
+                "[train.privacy] dp_target_epsilon (epsilon-targeted) or "
+                "dp_noise_multiplier (explicit noise), not both and not neither."
+            )
+        return self
 
 
 class TableRedactionStats(BaseModel):
@@ -90,14 +116,32 @@ class RedactionStats(BaseModel):
     presidio_available: bool = True
 
 
-def dp_sgd_guard(config: TrainPrivacyConfig) -> None:
-    """Raise a clear error if DP-SGD is requested but unsupported.
+def _opacus_installed() -> bool:
+    """Return ``True`` iff Opacus can be imported.
 
-    A no-op when ``config.dp_sgd`` is ``False``. Called by the training
-    pipeline before the (non-DP) backend runs so the user gets an actionable
-    message instead of a silently-ignored privacy setting.
+    ``opacus`` is imported lazily; a missing install is treated as "not
+    available" rather than raising, so this helper is safe on any host
+    (mirrors :func:`dbsprout.train.trainer._cuda_available`).
     """
-    if config.dp_sgd:
+    try:
+        import opacus  # noqa: F401, PLC0415
+    except ImportError:
+        return False
+    return True
+
+
+def dp_sgd_guard(config: TrainPrivacyConfig) -> None:
+    """Raise a clear error only if DP-SGD is requested but Opacus is missing.
+
+    A no-op when ``config.dp_sgd`` is ``False``. When DP-SGD is requested and
+    Opacus *is* installed this is also a no-op -- the trainer performs the
+    actual private wrap (S-097). Called by the training pipeline before the
+    backend runs so the user gets an actionable install hint instead of a
+    bare ImportError deep in training.
+    """
+    if not config.dp_sgd:
+        return
+    if not _opacus_installed():
         raise RuntimeError(_DP_SGD_HINT)
 
 

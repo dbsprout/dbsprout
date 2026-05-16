@@ -150,6 +150,9 @@ train-mlx = [
     "mlx>=0.20",
     "mlx-lm>=0.20",
 ]
+train-dp = [
+    "opacus>=1.4",
+]
 web = [
     "fastapi>=0.115",
     "uvicorn>=0.34",
@@ -165,7 +168,7 @@ train = [
     "polars>=1.0",
     "sqlalchemy>=2.0",
 ]
-# Excludes train-cuda/train-mlx (platform-specific) and cloud (subset of llm)
+# Excludes train-cuda/train-mlx/train-dp (platform-specific / heavy opt-in) and cloud (subset of llm)
 all = [
     "dbsprout[db,pg,gen,llm,stats,data,web,tui,train]",
 ]

@@ -97,6 +97,12 @@ _MLX_HINT = (
     "'pip install dbsprout[train-mlx]' (installs MLX + MLX-LM, ~100 MB). "
     "On an NVIDIA GPU use the CUDA trainer instead (dbsprout[train-cuda])."
 )
+_MLX_DP_UNSUPPORTED = (
+    "DP-SGD (Opacus) is not supported on the MLX (Apple Silicon) backend -- "
+    "Opacus is PyTorch/CUDA-only. Use the CUDA QLoRA trainer "
+    "('pip install dbsprout[train-cuda] dbsprout[train-dp]') for a "
+    "differential-privacy guarantee, or set [train.privacy] dp_sgd = false."
+)
 
 
 def _mlx_available() -> bool:
@@ -247,14 +253,17 @@ class MLXTrainer:
         Raises
         ------
         RuntimeError
-            CUDA host (use the CUDA trainer), not Apple Silicon, or
-            ``mlx-lm`` is not installed — each with an install hint.
+            CUDA host (use the CUDA trainer), not Apple Silicon,
+            ``mlx-lm`` is not installed, or DP-SGD was requested (Opacus is
+            PyTorch/CUDA-only — use the CUDA trainer) — each with a hint.
         FileNotFoundError
             *corpus_path* does not exist (run ``dbsprout train serialize``).
         ValueError
             *corpus_path* exists but is empty.
         """
         start = time.perf_counter()
+        if config.privacy.dp_sgd:
+            raise RuntimeError(_MLX_DP_UNSUPPORTED)
         backend = _select_backend()
 
         if not corpus_path.exists():

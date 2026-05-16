@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sys
+import types
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 from unittest.mock import patch
@@ -20,6 +21,7 @@ from dbsprout.train.privacy import (
     TableRedactionStats,
     TrainingRedactor,
     TrainPrivacyConfig,
+    _opacus_installed,
     dp_sgd_guard,
 )
 
@@ -85,9 +87,62 @@ def test_dp_sgd_guard_noop_when_disabled() -> None:
     dp_sgd_guard(TrainPrivacyConfig(dp_sgd=False))  # must not raise
 
 
-def test_dp_sgd_guard_raises_when_requested() -> None:
-    with pytest.raises(RuntimeError, match="DP-SGD"):
-        dp_sgd_guard(TrainPrivacyConfig(dp_sgd=True))
+def test_opacus_installed_true(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setitem(sys.modules, "opacus", types.ModuleType("opacus"))
+    assert _opacus_installed() is True
+
+
+def test_opacus_installed_false(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setitem(sys.modules, "opacus", None)  # forces ImportError
+    assert _opacus_installed() is False
+
+
+def test_dp_sgd_guard_raises_when_opacus_missing(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setitem(sys.modules, "opacus", None)
+    with pytest.raises(RuntimeError, match=r"dbsprout\[train-dp\]"):
+        dp_sgd_guard(TrainPrivacyConfig(dp_sgd=True, dp_target_epsilon=8.0))
+
+
+def test_dp_sgd_guard_noop_when_opacus_present(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setitem(sys.modules, "opacus", types.ModuleType("opacus"))
+    dp_sgd_guard(TrainPrivacyConfig(dp_sgd=True, dp_target_epsilon=8.0))  # must not raise
+
+
+# --- S-097: DP hyperparameters + validator ---------------------------------
+
+
+def test_dp_fields_default() -> None:
+    cfg = TrainPrivacyConfig()
+    assert cfg.dp_target_epsilon is None
+    assert cfg.dp_target_delta == pytest.approx(1e-5)
+    assert cfg.dp_max_grad_norm == pytest.approx(1.0)
+    assert cfg.dp_noise_multiplier is None
+
+
+def test_dp_config_epsilon_mode_valid() -> None:
+    cfg = TrainPrivacyConfig(dp_sgd=True, dp_target_epsilon=8.0)
+    assert cfg.dp_target_epsilon == pytest.approx(8.0)
+
+
+def test_dp_config_noise_mode_valid() -> None:
+    cfg = TrainPrivacyConfig(dp_sgd=True, dp_noise_multiplier=1.1)
+    assert cfg.dp_noise_multiplier == pytest.approx(1.1)
+
+
+def test_dp_config_requires_exactly_one_accounting_mode() -> None:
+    with pytest.raises(ValidationError, match="exactly one"):
+        TrainPrivacyConfig(dp_sgd=True)
+
+
+def test_dp_config_rejects_both_accounting_modes() -> None:
+    with pytest.raises(ValidationError, match="exactly one"):
+        TrainPrivacyConfig(dp_sgd=True, dp_target_epsilon=8.0, dp_noise_multiplier=1.1)
+
+
+def test_dp_config_inert_when_dp_sgd_disabled() -> None:
+    # DP fields are not validated against each other when DP-SGD is off.
+    cfg = TrainPrivacyConfig(dp_sgd=False)
+    assert cfg.dp_target_epsilon is None
 
 
 # --- Task 5: TrainingRedactor fallback / disabled --------------------------

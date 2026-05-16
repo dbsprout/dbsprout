@@ -50,6 +50,8 @@ class LoRAAdapter(BaseModel):
     ``adapter_path`` points at the on-disk PEFT adapter directory under
     ``.dbsprout/models/adapters/``. ``final_loss`` is ``None`` when the backend
     reported no loss history (e.g. zero training steps).
+    ``achieved_epsilon`` / ``dp_delta`` are the differential-privacy guarantee
+    when DP-SGD ran (S-097); both ``None`` for a non-DP run.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
@@ -60,3 +62,5 @@ class LoRAAdapter(BaseModel):
     train_samples: int = Field(ge=0)
     final_loss: float | None
     duration_seconds: float = Field(ge=0)
+    achieved_epsilon: float | None = None
+    dp_delta: float | None = None
