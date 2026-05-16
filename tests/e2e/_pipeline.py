@@ -42,9 +42,7 @@ class PipelineResult:
 def _invoke(args: list[str]) -> None:
     res = _runner.invoke(app, args)
     if res.exit_code != 0:
-        raise AssertionError(
-            f"`dbsprout {' '.join(args)}` exited {res.exit_code}\n{res.output}"
-        )
+        raise AssertionError(f"`dbsprout {' '.join(args)}` exited {res.exit_code}\n{res.output}")
 
 
 def _extract_bare_schema(work_dir: Path) -> DatabaseSchema:
@@ -122,9 +120,7 @@ def run_pipeline(
         os.chdir(prev_cwd)
 
     if not report_path.exists():
-        raise AssertionError(
-            f"validate wrote no report (exit {res.exit_code})\n{res.output}"
-        )
+        raise AssertionError(f"validate wrote no report (exit {res.exit_code})\n{res.output}")
     report = json.loads(report_path.read_text(encoding="utf-8"))
     seed_data = _read_seed_data(seeds_dir)
     return PipelineResult(
@@ -147,9 +143,7 @@ def assert_full_integrity(result: PipelineResult) -> None:
     failed = [c for c in checks if not c["passed"]]
     assert not failed, f"failed checks: {failed}"
     kinds = {c["check"] for c in checks}
-    assert _EXPECTED_CHECK_KINDS <= kinds, (
-        f"missing check kinds: {_EXPECTED_CHECK_KINDS - kinds}"
-    )
+    assert kinds >= _EXPECTED_CHECK_KINDS, f"missing check kinds: {_EXPECTED_CHECK_KINDS - kinds}"
 
 
 def assert_programmatic_integrity(result: PipelineResult) -> None:

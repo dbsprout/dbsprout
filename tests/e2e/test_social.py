@@ -39,7 +39,5 @@ def test_social_self_ref_and_nullable_fk(tmp_path: Path) -> None:
     assert parent_fk.nullable is True
     self_ref = [fk for fk in comments.foreign_keys if fk.ref_table == "comments"]
     assert self_ref, "comments must self-reference for threaded replies"
-    null_seen = any(
-        row["parent_comment_id"] is None for row in result.seed_data["comments"]
-    )
+    null_seen = any(row["parent_comment_id"] is None for row in result.seed_data["comments"])
     assert null_seen, "expected some NULL nullable-FK values"

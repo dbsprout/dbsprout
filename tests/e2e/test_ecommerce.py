@@ -33,9 +33,7 @@ def test_ecommerce_self_ref_and_composite(tmp_path: Path) -> None:
 
     categories = schema.get_table("categories")
     assert categories is not None
-    self_refs = [
-        fk for fk in categories.foreign_keys if fk.ref_table == "categories"
-    ]
+    self_refs = [fk for fk in categories.foreign_keys if fk.ref_table == "categories"]
     assert self_refs, "categories must have a self-referencing FK"
 
     order_items = schema.get_table("order_items")
