@@ -14,6 +14,8 @@ from pathlib import Path  # noqa: TC003 - runtime use by Pydantic field annotati
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from dbsprout.train.privacy import TrainPrivacyConfig
+
 # Defaults match the story: rank=16, alpha=32, dropout=0.05, base model is the
 # same Qwen2.5-1.5B used by the embedded inference provider so a fine-tuned
 # adapter hot-swaps onto it (S-067).
@@ -39,6 +41,7 @@ class TrainConfig(BaseModel):
     batch_size: int = Field(default=2, ge=1)
     completion_only_loss: bool = True
     base_model: str = _DEFAULT_BASE_MODEL
+    privacy: TrainPrivacyConfig = Field(default_factory=TrainPrivacyConfig)
 
 
 class LoRAAdapter(BaseModel):
