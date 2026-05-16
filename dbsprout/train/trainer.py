@@ -40,6 +40,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from dbsprout.train.config import TrainConfig
+    from dbsprout.train.privacy import TrainPrivacyConfig
 
 logger = logging.getLogger(__name__)
 
@@ -76,6 +77,65 @@ def _select_backend() -> str:
     if _cuda_available():
         return "unsloth"
     raise RuntimeError(_INSTALL_HINT)
+
+
+_DP_INSTALL_HINT = (
+    "DP-SGD requested but Opacus is not installed. Install it with "
+    "'pip install dbsprout[train-dp]' (Opacus, PyTorch/CUDA only) or set "
+    "[train.privacy] dp_sgd = false."
+)
+
+
+def _make_private(
+    *,
+    privacy: TrainPrivacyConfig,
+    model: object,
+    optimizer: object,
+    data_loader: object,
+    epochs: int,
+) -> tuple[object, object, object, float | None]:
+    """Wrap model/optimizer/dataloader with Opacus; return the privatized
+    trio plus the achieved epsilon.
+
+    Epsilon-targeted accounting (``dp_target_epsilon`` set) uses
+    ``make_private_with_epsilon`` and reports the configured target as the
+    guarantee; otherwise ``make_private`` runs with the explicit
+    ``dp_noise_multiplier`` and the achieved epsilon is read from the engine
+    accountant (``None`` if unavailable). ``opacus`` is imported lazily; a
+    missing install raises a friendly install hint, never a bare ImportError.
+    """
+    try:
+        from opacus import PrivacyEngine  # noqa: PLC0415
+    except ImportError as exc:
+        raise RuntimeError(_DP_INSTALL_HINT) from exc
+
+    engine = PrivacyEngine()
+    if privacy.dp_target_epsilon is not None:
+        new_model, new_opt, new_loader = engine.make_private_with_epsilon(
+            module=model,
+            optimizer=optimizer,
+            data_loader=data_loader,
+            epochs=epochs,
+            target_epsilon=privacy.dp_target_epsilon,
+            target_delta=privacy.dp_target_delta,
+            max_grad_norm=privacy.dp_max_grad_norm,
+        )
+        return new_model, new_opt, new_loader, privacy.dp_target_epsilon
+
+    new_model, new_opt, new_loader = engine.make_private(
+        module=model,
+        optimizer=optimizer,
+        data_loader=data_loader,
+        noise_multiplier=privacy.dp_noise_multiplier,
+        max_grad_norm=privacy.dp_max_grad_norm,
+    )
+    achieved: float | None
+    try:
+        achieved = float(engine.get_epsilon(delta=privacy.dp_target_delta))
+    except (AttributeError, TypeError, ValueError):
+        logger.warning("Opacus accountant unavailable; achieved epsilon=None")
+        achieved = None
+    return new_model, new_opt, new_loader, achieved
 
 
 class QLoRATrainer:

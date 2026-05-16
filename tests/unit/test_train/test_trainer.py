@@ -15,7 +15,13 @@ from unittest import mock
 import pytest
 
 from dbsprout.train.config import LoRAAdapter, TrainConfig
-from dbsprout.train.trainer import QLoRATrainer, _cuda_available, _select_backend
+from dbsprout.train.privacy import TrainPrivacyConfig
+from dbsprout.train.trainer import (
+    QLoRATrainer,
+    _cuda_available,
+    _make_private,
+    _select_backend,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -368,3 +374,75 @@ def test_train_handles_non_numeric_training_loss(
             output_dir=tmp_path / "a",
         )
     assert adapter.final_loss is None
+
+
+# --- S-097: _make_private seam ---------------------------------------------
+
+
+@pytest.fixture
+def fake_opacus(monkeypatch: pytest.MonkeyPatch) -> dict[str, mock.MagicMock]:
+    captured: dict[str, mock.MagicMock] = {}
+    engine = mock.MagicMock(name="PrivacyEngine_instance")
+    engine.make_private_with_epsilon.side_effect = lambda **kw: (
+        kw["module"],
+        kw["optimizer"],
+        kw["data_loader"],
+    )
+    engine.make_private.side_effect = lambda **kw: (
+        kw["module"],
+        kw["optimizer"],
+        kw["data_loader"],
+    )
+    engine.get_epsilon.return_value = 5.5
+    engine_cls = mock.MagicMock(name="PrivacyEngine", return_value=engine)
+    captured["engine"] = engine
+    captured["engine_cls"] = engine_cls
+    opacus_mod = types.ModuleType("opacus")
+    opacus_mod.PrivacyEngine = engine_cls  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "opacus", opacus_mod)
+    return captured
+
+
+def test_make_private_epsilon_mode(fake_opacus: dict[str, mock.MagicMock]) -> None:
+    priv = TrainPrivacyConfig(dp_sgd=True, dp_target_epsilon=8.0, dp_max_grad_norm=1.2)
+    m, o, d, eps = _make_private(privacy=priv, model="M", optimizer="O", data_loader="D", epochs=3)
+    fake_opacus["engine"].make_private_with_epsilon.assert_called_once()
+    kw = fake_opacus["engine"].make_private_with_epsilon.call_args.kwargs
+    assert kw["target_epsilon"] == pytest.approx(8.0)
+    assert kw["target_delta"] == pytest.approx(1e-5)
+    assert kw["max_grad_norm"] == pytest.approx(1.2)
+    assert kw["epochs"] == 3
+    assert (m, o, d) == ("M", "O", "D")
+    assert eps == pytest.approx(8.0)
+
+
+def test_make_private_noise_mode(fake_opacus: dict[str, mock.MagicMock]) -> None:
+    priv = TrainPrivacyConfig(dp_sgd=True, dp_noise_multiplier=1.1)
+    _m, _o, _d, eps = _make_private(
+        privacy=priv, model="M", optimizer="O", data_loader="D", epochs=2
+    )
+    fake_opacus["engine"].make_private.assert_called_once()
+    kw = fake_opacus["engine"].make_private.call_args.kwargs
+    assert kw["noise_multiplier"] == pytest.approx(1.1)
+    assert kw["max_grad_norm"] == pytest.approx(1.0)
+    assert eps == pytest.approx(5.5)  # from engine.get_epsilon
+
+
+def test_make_private_noise_mode_accountant_unavailable(
+    fake_opacus: dict[str, mock.MagicMock],
+) -> None:
+    fake_opacus["engine"].get_epsilon.side_effect = AttributeError("no accountant")
+    priv = TrainPrivacyConfig(dp_sgd=True, dp_noise_multiplier=1.1)
+    _m, _o, _d, eps = _make_private(
+        privacy=priv, model="M", optimizer="O", data_loader="D", epochs=2
+    )
+    assert eps is None
+
+
+def test_make_private_raises_when_opacus_missing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setitem(sys.modules, "opacus", None)  # forces ImportError
+    priv = TrainPrivacyConfig(dp_sgd=True, dp_target_epsilon=8.0)
+    with pytest.raises(RuntimeError, match=r"dbsprout\[train-dp\]"):
+        _make_private(privacy=priv, model="M", optimizer="O", data_loader="D", epochs=1)
