@@ -87,6 +87,8 @@ _VALID_EXTRAS = {
     "tui",
     "data",
     "train",
+    "mongo",
+    "docs",
     "all",
 }
 
