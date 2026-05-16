@@ -10,11 +10,14 @@ from rich.table import Table
 from dbsprout.cli.console import console
 from dbsprout.doctor import run_all_checks
 
-_GLYPH = {
-    "pass": "[green]✔[/green]",
-    "warn": "[yellow]⚠[/yellow]",
-    "fail": "[red]✖[/red]",
-}
+
+def _glyph(status: str) -> str:
+    """Map a check status to a colored Rich glyph."""
+    if status == "warn":
+        return "[yellow]⚠[/yellow]"
+    if status == "fail":
+        return "[red]✖[/red]"
+    return "[green]✔[/green]"
 
 
 def doctor_command(
@@ -36,7 +39,7 @@ def doctor_command(
     table.add_column("Message")
     for r in results:
         msg = r.message if r.fix is None else f"{r.message}\n[dim]fix: {r.fix}[/dim]"
-        table.add_row(_GLYPH[r.status], r.category, r.name, msg)
+        table.add_row(_glyph(r.status), r.category, r.name, msg)
     console.print(table)
 
     passed = sum(1 for r in results if r.status == "pass")

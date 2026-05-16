@@ -4,13 +4,22 @@ from __future__ import annotations
 
 import importlib.util
 import shutil
+import sys
 from collections import namedtuple
+from types import SimpleNamespace
 from typing import TYPE_CHECKING
 
+import sqlalchemy as sa
+
+import dbsprout.plugins.registry as reg_mod
 from dbsprout.doctor import CheckResult, run_all_checks
 from dbsprout.doctor import checks as checks_mod
 from dbsprout.doctor.checks import (
+    _cuda_available,
+    _existing_ancestor,
+    _module_version,
     check_database,
+    check_disk_space,
     check_extras,
     check_model,
     check_plugins,
@@ -148,3 +157,90 @@ def test_run_all_checks_never_raises_on_bad_db() -> None:
     results = run_all_checks(db_url="notadialect://x", config_path=None)
     db = next(r for r in results if r.category == "Database")
     assert db.status == "fail"
+
+
+def test_check_disk_space_default_path_pass() -> None:
+    r = check_disk_space()
+    assert r.category == "Environment"
+
+
+def test_existing_ancestor_walks_up(tmp_path: Path) -> None:
+    deep = tmp_path / "a" / "b" / "c"
+    assert _existing_ancestor(deep).exists()
+
+
+def test_check_secrets_clean_file(tmp_path: Path) -> None:
+    cfg = tmp_path / "dbsprout.toml"
+    cfg.write_text("[generation]\ndefault_rows = 100\n")
+    assert check_secrets(cfg).status == "pass"
+
+
+def test_check_python_version_default_arg() -> None:
+    r = check_python_version()
+    assert r.status == "pass"
+
+
+def test_module_version_unknown() -> None:
+    assert _module_version("definitely-not-a-real-package-xyz") == "unknown"
+
+
+def test_cuda_available_no_torch(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(importlib.util, "find_spec", lambda _n: None)
+    assert _cuda_available() is False
+
+
+def test_cuda_available_with_fake_torch(monkeypatch: pytest.MonkeyPatch) -> None:
+    fake_torch = SimpleNamespace(cuda=SimpleNamespace(is_available=lambda: True))
+    monkeypatch.setattr(importlib.util, "find_spec", lambda _n: object())
+    monkeypatch.setitem(sys.modules, "torch", fake_torch)
+    assert _cuda_available() is True
+
+
+def test_cuda_available_broken_torch(monkeypatch: pytest.MonkeyPatch) -> None:
+    def boom() -> bool:
+        raise RuntimeError("broken driver")
+
+    fake_torch = SimpleNamespace(cuda=SimpleNamespace(is_available=boom))
+    monkeypatch.setattr(importlib.util, "find_spec", lambda _n: object())
+    monkeypatch.setitem(sys.modules, "torch", fake_torch)
+    assert _cuda_available() is False
+
+
+def test_check_training_cuda_pass(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(checks_mod, "_cuda_available", lambda: True)
+    r = check_training()
+    assert r.status == "pass"
+    assert "CUDA" in r.message
+
+
+def test_check_training_mlx_pass(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(checks_mod, "_cuda_available", lambda: False)
+    monkeypatch.setattr(importlib.util, "find_spec", lambda n: object() if n == "mlx" else None)
+    r = check_training()
+    assert r.status == "pass"
+    assert "MLX" in r.message
+
+
+def test_check_database_unparseable_url(monkeypatch: pytest.MonkeyPatch) -> None:
+    def bad_make_url(_u: str) -> object:
+        raise sa.exc.ArgumentError("nope")
+
+    monkeypatch.setattr(sa.engine, "make_url", bad_make_url)
+    r = check_database("sqlite:///x.db")
+    assert r.status == "fail"
+    assert "unparseable" in r.message
+
+
+def test_check_model_default_root() -> None:
+    r = check_model()
+    assert r.category == "Models"
+    assert r.status in {"pass", "warn"}
+
+
+def test_check_plugins_with_errored(monkeypatch: pytest.MonkeyPatch) -> None:
+    errored = SimpleNamespace(group="dbsprout.parsers", name="broken", status="error")
+    fake_registry = SimpleNamespace(list=lambda: [errored])
+    monkeypatch.setattr(reg_mod, "get_registry", lambda: fake_registry)
+    r = check_plugins()
+    assert r.status == "warn"
+    assert "broken" in r.message
