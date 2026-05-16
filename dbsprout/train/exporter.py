@@ -17,7 +17,12 @@ Pipeline (three individually-testable seams):
    then ``llama-quantize`` as subprocesses (the real, supported mechanism —
    ``llama-cpp-python`` does **not** export a ``convert_hf_to_gguf`` symbol).
 
-An optional ``_verify_gguf`` seam load-checks the produced file.
+Every file the conversion subprocesses produce (the f16 intermediate and the
+final Q4_K_M output) is passed through :func:`_assert_gguf_magic` — a cheap,
+dependency-free read of the ``GGUF`` magic + format version — so a silent
+wrong-output / truncated / renamed-non-GGUF bug is caught even when the
+optional ``[llm]`` load-verify is unavailable. ``_verify_gguf`` is the
+deeper, optional smoke-load (constructs ``llama_cpp.Llama``).
 
 The quantization tool paths are resolved via :func:`_resolve_converter` /
 :func:`_resolve_quantizer`: an env override (``DBSPROUT_LLAMA_CONVERT`` /
@@ -52,6 +57,7 @@ import logging
 import os
 import re
 import shutil
+import struct
 import subprocess  # nosec B404 - list-arg, shell=False subprocess only (see _run_tool)
 import tempfile
 from pathlib import Path
@@ -101,6 +107,11 @@ _KNOWN_CONVERTERS = (
     Path("/opt/llama.cpp/convert_hf_to_gguf.py"),
 )
 _QUANTIZE_BIN = "llama-quantize"
+# Generous wall-clock ceiling per conversion subprocess. A 1.5B-param Q4_K_M
+# export is documented at well under 10 min on commodity hardware; 1 h leaves
+# ample headroom for a slow disk / larger model while still bounding a
+# genuinely hung process so the export can never block forever.
+_TOOL_TIMEOUT_SECONDS = 3600
 _HINT_TOOLCHAIN = (
     "llama.cpp conversion tooling not found. Set {env} to the path of "
     "{what}, or install a llama.cpp build on PATH. (toolchain-validation-pending)"
@@ -108,6 +119,18 @@ _HINT_TOOLCHAIN = (
 # Portable adapter directory names only: word chars, dot, dash. No path
 # separators / traversal so the value is safe to interpolate into a filename.
 _SAFE_STEM = re.compile(r"^[\w.-]+$")
+
+# GGUF on-disk header: 4-byte ASCII magic ``GGUF`` followed by a little-endian
+# uint32 format version. We validate this on every file the real
+# ``convert_hf_to_gguf.py`` / ``llama-quantize`` produces so a silent
+# wrong-output bug (or a renamed non-GGUF file) is caught even when the
+# optional ``[llm]`` load-verify is unavailable. Spec:
+# https://github.com/ggml-org/ggml/blob/master/docs/gguf.md
+_GGUF_MAGIC = b"GGUF"
+# Versions 1-3 have shipped; 3 is current. Accept the known range so a future
+# bump is an explicit, intentional change rather than a silent acceptance.
+_GGUF_SUPPORTED_VERSIONS = frozenset({1, 2, 3})
+_GGUF_HEADER_LEN = len(_GGUF_MAGIC) + 4  # magic + uint32 version
 
 AdapterFormat = Literal["peft", "mlx"]
 
@@ -276,12 +299,25 @@ def _run_tool(argv: list[str]) -> None:
     """Run a llama.cpp tool as a subprocess (list args, no shell, checked).
 
     ``shell=False`` is implicit (list argv); ``check=True`` raises on non-zero
-    exit; ``capture_output=True`` keeps stderr for the error message.
+    exit; ``capture_output=True`` keeps stderr for the error message; a
+    generous ``timeout`` bounds a genuinely hung process so an export can
+    never block forever. Both failure modes surface as a clear DBSprout
+    ``RuntimeError`` naming the tool.
     """
     try:
         # argv is a fixed list (resolved tool path + our own staged file
         # paths), shell=False, no untrusted-string interpolation.
-        subprocess.run(argv, check=True, capture_output=True, text=True)  # noqa: S603  # nosec B603
+        subprocess.run(  # noqa: S603  # nosec B603
+            argv,
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=_TOOL_TIMEOUT_SECONDS,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeError(
+            f"llama.cpp tool timed out after {_TOOL_TIMEOUT_SECONDS}s ({argv[0]})"
+        ) from exc
     except subprocess.CalledProcessError as exc:
         stderr = (exc.stderr or "").strip()
         raise RuntimeError(f"llama.cpp tool failed ({argv[0]}): {stderr or exc}") from exc
@@ -295,9 +331,20 @@ def _quantize_to_gguf(merged_dir: Path, out_path: Path) -> Path:
     (f16 → Q4_K_M). The f16 intermediate lives next to *out_path* (already a
     TemporaryDirectory at the call site).
     """
+    if not merged_dir.is_dir():
+        raise RuntimeError(
+            f"merged model directory not found: {merged_dir} — the adapter "
+            "merge stage did not produce the expected HF/safetensors output."
+        )
     converter = _resolve_converter()
     quantizer = _resolve_quantizer()
     out_path.parent.mkdir(parents=True, exist_ok=True)
+    # Resolve every path interpolated into an argv to an unambiguous absolute
+    # path before the subprocess. Combined with the list-argv / shell=False
+    # contract in :func:`_run_tool` this removes any relative-path resolution
+    # or option-injection ambiguity (no path can be mistaken for a flag).
+    merged_dir = merged_dir.resolve()
+    out_path = out_path.resolve()
     f16_path = out_path.with_name(out_path.stem + "-f16.gguf")
 
     import sys  # noqa: PLC0415 - resolve the active interpreter for the .py script
@@ -313,8 +360,43 @@ def _quantize_to_gguf(merged_dir: Path, out_path: Path) -> Path:
             "f16",
         ]
     )
+    # Validate the converter actually produced a GGUF before spending the
+    # quantize step on it (catches a silent wrong-output / non-GGUF result).
+    _assert_gguf_magic(f16_path)
     _run_tool([str(quantizer), str(f16_path), str(out_path), _QUANT_TYPE])
+    # The final Q4_K_M file must also be a real GGUF — this is the always-on
+    # correctness gate independent of the optional ``[llm]`` smoke-load.
+    _assert_gguf_magic(out_path)
     return out_path
+
+
+def _assert_gguf_magic(path: Path) -> None:
+    """Cheap, dependency-free check that *path* is a real GGUF file.
+
+    Reads only the first :data:`_GGUF_HEADER_LEN` bytes and asserts the
+    ``GGUF`` magic plus a known little-endian uint32 format version. This is
+    the always-on correctness gate on what the real ``convert_hf_to_gguf.py``
+    / ``llama-quantize`` subprocesses produced — independent of the optional
+    ``[llm]`` smoke-load in :func:`_verify_gguf`. A wrong-output bug, a
+    truncated/empty write, or a renamed non-GGUF file is caught here with an
+    actionable error that names the offending path.
+    """
+    try:
+        with path.open("rb") as fh:
+            header = fh.read(_GGUF_HEADER_LEN)
+    except OSError as exc:
+        raise RuntimeError(f"not a valid GGUF file ({path}): {exc}") from exc
+    if len(header) < _GGUF_HEADER_LEN or header[: len(_GGUF_MAGIC)] != _GGUF_MAGIC:
+        raise RuntimeError(
+            f"not a valid GGUF file ({path}): missing/short {_GGUF_MAGIC!r} "
+            "magic header — the llama.cpp conversion produced unexpected output."
+        )
+    (version,) = struct.unpack("<I", header[len(_GGUF_MAGIC) : _GGUF_HEADER_LEN])
+    if version not in _GGUF_SUPPORTED_VERSIONS:
+        raise RuntimeError(
+            f"unsupported GGUF version {version} in {path}: expected one of "
+            f"{sorted(_GGUF_SUPPORTED_VERSIONS)}."
+        )
 
 
 def _verify_gguf(path: Path) -> None:
