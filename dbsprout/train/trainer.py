@@ -315,6 +315,15 @@ class QLoRATrainer:
                     data_loader=trainer.get_train_dataloader(),
                     epochs=config.epochs,
                 )
+                # Reassign the Opacus-privatized objects onto the SFTTrainer
+                # so trainer.train() steps the noised/clipped optimizer over
+                # the Poisson-sampled loader. The exact attribute names on the
+                # real trl/HF Trainer (and Unsloth's patched optimizer) are
+                # runtime-validation-pending: CI cannot install
+                # CUDA/Unsloth/Opacus, so this wiring is asserted structurally
+                # in tests (same precedent as the mlx-lm
+                # hardware-validation-pending integration test). A CUDA-enabled
+                # run must confirm trainer.train() consumes these.
                 trainer.model = priv_model
                 trainer.optimizer = priv_opt
                 trainer.train_dataloader = priv_loader
