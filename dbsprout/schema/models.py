@@ -15,7 +15,7 @@ from typing import Annotated, Any
 
 from pydantic import AfterValidator, BaseModel, BeforeValidator, ConfigDict, Field
 
-_CONTROL_CHAR_RE = re.compile(r"[\x00-\x1f\x7f]")
+_CONTROL_CHAR_RE = re.compile(r"[\x00-\x1f\x7f-\x9f]")
 
 
 def _validate_identifier(v: str) -> str:

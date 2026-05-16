@@ -8,6 +8,7 @@ import pytest
 from pydantic import ValidationError
 
 from dbsprout.schema.models import (
+    _CONTROL_CHAR_RE,
     ColumnSchema,
     ColumnType,
     DatabaseSchema,
@@ -942,3 +943,34 @@ class TestAdversarialInput:
                 ref_columns=["b"],
                 on_delete="DROP TABLE users",
             )
+
+
+# ── C1 control-char range ───────────────────────────────────────────────
+
+
+class TestC1ControlChars:
+    """AC: control-char regex blocks C1 range U+0080-U+009F."""
+
+    @pytest.mark.parametrize("cp", [0x80, 0x85, 0x90, 0x9F])
+    def test_c1_control_char_rejected_on_column(self, cp: int) -> None:
+        with pytest.raises(ValidationError):
+            ColumnSchema(name=f"id{chr(cp)}", data_type=ColumnType.INTEGER)
+
+    def test_c1_lower_boundary_0x80_rejected(self) -> None:
+        with pytest.raises(ValidationError):
+            TableSchema(name=f"t{chr(0x80)}", columns=[_make_col("id")])
+
+    def test_c1_upper_boundary_0x9f_rejected(self) -> None:
+        with pytest.raises(ValidationError):
+            TableSchema(name=f"t{chr(0x9F)}", columns=[_make_col("id")])
+
+    def test_char_past_c1_range_still_allowed(self) -> None:
+        """U+00E0 (à, just past the C1 control range) remains a valid identifier."""
+        col = ColumnSchema(name=f"id{chr(0xE0)}", data_type=ColumnType.INTEGER)
+        assert chr(0xE0) in col.name
+
+    def test_regex_boundary_excludes_0xa0(self) -> None:
+        """The control-char regex must not match U+00A0 (just past C1)."""
+        assert _CONTROL_CHAR_RE.search(chr(0xA0)) is None
+        assert _CONTROL_CHAR_RE.search(chr(0x9F)) is not None
+        assert _CONTROL_CHAR_RE.search(chr(0x80)) is not None
