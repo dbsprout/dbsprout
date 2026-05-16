@@ -1930,3 +1930,43 @@ class TestDiffEdgeCases:
     production code changes — these guard behaviour at the margins so a
     future refactor fails fast instead of shipping silently.
     """
+
+    @patch("dbsprout.migrate.snapshot.SnapshotStore")
+    @patch("dbsprout.cli.commands.diff._introspect_db")
+    def test_rich_renders_unicode_table_names(
+        self,
+        mock_introspect: MagicMock,
+        mock_store_cls: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        """AC-1: non-ASCII table names render verbatim (escape() is identity)."""
+        old = _simple_schema_for_diff()
+        new = DatabaseSchema(
+            tables=[
+                *old.tables,
+                TableSchema(
+                    name="日本語_users",
+                    columns=[ColumnSchema(name="id", data_type=ColumnType.INTEGER, nullable=False)],
+                    primary_key=["id"],
+                ),
+                TableSchema(
+                    name="users_😀",
+                    columns=[ColumnSchema(name="id", data_type=ColumnType.INTEGER, nullable=False)],
+                    primary_key=["id"],
+                ),
+            ],
+            dialect="sqlite",
+        )
+        mock_introspect.return_value = new
+        mock_store = MagicMock()
+        mock_store.load_latest.return_value = old
+        mock_store_cls.return_value = mock_store
+
+        result = runner.invoke(
+            app,
+            ["diff", "--db", "sqlite:///x.db", "--output-dir", str(tmp_path)],
+        )
+        assert result.exit_code == 1
+        output = _strip_ansi(result.output)
+        assert "日本語_users" in output
+        assert "users_😀" in output
