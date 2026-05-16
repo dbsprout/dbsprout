@@ -56,7 +56,7 @@ class PIIDetector:
     def __init__(self) -> None:
         self._use_presidio = False
         try:
-            from presidio_analyzer import AnalyzerEngine  # type: ignore[import-not-found]  # noqa: PLC0415, I001
+            from presidio_analyzer import AnalyzerEngine  # noqa: PLC0415
 
             self._analyzer = AnalyzerEngine()
             self._use_presidio = True
