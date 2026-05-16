@@ -211,5 +211,27 @@ def doctor_proxy(
 
 
 @app.callback()
-def main() -> None:
-    """DBSprout — realistic database seed data from your schema."""
+def main(
+    verbose: bool = typer.Option(False, "--verbose", "-v", help="Show full tracebacks on error."),
+) -> None:
+    """DBSprout — realistic database seed data from your schema.
+
+    ``--verbose`` is declared here so Typer accepts it as a global option;
+    it is actually consumed by :func:`run` before Typer dispatches (the
+    error guard needs to know whether to print a traceback).
+    """
+
+
+def run() -> None:
+    """Console-script entrypoint: render DBSproutError as a Rich panel.
+
+    ``--verbose`` is parsed manually here (it is consumed before Typer is even
+    invoked) so the global guard knows whether to print a traceback.
+    """
+    import sys  # noqa: PLC0415
+
+    from dbsprout.cli.error_handler import handle_cli_errors  # noqa: PLC0415
+
+    verbose = "--verbose" in sys.argv or "-v" in sys.argv
+    with handle_cli_errors(verbose=verbose):
+        app()
