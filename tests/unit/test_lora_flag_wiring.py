@@ -66,8 +66,8 @@ class TestOrchestratorLoraWiring:
         fake_spec = heuristic_fallback(schema)
 
         with (
-            patch("dbsprout.generate.orchestrator.EmbeddedProvider") as m_provider,
-            patch("dbsprout.generate.orchestrator.SpecAnalyzer") as m_analyzer,
+            patch("dbsprout.spec.providers.embedded.EmbeddedProvider") as m_provider,
+            patch("dbsprout.spec.analyzer.SpecAnalyzer") as m_analyzer,
         ):
             m_analyzer.return_value.analyze.return_value = fake_spec
             result = orchestrate(
@@ -84,7 +84,7 @@ class TestOrchestratorLoraWiring:
         schema = _schema()
         config = DBSproutConfig()
 
-        with patch("dbsprout.generate.orchestrator.EmbeddedProvider") as m_provider:
+        with patch("dbsprout.spec.providers.embedded.EmbeddedProvider") as m_provider:
             result = orchestrate(schema, config, seed=42, default_rows=3, engine="spec")
 
         m_provider.assert_not_called()
@@ -95,7 +95,7 @@ class TestOrchestratorLoraWiring:
         schema = _schema()
         config = DBSproutConfig()
 
-        with patch("dbsprout.generate.orchestrator.EmbeddedProvider") as m_provider:
+        with patch("dbsprout.spec.providers.embedded.EmbeddedProvider") as m_provider:
             result = orchestrate(
                 schema,
                 config,

@@ -21,9 +21,7 @@ from dbsprout.generate.constraints import enforce_constraints
 from dbsprout.generate.fk_sampling import sample_fk_values
 from dbsprout.plugins.dispatch import resolve_engine
 from dbsprout.schema.graph import FKGraph, resolve_cycles
-from dbsprout.spec.analyzer import SpecAnalyzer
 from dbsprout.spec.heuristics import map_columns
-from dbsprout.spec.providers.embedded import EmbeddedProvider
 
 
 @dataclass(frozen=True)
@@ -136,6 +134,11 @@ def _select_engines(
     heuristic = resolve_engine("heuristic", seed=seed)
     if engine == "spec":
         if lora_path is not None:
+            from dbsprout.spec.analyzer import SpecAnalyzer  # noqa: PLC0415
+            from dbsprout.spec.providers.embedded import (  # noqa: PLC0415
+                EmbeddedProvider,
+            )
+
             provider = EmbeddedProvider(lora_path=lora_path)
             dataspec = SpecAnalyzer(provider).analyze(schema)
         else:
