@@ -560,14 +560,41 @@ def test_real_mlx_lm_symbol_surface_exists() -> None:
     if platform.system() != "Darwin" or importlib.util.find_spec("mlx_lm") is None:
         pytest.skip("requires real mlx-lm on Apple Silicon (hardware-validation-pending)")
 
-    from mlx_lm.tuner.trainer import TrainingArgs, train  # noqa: PLC0415
+    import mlx.core as mx  # noqa: PLC0415
+    import mlx.optimizers as optim  # noqa: PLC0415
+    from mlx_lm.tuner.datasets import CacheDataset, TextDataset  # noqa: PLC0415
+    from mlx_lm.tuner.trainer import (  # noqa: PLC0415
+        TrainingArgs,
+        TrainingCallback,
+        train,
+    )
     from mlx_lm.tuner.utils import linear_to_lora_layers  # noqa: PLC0415
-    from mlx_lm.utils import load  # noqa: PLC0415
+    from mlx_lm.utils import load, save_config  # noqa: PLC0415
 
+    # Every real symbol the trainer relies on must genuinely resolve.
     assert callable(load)
+    assert callable(save_config)
+    assert isinstance(TextDataset, type)
+    assert isinstance(CacheDataset, type)
     assert callable(linear_to_lora_layers)
-    assert callable(train)
     assert callable(TrainingArgs)
-    # The seam must resolve exactly these real symbols (no fabricated names).
+    assert callable(train)
+    assert isinstance(TrainingCallback, type)
+    assert callable(optim.Adam)
+    assert callable(mx.random.seed)
+    # The seam must resolve EXACTLY these verified-real symbols — exact-set
+    # equality means a stray fabricated key (e.g. ``run_lora_training``) or a
+    # dropped real one fails the pin, so the S-065 class of bug cannot recur.
     syms = mlx_mod._load_mlx_lm_symbols()
-    assert {"load", "linear_to_lora_layers", "TrainingArgs", "train", "make_optimizer"} <= set(syms)
+    assert set(syms) == {
+        "load",
+        "save_config",
+        "TextDataset",
+        "CacheDataset",
+        "linear_to_lora_layers",
+        "TrainingArgs",
+        "train",
+        "TrainingCallback",
+        "make_optimizer",
+        "seed",
+    }
