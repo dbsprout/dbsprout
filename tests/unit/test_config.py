@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from pathlib import Path
 
 import pytest
 from pydantic import ValidationError
@@ -11,14 +11,12 @@ from dbsprout.config.loader import load_config
 from dbsprout.config.models import (
     DBSproutConfig,
     GenerationConfig,
+    LLMConfig,
     PrivacyConfig,
     SchemaConfig,
     TableOverride,
 )
 from dbsprout.train.config import TrainConfig
-
-if TYPE_CHECKING:
-    from pathlib import Path
 
 # ── TOML template matching S-009 init output ─────────────────────────────
 
@@ -281,3 +279,58 @@ class TestPrivacyConfig:
         p.write_text('[privacy]\ntier = "redacted"\n')
         cfg = load_config(p)
         assert cfg.privacy.tier == "redacted"
+
+
+# ── [llm] section (S-067c) ───────────────────────────────────────────────
+
+
+class TestLLMConfig:
+    def test_default_lora_path_is_none(self) -> None:
+        lc = LLMConfig()
+        assert lc.lora_path is None
+
+    def test_lora_path_accepts_path(self, tmp_path: Path) -> None:
+        p = tmp_path / "a.gguf"
+        lc = LLMConfig(lora_path=p)
+        assert lc.lora_path == p
+
+    def test_frozen(self) -> None:
+        lc = LLMConfig()
+        with pytest.raises(ValidationError):
+            lc.lora_path = Path("x")  # type: ignore[misc]
+
+    def test_rejects_unknown_key(self) -> None:
+        with pytest.raises(ValidationError):
+            LLMConfig(provider="ollama")  # type: ignore[call-arg]
+
+    def test_in_dbsprout_config_default(self) -> None:
+        cfg = DBSproutConfig()
+        assert isinstance(cfg.llm, LLMConfig)
+        assert cfg.llm.lora_path is None
+
+
+class TestLLMConfigLoader:
+    def test_llm_section_round_trip(self, tmp_path: Path) -> None:
+        p = tmp_path / "dbsprout.toml"
+        p.write_text('[llm]\nlora_path = "./adapters/x.gguf"\n')
+        cfg = load_config(p)
+        assert cfg.llm.lora_path == Path("./adapters/x.gguf")
+
+    def test_no_llm_section_backward_compatible(self, tmp_path: Path) -> None:
+        p = tmp_path / "dbsprout.toml"
+        p.write_text(VALID_TOML)
+        cfg = load_config(p)
+        assert cfg.llm.lora_path is None
+        assert cfg.llm == LLMConfig()
+
+    def test_llm_unknown_key_rejected(self, tmp_path: Path) -> None:
+        p = tmp_path / "dbsprout.toml"
+        p.write_text("[llm]\nbogus = 1\n")
+        with pytest.raises(ValidationError):
+            load_config(p)
+
+    def test_llm_bad_type_rejected(self, tmp_path: Path) -> None:
+        p = tmp_path / "dbsprout.toml"
+        p.write_text("[llm]\nlora_path = 123\n")
+        with pytest.raises(ValidationError):
+            load_config(p)
