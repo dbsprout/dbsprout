@@ -10,6 +10,7 @@ assert pipeline wiring (stage order, paths, format selection) only.
 from __future__ import annotations
 
 import inspect
+import struct
 import sys
 import types
 from pathlib import Path
@@ -24,7 +25,9 @@ from dbsprout.train import Exporter, ExportResult
 from dbsprout.train import exporter as exporter_mod
 from dbsprout.train.config import LoRAAdapter
 from dbsprout.train.exporter import (
+    _GGUF_MAGIC,
     _QUANT_TYPE,
+    _assert_gguf_magic,
     _detect_adapter_format,
     _load_merge_deps,
     _merge_adapter,
@@ -33,6 +36,12 @@ from dbsprout.train.exporter import (
     _resolve_quantizer,
     _safe_adapter_stem,
 )
+
+
+def _gguf_bytes(version: int = 3, *, extra: bytes = b"") -> bytes:
+    """Return a minimal valid GGUF header prefix (magic + LE uint32 version)."""
+    return _GGUF_MAGIC + struct.pack("<I", version) + extra
+
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -211,6 +220,59 @@ def test_load_verifier_smoke_loads_with_llama(
     llama_cls.assert_called_once_with(model_path=str(gguf), n_ctx=8, verbose=False)
 
 
+# --- S-066b Task 1: GGUF magic/header validation ---------------------------
+
+
+def test_assert_gguf_magic_accepts_valid_header(tmp_path: Path) -> None:
+    gguf = tmp_path / "ok.gguf"
+    # magic + version 3 + a couple of stub counts (tensor/kv) — only the
+    # 8-byte magic+version prefix is validated.
+    gguf.write_bytes(_gguf_bytes(3, extra=b"\x00" * 16))
+    _assert_gguf_magic(gguf)  # must not raise
+
+
+def test_assert_gguf_magic_rejects_wrong_magic(tmp_path: Path) -> None:
+    bad = tmp_path / "bad.gguf"
+    bad.write_bytes(b"PK\x03\x04" + struct.pack("<I", 3))
+    with pytest.raises(RuntimeError, match=r"not a valid GGUF"):
+        _assert_gguf_magic(bad)
+
+
+def test_assert_gguf_magic_rejects_truncated_file(tmp_path: Path) -> None:
+    short = tmp_path / "short.gguf"
+    short.write_bytes(b"GGU")  # fewer than magic+version bytes
+    with pytest.raises(RuntimeError, match=r"not a valid GGUF"):
+        _assert_gguf_magic(short)
+
+
+def test_assert_gguf_magic_rejects_empty_file(tmp_path: Path) -> None:
+    empty = tmp_path / "empty.gguf"
+    empty.write_bytes(b"")
+    with pytest.raises(RuntimeError, match=r"not a valid GGUF"):
+        _assert_gguf_magic(empty)
+
+
+def test_assert_gguf_magic_rejects_unsupported_version(tmp_path: Path) -> None:
+    bad_ver = tmp_path / "v99.gguf"
+    bad_ver.write_bytes(_gguf_bytes(99))
+    with pytest.raises(RuntimeError, match=r"unsupported GGUF version"):
+        _assert_gguf_magic(bad_ver)
+
+
+def test_assert_gguf_magic_rejects_zero_version(tmp_path: Path) -> None:
+    bad_ver = tmp_path / "v0.gguf"
+    bad_ver.write_bytes(_gguf_bytes(0))
+    with pytest.raises(RuntimeError, match=r"unsupported GGUF version"):
+        _assert_gguf_magic(bad_ver)
+
+
+def test_assert_gguf_magic_error_names_path(tmp_path: Path) -> None:
+    bad = tmp_path / "namedme.gguf"
+    bad.write_bytes(b"nope")
+    with pytest.raises(RuntimeError, match=r"namedme\.gguf"):
+        _assert_gguf_magic(bad)
+
+
 # --- shared fixtures --------------------------------------------------------
 
 
@@ -302,7 +364,9 @@ def fake_subprocess(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> mock.Mag
         )
         if out is not None:
             Path(out).parent.mkdir(parents=True, exist_ok=True)
-            Path(out).write_bytes(b"\x00" * 17)
+            # A real conversion writes a GGUF; emit a valid magic+version
+            # header so the always-on _assert_gguf_magic gate passes.
+            Path(out).write_bytes(_gguf_bytes(3, extra=b"\x00" * 9))
         return mock.MagicMock(returncode=0, stderr="")
 
     monkeypatch.setattr(exporter_mod.subprocess, "run", _run)
@@ -378,6 +442,125 @@ def test_quantize_to_gguf_invokes_convert_then_quantize_no_shell(
     assert quant_argv[-2] == str(out)
 
 
+def test_quantize_to_gguf_validates_gguf_magic_on_both_outputs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The f16 convert output AND the final Q4_K_M output must each be passed
+    # through _assert_gguf_magic so a non-GGUF subprocess result is caught.
+    conv = tmp_path / "convert_hf_to_gguf.py"
+    conv.write_text("# converter", encoding="utf-8")
+    quant = tmp_path / "llama-quantize"
+    quant.write_text("#!/bin/sh\n", encoding="utf-8")
+    monkeypatch.setattr("dbsprout.train.exporter._resolve_converter", conv.resolve)
+    monkeypatch.setattr("dbsprout.train.exporter._resolve_quantizer", quant.resolve)
+
+    valid = _GGUF_MAGIC + struct.pack("<I", 3) + b"\x00" * 16
+
+    def _run(argv: list[str], **_kw: object) -> mock.MagicMock:
+        out = next(
+            (a for a in reversed(argv) if isinstance(a, str) and a.endswith(".gguf")),
+            None,
+        )
+        if out is not None:
+            Path(out).parent.mkdir(parents=True, exist_ok=True)
+            Path(out).write_bytes(valid)
+        return mock.MagicMock(returncode=0, stderr="")
+
+    monkeypatch.setattr(exporter_mod.subprocess, "run", _run)
+
+    seen: list[Path] = []
+    real_assert = exporter_mod._assert_gguf_magic
+
+    def _spy(p: Path) -> None:
+        seen.append(p)
+        real_assert(p)
+
+    monkeypatch.setattr(exporter_mod, "_assert_gguf_magic", _spy)
+
+    merged = tmp_path / "merged"
+    merged.mkdir()
+    out = tmp_path / "models" / "x.gguf"
+    _quantize_to_gguf(merged, out)
+    # f16 intermediate + final output both validated.
+    assert len(seen) == 2
+    assert any(p.name.endswith("-f16.gguf") for p in seen)
+    assert out in seen
+
+
+def test_quantize_to_gguf_aborts_when_converter_output_not_gguf(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The converter "succeeds" but writes a non-GGUF file: quantize must NOT
+    # run and a clear error is raised.
+    conv = tmp_path / "convert_hf_to_gguf.py"
+    conv.write_text("x", encoding="utf-8")
+    quant = tmp_path / "llama-quantize"
+    quant.write_text("x", encoding="utf-8")
+    monkeypatch.setattr("dbsprout.train.exporter._resolve_converter", conv.resolve)
+    monkeypatch.setattr("dbsprout.train.exporter._resolve_quantizer", quant.resolve)
+
+    calls: list[str] = []
+
+    def _run(argv: list[str], **_kw: object) -> mock.MagicMock:
+        calls.append(argv[0])
+        out = next(
+            (a for a in reversed(argv) if isinstance(a, str) and a.endswith(".gguf")),
+            None,
+        )
+        if out is not None:
+            Path(out).parent.mkdir(parents=True, exist_ok=True)
+            Path(out).write_bytes(b"NOT-A-GGUF-FILE")  # convert produced junk
+        return mock.MagicMock(returncode=0, stderr="")
+
+    monkeypatch.setattr(exporter_mod.subprocess, "run", _run)
+
+    merged = tmp_path / "merged"
+    merged.mkdir()
+    with pytest.raises(RuntimeError, match=r"not a valid GGUF"):
+        _quantize_to_gguf(merged, tmp_path / "o.gguf")
+    # Only the converter ran; the quantizer was never invoked.
+    assert len(calls) == 1
+
+
+def test_quantize_to_gguf_rejects_missing_merged_dir(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    conv = tmp_path / "convert_hf_to_gguf.py"
+    conv.write_text("x", encoding="utf-8")
+    quant = tmp_path / "llama-quantize"
+    quant.write_text("x", encoding="utf-8")
+    monkeypatch.setattr("dbsprout.train.exporter._resolve_converter", conv.resolve)
+    monkeypatch.setattr("dbsprout.train.exporter._resolve_quantizer", quant.resolve)
+    ran = mock.MagicMock(name="should_not_run")
+    monkeypatch.setattr(exporter_mod.subprocess, "run", ran)
+    with pytest.raises((RuntimeError, ValueError), match=r"merged"):
+        _quantize_to_gguf(tmp_path / "no-such-merged", tmp_path / "o.gguf")
+    ran.assert_not_called()
+
+
+def test_quantize_to_gguf_argv_uses_absolute_paths(
+    tmp_path: Path, fake_subprocess: mock.MagicMock
+) -> None:
+    import os  # noqa: PLC0415
+
+    merged = tmp_path / "merged"
+    merged.mkdir()
+    out = tmp_path / "models" / "custom" / "x.gguf"
+    _quantize_to_gguf(merged, out)
+    convert_call, quant_call = fake_subprocess.call_args_list
+    convert_argv = convert_call.args[0]
+    quant_argv = quant_call.args[0]
+    # Every path-like token interpolated into either argv is absolute, so the
+    # subprocess cannot resolve a relative path nor be option-injected.
+    for token in convert_argv[1:] + quant_argv:
+        if isinstance(token, str) and ("/" in token or token.endswith(".gguf")):
+            assert os.path.isabs(token), f"non-absolute path token in argv: {token}"
+        assert not token.startswith("-") or token in {
+            "--outfile",
+            "--outtype",
+        }, f"unexpected option-like token: {token}"
+
+
 def test_quantize_to_gguf_subprocess_failure_raises_runtime(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -394,8 +577,10 @@ def test_quantize_to_gguf_subprocess_failure_raises_runtime(
         raise subprocess.CalledProcessError(1, argv, stderr="convert exploded")
 
     monkeypatch.setattr(exporter_mod.subprocess, "run", _boom)
+    merged = tmp_path / "merged"
+    merged.mkdir()
     with pytest.raises(RuntimeError, match="convert exploded"):
-        _quantize_to_gguf(tmp_path / "merged", tmp_path / "o.gguf")
+        _quantize_to_gguf(merged, tmp_path / "o.gguf")
 
 
 # --- Task 6: load-verify seam ----------------------------------------------
