@@ -2061,3 +2061,40 @@ class TestDiffEdgeCases:
         assert "+ orders" in output
         assert "enum: orders" in output
         assert "__enums__" not in output
+
+    @patch("dbsprout.migrate.snapshot.SnapshotStore")
+    def test_snapshot_hash_with_file_source(
+        self,
+        mock_store_cls: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        """AC-4: ``--snapshot HASH --file schema.sql`` → pinned hash is the
+        old side, the file parses as the new side."""
+        sql_file = tmp_path / "schema.sql"
+        sql_file.write_text(
+            "CREATE TABLE users (id INTEGER PRIMARY KEY);\n"
+            "CREATE TABLE orders (id INTEGER PRIMARY KEY);"
+        )
+        old = _simple_schema_for_diff()  # users only → drift vs file (orders added)
+        mock_store = MagicMock()
+        mock_store.load_by_hash.return_value = old
+        mock_store_cls.return_value = mock_store
+
+        result = runner.invoke(
+            app,
+            [
+                "diff",
+                "--snapshot",
+                "abc12345",
+                "--file",
+                str(sql_file),
+                "--output-dir",
+                str(tmp_path),
+            ],
+        )
+        assert result.exit_code == 1
+        output = _strip_ansi(result.output)
+        assert "+tables: 1" in output
+        assert "+ orders" in output
+        mock_store.load_by_hash.assert_called_once_with("abc12345")
+        mock_store.load_latest.assert_not_called()
