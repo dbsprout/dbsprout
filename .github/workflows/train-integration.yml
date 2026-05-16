@@ -77,3 +77,30 @@ jobs:
           echo "DBSPROUT_LLAMA_CONVERT=${conv}" >> "${GITHUB_ENV}"
           echo "${quant_dir}" >> "${GITHUB_PATH}"
           echo "LD_LIBRARY_PATH=${quant_dir}:${LD_LIBRARY_PATH:-}" >> "${GITHUB_ENV}"
+
+      - name: Install DBSprout (dev) + pinned converter deps
+        run: |
+          set -euo pipefail
+          uv sync --extra dev
+          # convert_hf_to_gguf.py runs under THIS uv venv (the test calls
+          # _run_tool([sys.executable, converter, ...])), so its pinned
+          # deps must be importable here. Job-scoped only; never written
+          # to uv.lock. Versions pinned to the llama.cpp ${LLAMA_CPP_TAG}
+          # requirements (see docs/ci/llama-cpp-toolchain.md for the bump
+          # procedure if the tag changes).
+          uv pip install \
+            --extra-index-url https://download.pytorch.org/whl/cpu \
+            "torch~=2.6.0" \
+            "transformers==5.5.1" \
+            "numpy~=1.26.4" \
+            "sentencepiece>=0.1.98,<0.3.0" \
+            "gguf>=0.1.0" \
+            "protobuf>=4.21.0,<5.0.0" \
+            "safetensors>=0.4"
+
+      - name: Run GGUF export integration tests (real toolchain)
+        run: |
+          set -euo pipefail
+          uv run pytest -m integration -v --no-cov \
+            tests/unit/test_train/test_exporter.py \
+            tests/integration/test_train/test_exporter_toolchain.py
