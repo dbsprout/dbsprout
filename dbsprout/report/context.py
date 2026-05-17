@@ -11,8 +11,15 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
+# ── S-083 charts + quality-table region ─────────────────────────────
+# (isort keeps this report-builder block alpha-sorted; the S-083
+# additions are ``build_chart_bundle`` + ``build_quality_table``.)
+from dbsprout.report.charts import build_chart_bundle
 from dbsprout.report.erd import build_erd_mermaid
 from dbsprout.report.preview import build_table_previews
+from dbsprout.report.quality_table import build_quality_table
+
+# ── end S-083 region ────────────────────────────────────────────────
 
 if TYPE_CHECKING:
     from dbsprout.schema.models import DatabaseSchema
@@ -109,6 +116,10 @@ def build_report_context(
             "table_stats": [],
             "quality_results": [],
             "generated_at": generated_at,
+            # ── S-083 charts + quality-table region ─────────────────
+            "charts": {"histograms": [], "bars": [], "heatmap": None},
+            "quality_table": [],
+            # ── end S-083 region ────────────────────────────────────
             "erd_mermaid": erd_mermaid,
             "data_preview": data_preview,
         }
@@ -117,6 +128,10 @@ def build_report_context(
         "table_stats": _table_stats(run),
         "quality_results": _quality_results(run),
         "generated_at": generated_at,
+        # ── S-083 charts + quality-table region ─────────────────────
+        "charts": build_chart_bundle(run),
+        "quality_table": build_quality_table(run),
+        # ── end S-083 region ────────────────────────────────────────
         "erd_mermaid": erd_mermaid,
         "data_preview": data_preview,
     }

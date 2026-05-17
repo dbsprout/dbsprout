@@ -13,6 +13,7 @@ from dbsprout.schema.models import (
     ForeignKeySchema,
     TableSchema,
 )
+from dbsprout.state.models import QualityResult
 
 from ._fixtures import make_run
 
@@ -71,9 +72,13 @@ class TestSelfContained:
 
     def test_no_external_resources(self) -> None:
         html = render_report(build_report_context(make_run()))
-        # No external stylesheet/script/asset references in S-081 skeleton.
-        assert not re.search(r'href\s*=\s*["\']https?://', html)
-        assert not re.search(r'src\s*=\s*["\']https?://', html)
+        # S-083: Plotly.js is loaded from the single canonical CDN
+        # (cdn.plot.ly) per S-081/S-083 Technical Notes; an inline
+        # bundle (~3.5 MB) would break the < 1 MB cap. Any *other*
+        # external host is still forbidden.
+        externals = re.findall(r'(?:href|src)\s*=\s*["\'](https?://[^"\']+)', html)
+        for url in externals:
+            assert "cdn.plot.ly/" in url, f"unexpected external resource: {url}"
 
     def test_theme_toggle_control_present(self) -> None:
         html = render_report(build_report_context(make_run()))
@@ -104,6 +109,45 @@ class TestSections:
         assert "no runs" in html.lower() or "no generation" in html.lower()
 
 
+class TestQualityTableRender:
+    def test_quality_table_status_classes(self) -> None:
+        html = render_report(build_report_context(make_run()))
+        assert "fk_valid" in html
+        # New classified status-* CSS classes from the S-083 partial.
+        assert "status-pass" in html
+        assert 'id="quality"' in html
+
+    def test_quality_table_warn_class_for_low_fidelity(self) -> None:
+        run = make_run().model_copy(
+            update={
+                "quality_results": [
+                    QualityResult(
+                        metric_type="fidelity",
+                        metric_name="ks_complement",
+                        score=0.5,
+                        passed=True,
+                    )
+                ]
+            }
+        )
+        html = render_report(build_report_context(run))
+        assert "status-warn" in html
+
+
+class TestChartsRender:
+    def test_charts_embedded_json_and_plotly(self) -> None:
+        html = render_report(build_report_context(make_run()))
+        assert 'id="dbsprout-charts"' in html
+        assert 'type="application/json"' in html
+        # Plotly loaded via the single canonical CDN host.
+        assert "cdn.plot.ly" in html
+        assert 'id="charts"' in html
+
+    def test_charts_empty_state_no_crash(self) -> None:
+        html = render_report(build_report_context(None))
+        assert html.lstrip().lower().startswith("<!doctype html>")
+
+
 class TestErdBlock:
     def test_placeholder_when_no_schema(self) -> None:
         html = render_report(build_report_context(make_run()))
@@ -123,16 +167,21 @@ class TestErdBlock:
     def test_erd_block_no_external_resources(self) -> None:
         ctx = build_report_context(make_run(), schema=_demo_schema())
         html = render_report(ctx)
-        assert not re.search(r'href\s*=\s*["\']https?://', html)
-        assert not re.search(r'src\s*=\s*["\']https?://', html)
+        # The ERD partial embeds Mermaid offline (no external URL). The only
+        # permitted external resource in the whole report is the Plotly CDN
+        # (cdn.plot.ly) added by S-083; assert no OTHER external https.
+        externals = re.findall(r'(?:href|src)\s*=\s*["\'](https?://[^"\']+)', html)
+        for url in externals:
+            assert "cdn.plot.ly/" in url, f"unexpected external resource: {url}"
 
     def test_erd_block_keeps_other_sections(self) -> None:
         ctx = build_report_context(make_run(), schema=_demo_schema())
         html = render_report(ctx)
-        # S-083 placeholder + S-084 data-preview section untouched by the
-        # ERD change (S-084 now renders the data-preview via its partial,
-        # so assert the stable section marker rather than the old literal).
-        assert "S-083" in html
+        # S-083 charts section + S-084 data-preview section untouched by
+        # the ERD change. Both S-083 and S-084 now render real partials
+        # (not the old placeholder literals), so assert the stable section
+        # markers rather than the removed "S-083"/"S-084" literals.
+        assert 'id="charts"' in html
         assert 'data-section="data_preview"' in html
         assert "heuristic" in html
         assert "fk_valid" in html

@@ -97,6 +97,20 @@ class TestBuildReportContext:
         assert ctx["quality_results"] == []
 
 
+class TestChartsContext:
+    def test_context_has_charts_and_quality_table(self) -> None:
+        ctx = build_report_context(make_run())
+        assert "charts" in ctx
+        assert set(ctx["charts"]) == {"histograms", "bars", "heatmap"}
+        assert "quality_table" in ctx
+        assert ctx["quality_table"]  # classified rows present
+
+    def test_none_run_has_empty_charts(self) -> None:
+        ctx = build_report_context(None)
+        assert ctx["charts"] == {"histograms": [], "bars": [], "heatmap": None}
+        assert ctx["quality_table"] == []
+
+
 class TestErdContext:
     def test_erd_mermaid_none_without_schema(self) -> None:
         ctx = build_report_context(make_run())
