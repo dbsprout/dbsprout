@@ -75,10 +75,7 @@
 
     <section id="erd">
       {% block erd %}
-      <h2>Schema ERD</h2>
-      <div class="placeholder" data-placeholder="erd">
-        Entity-relationship diagram will appear here (S-082).
-      </div>
+      {% include "partials/_erd.html.j2" %}
       {% endblock erd %}
     </section>
 

@@ -3,8 +3,49 @@
 from __future__ import annotations
 
 from dbsprout.report.context import build_report_context
+from dbsprout.schema.models import (
+    ColumnSchema,
+    ColumnType,
+    DatabaseSchema,
+    ForeignKeySchema,
+    TableSchema,
+)
 
 from ._fixtures import make_run
+
+
+def _demo_schema() -> DatabaseSchema:
+    users = TableSchema(
+        name="users",
+        columns=[
+            ColumnSchema(
+                name="id",
+                data_type=ColumnType.INTEGER,
+                primary_key=True,
+                nullable=False,
+            )
+        ],
+        primary_key=["id"],
+    )
+    orders = TableSchema(
+        name="orders",
+        columns=[
+            ColumnSchema(
+                name="id",
+                data_type=ColumnType.INTEGER,
+                primary_key=True,
+                nullable=False,
+            ),
+            ColumnSchema(
+                name="user_id",
+                data_type=ColumnType.INTEGER,
+                nullable=False,
+            ),
+        ],
+        primary_key=["id"],
+        foreign_keys=[ForeignKeySchema(columns=["user_id"], ref_table="users", ref_columns=["id"])],
+    )
+    return DatabaseSchema(tables=[users, orders])
 
 
 class TestBuildReportContext:
@@ -54,3 +95,26 @@ class TestBuildReportContext:
         assert ctx["summary"]["engine"] == "heuristic"
         assert ctx["table_stats"] == []
         assert ctx["quality_results"] == []
+
+
+class TestErdContext:
+    def test_erd_mermaid_none_without_schema(self) -> None:
+        ctx = build_report_context(make_run())
+        assert ctx["erd_mermaid"] is None
+
+    def test_erd_mermaid_none_for_none_run_without_schema(self) -> None:
+        ctx = build_report_context(None)
+        assert ctx["erd_mermaid"] is None
+
+    def test_erd_mermaid_built_from_schema(self) -> None:
+        ctx = build_report_context(make_run(), schema=_demo_schema())
+        erd = ctx["erd_mermaid"]
+        assert erd is not None
+        assert erd.startswith("erDiagram")
+        assert "users {" in erd
+        assert "orders {" in erd
+
+    def test_erd_mermaid_built_even_when_run_none(self) -> None:
+        ctx = build_report_context(None, schema=_demo_schema())
+        assert ctx["erd_mermaid"] is not None
+        assert "users" in ctx["erd_mermaid"]

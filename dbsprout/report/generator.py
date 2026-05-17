@@ -14,6 +14,7 @@ from dbsprout.report.context import build_report_context
 from dbsprout.report.env import render_report
 
 if TYPE_CHECKING:
+    from dbsprout.schema.models import DatabaseSchema
     from dbsprout.state import StateDB
 
 #: Default location for the generated report.
@@ -31,16 +32,22 @@ class ReportGenerator:
         """Resolved destination path for the rendered report."""
         return self._output_path
 
-    def generate(self, state_db: StateDB) -> Path:
+    def generate(
+        self,
+        state_db: StateDB,
+        schema: DatabaseSchema | None = None,
+    ) -> Path:
         """Render the newest run from ``state_db`` to an HTML file.
 
         Returns the path to the written report. The destination directory
         is created if missing. When the state DB has no runs, a graceful
-        empty-state report is still produced.
+        empty-state report is still produced. When ``schema`` is given, a
+        Mermaid ERD (S-082) is embedded; otherwise the ERD placeholder is
+        kept and the report stays unchanged.
         """
         runs = state_db.get_runs()
         newest = runs[0] if runs else None
-        html = render_report(build_report_context(newest))
+        html = render_report(build_report_context(newest, schema=schema))
 
         out = self._output_path
         out.parent.mkdir(parents=True, exist_ok=True)

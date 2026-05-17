@@ -11,6 +11,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
+from dbsprout.report.erd import build_erd_mermaid
 from dbsprout.report.preview import build_table_previews
 
 if TYPE_CHECKING:
@@ -81,7 +82,9 @@ def build_report_context(
     """Shape a :class:`RunRecord` (or ``None``) into the template context.
 
     ``run`` is ``None`` when the state DB has no recorded runs; the template
-    renders a graceful empty state in that case.
+    renders a graceful empty state in that case. ``schema`` is optional; when
+    provided, a Mermaid ``erDiagram`` source string is added under
+    ``erd_mermaid`` (S-082) for the ERD section to embed.
 
     ``schema`` + ``tables_data`` are the optional S-084 data-preview inputs
     (generated rows are not persisted in the state DB, so they are supplied
@@ -89,6 +92,11 @@ def build_report_context(
     is empty and the section renders its placeholder.
     """
     generated_at = datetime.now(timezone.utc).isoformat()
+    # ─── S-082 ERD (parallel-wave region; parent reconciles) ───────────
+    erd_mermaid: str | None = None
+    if schema is not None:
+        erd_mermaid = build_erd_mermaid(schema)
+    # ─── end S-082 region ──────────────────────────────────────────────
     # --- S-084 data preview (begin) ---
     if schema is not None and tables_data is not None:
         data_preview = build_table_previews(schema, tables_data)
@@ -101,6 +109,7 @@ def build_report_context(
             "table_stats": [],
             "quality_results": [],
             "generated_at": generated_at,
+            "erd_mermaid": erd_mermaid,
             "data_preview": data_preview,
         }
     return {
@@ -108,5 +117,6 @@ def build_report_context(
         "table_stats": _table_stats(run),
         "quality_results": _quality_results(run),
         "generated_at": generated_at,
+        "erd_mermaid": erd_mermaid,
         "data_preview": data_preview,
     }
