@@ -15,13 +15,14 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from dbsprout.schema.models import DatabaseSchema
-    from dbsprout.spec.providers.base import SpecProvider
+    from dbsprout.spec.providers.base import SpecProvider, SpecUsage
 
 from dbsprout.privacy.audit import AuditEvent, AuditLog
 from dbsprout.privacy.enforcer import PrivacyEnforcer, PrivacyTier
 from dbsprout.privacy.redactor import de_redact_spec, redact_schema
 from dbsprout.spec.cache import SpecCache
 from dbsprout.spec.models import DataSpec, GeneratorConfig, TableSpec
+from dbsprout.spec.providers.base import read_usage
 
 logger = logging.getLogger(__name__)
 
@@ -46,6 +47,7 @@ class SpecAnalyzer:
         self._privacy_tier = privacy_tier
         self._enforcer = PrivacyEnforcer()
         self._audit_log = audit_log
+        self._last_usage: SpecUsage | None = None
 
     def analyze(self, schema: DatabaseSchema) -> DataSpec:
         """Analyze a schema and produce a DataSpec.
@@ -56,6 +58,8 @@ class SpecAnalyzer:
         4. On total failure: heuristic fallback
         5. Cache and return
         """
+        self._last_usage = None
+
         # Privacy enforcement — blocks cloud providers under local tier
         provider_locality: str = getattr(self._provider, "provider_locality", "cloud")
         self._enforcer.validate_provider(
@@ -103,6 +107,15 @@ class SpecAnalyzer:
         self._cache.put(schema_hash, spec)
         return spec
 
+    def get_last_usage(self) -> SpecUsage | None:
+        """Token/cost accounting for the most recent real provider call.
+
+        Returns ``None`` when the spec was served from the analyzer cache,
+        when the provider does not report usage (legacy/heuristic), or
+        before any analysis has run (S-080a).
+        """
+        return self._last_usage
+
     def _call_with_retry(self, schema: DatabaseSchema) -> DataSpec:
         """Call provider with retry logic, falling back to heuristics."""
         last_error: Exception | None = None
@@ -110,7 +123,10 @@ class SpecAnalyzer:
         for attempt in range(1, _MAX_RETRIES + 1):
             try:
                 logger.info("Spec generation attempt %d/%d", attempt, _MAX_RETRIES)
-                return self._provider.generate_spec(schema)
+                spec = self._provider.generate_spec(schema)
+                # S-080a: capture real token/cost the provider just measured.
+                self._last_usage = read_usage(self._provider)
+                return spec
             except (ValueError, RuntimeError, OSError, TypeError) as exc:
                 logger.warning(
                     "Spec generation attempt %d failed: %s",

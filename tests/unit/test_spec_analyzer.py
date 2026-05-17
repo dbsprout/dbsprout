@@ -392,3 +392,61 @@ class TestAuditIntegration:
             analyzer.analyze(_simple_schema())
         finally:
             analyzer.close()
+
+
+class TestAnalyzerUsagePassthrough:
+    """S-080a: SpecAnalyzer surfaces the provider's last LLM usage."""
+
+    def test_get_last_usage_reads_from_provider(self, tmp_path: Path) -> None:
+        from dbsprout.spec.providers.base import SpecUsage  # noqa: PLC0415
+
+        usage = SpecUsage(tokens_sent=11, tokens_received=22, cost_usd=0.5)
+        mock_provider = MagicMock()
+        mock_provider.provider_locality = "local"
+        mock_provider.generate_spec.return_value = _mock_dataspec()
+        mock_provider.get_last_usage.return_value = usage
+
+        analyzer = SpecAnalyzer(provider=mock_provider, cache_dir=tmp_path / "c")
+        try:
+            analyzer.analyze(_simple_schema())
+            assert analyzer.get_last_usage() == usage
+        finally:
+            analyzer.close()
+
+    def test_get_last_usage_none_for_legacy_provider(self, tmp_path: Path) -> None:
+        """A provider without get_last_usage must not break the analyzer."""
+
+        class LegacyProvider:
+            provider_locality = "local"
+
+            def generate_spec(self, schema: object) -> object:
+                return _mock_dataspec()
+
+        analyzer = SpecAnalyzer(provider=LegacyProvider(), cache_dir=tmp_path / "c")
+        try:
+            analyzer.analyze(_simple_schema())
+            assert analyzer.get_last_usage() is None
+        finally:
+            analyzer.close()
+
+    def test_get_last_usage_none_on_analyzer_cache_hit(self, tmp_path: Path) -> None:
+        """Analyzer cache hit performs no provider call → no usage (honest)."""
+        from dbsprout.spec.cache import SpecCache  # noqa: PLC0415
+        from dbsprout.spec.providers.base import SpecUsage  # noqa: PLC0415
+
+        schema = _simple_schema()
+        cache = SpecCache(cache_dir=tmp_path / "c")
+        cache.put(schema.schema_hash(), _mock_dataspec(schema.schema_hash()))
+        cache.close()
+
+        mock_provider = MagicMock()
+        mock_provider.provider_locality = "local"
+        mock_provider.get_last_usage.return_value = SpecUsage(tokens_sent=9)
+
+        analyzer = SpecAnalyzer(provider=mock_provider, cache_dir=tmp_path / "c")
+        try:
+            analyzer.analyze(schema)
+            mock_provider.generate_spec.assert_not_called()
+            assert analyzer.get_last_usage() is None
+        finally:
+            analyzer.close()

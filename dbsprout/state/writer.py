@@ -11,10 +11,12 @@ swallowed with a warning so a state-write problem can never break or slow
 generation completes (outside the timed loop), so it adds no generation
 overhead.
 
-LLM-call capture is intentionally conservative: token/cost accounting is
-not exposed by the embedded llama-cpp provider, so we record only the
-fields that are actually knowable (provider/model/cached/privacy tier) and
-leave token/cost at their model defaults rather than fabricate values.
+LLM-call capture records provider/model/cached/privacy tier. Real token
+counts and cost are threaded in via the optional ``usage`` argument to
+:func:`llm_call_for` (S-080a) when a provider surfaces them
+(:class:`~dbsprout.spec.providers.base.SpecUsage`); when no real source
+exists they stay at their honest ``0`` defaults rather than being
+fabricated (the S-080 contract).
 """
 
 from __future__ import annotations
@@ -31,6 +33,7 @@ if TYPE_CHECKING:
 
     from dbsprout.generate.orchestrator import GenerateResult
     from dbsprout.quality.integrity import IntegrityReport
+    from dbsprout.spec.providers.base import SpecUsage
 
 logger = logging.getLogger(__name__)
 
@@ -81,6 +84,7 @@ def llm_call_for(
     engine: str,
     lora_path: Path | None,
     cached: bool,
+    usage: SpecUsage | None = None,
 ) -> LLMCall | None:
     """Build an :class:`LLMCall` for the real-LLM spec path, else ``None``.
 
@@ -90,18 +94,26 @@ def llm_call_for(
     LoRA the spec engine uses the deterministic heuristic fallback — no
     LLM call to record.
 
-    Token/cost are left at their :class:`LLMCall` defaults (``0``): the
-    embedded llama-cpp provider does not surface token accounting, and
-    fabricating counts would be dishonest telemetry.
+    When a :class:`~dbsprout.spec.providers.base.SpecUsage` is supplied
+    (S-080a) its real token counts and cost are threaded into the
+    recorded call. When ``usage`` is ``None`` the counts stay at their
+    honest :class:`LLMCall` defaults (``0``) rather than being
+    fabricated — preserving the S-080 contract.
     """
     if engine != "spec" or lora_path is None:
         return None
+    tokens_sent = usage.tokens_sent if usage is not None else 0
+    tokens_received = usage.tokens_received if usage is not None else 0
+    cost_usd = usage.cost_usd if usage is not None else 0.0
     return LLMCall(
         timestamp=datetime.now(tz=timezone.utc),
         provider="embedded",
         model=lora_path.name,
         privacy_tier="local",
         cached=cached,
+        tokens_sent=tokens_sent,
+        tokens_received=tokens_received,
+        cost_usd=cost_usd,
     )
 
 
