@@ -9,6 +9,7 @@ from dbsprout.report.charts import (
     build_correlation_heatmap,
     build_numeric_histograms,
 )
+from dbsprout.report.quality_table import build_quality_table
 from dbsprout.state.models import QualityResult
 
 from ._fixtures import make_run
@@ -88,3 +89,40 @@ class TestCorrelationHeatmap:
 
     def test_none_when_no_fidelity_correlation(self) -> None:
         assert build_correlation_heatmap(make_run()) is None
+
+
+class TestQualityTable:
+    def test_pass_fail_warn_classification(self) -> None:
+        run = make_run().model_copy(
+            update={
+                "quality_results": [
+                    QualityResult(
+                        metric_type="integrity",
+                        metric_name="fk_valid",
+                        score=1.0,
+                        passed=True,
+                    ),
+                    QualityResult(
+                        metric_type="integrity",
+                        metric_name="pk_unique",
+                        score=0.0,
+                        passed=False,
+                    ),
+                    QualityResult(
+                        metric_type="fidelity",
+                        metric_name="ks_complement",
+                        score=0.6,
+                        passed=True,
+                    ),
+                ]
+            }
+        )
+        rows = build_quality_table(run)
+        by_name = {r["metric_name"]: r for r in rows}
+        assert by_name["fk_valid"]["status"] == "pass"
+        assert by_name["pk_unique"]["status"] == "fail"
+        assert by_name["ks_complement"]["status"] == "warn"
+
+    def test_empty_when_no_quality_results(self) -> None:
+        run = make_run().model_copy(update={"quality_results": []})
+        assert build_quality_table(run) == []
