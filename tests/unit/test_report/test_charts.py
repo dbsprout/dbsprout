@@ -64,6 +64,37 @@ class TestCategoricalBars:
     def test_ignores_results_without_value_counts(self) -> None:
         assert build_categorical_bars(make_run()) == []
 
+    def test_skips_malformed_details_json(self) -> None:
+        run = make_run().model_copy(
+            update={
+                "quality_results": [
+                    QualityResult(
+                        metric_type="distribution",
+                        metric_name="bad",
+                        score=1.0,
+                        passed=True,
+                        details_json="{not valid json",
+                    )
+                ]
+            }
+        )
+        assert build_categorical_bars(run) == []
+
+    def test_caps_number_of_bar_charts_at_top_n(self) -> None:
+        many = [
+            QualityResult(
+                metric_type="distribution",
+                metric_name=f"col{i}",
+                score=1.0,
+                passed=True,
+                details_json='{"value_counts": {"a": 1, "b": 2}}',
+            )
+            for i in range(15)
+        ]
+        run = make_run().model_copy(update={"quality_results": many})
+        specs = build_categorical_bars(run)
+        assert len(specs) == 10
+
 
 class TestCorrelationHeatmap:
     def test_heatmap_from_correlation_payload(self) -> None:
@@ -90,6 +121,54 @@ class TestCorrelationHeatmap:
 
     def test_none_when_no_fidelity_correlation(self) -> None:
         assert build_correlation_heatmap(make_run()) is None
+
+    def test_skips_malformed_fidelity_json(self) -> None:
+        run = make_run().model_copy(
+            update={
+                "quality_results": [
+                    QualityResult(
+                        metric_type="fidelity",
+                        metric_name="correlation",
+                        score=0.9,
+                        passed=True,
+                        details_json="}{ broken",
+                    )
+                ]
+            }
+        )
+        assert build_correlation_heatmap(run) is None
+
+    def test_none_when_correlation_not_a_dict(self) -> None:
+        run = make_run().model_copy(
+            update={
+                "quality_results": [
+                    QualityResult(
+                        metric_type="fidelity",
+                        metric_name="correlation",
+                        score=0.9,
+                        passed=True,
+                        details_json='{"correlation": "oops"}',
+                    )
+                ]
+            }
+        )
+        assert build_correlation_heatmap(run) is None
+
+    def test_none_when_labels_or_matrix_missing(self) -> None:
+        run = make_run().model_copy(
+            update={
+                "quality_results": [
+                    QualityResult(
+                        metric_type="fidelity",
+                        metric_name="correlation",
+                        score=0.9,
+                        passed=True,
+                        details_json='{"correlation": {"labels": "no", "matrix": []}}',
+                    )
+                ]
+            }
+        )
+        assert build_correlation_heatmap(run) is None
 
 
 class TestQualityTable:

@@ -95,7 +95,13 @@ def test_real_statedb_to_valid_html(tmp_path: Path) -> None:
 
     # Self-contained + size budget.
     assert out.stat().st_size < 1_000_000
-    assert not re.search(r'(href|src)\s*=\s*["\']https?://', html)
+    # S-083: Plotly.js loads from the single canonical CDN
+    # (cdn.plot.ly) per S-081/S-083 Technical Notes; an inline bundle
+    # (~3.5 MB) would break the < 1 MB cap. Any other external host is
+    # still forbidden.
+    externals = re.findall(r'(?:href|src)\s*=\s*["\'](https?://[^"\']+)', html)
+    for url in externals:
+        assert "cdn.plot.ly/" in url, f"unexpected external resource: {url}"
 
 
 @pytest.mark.integration

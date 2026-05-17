@@ -112,4 +112,16 @@
     padding: 4rem 1rem;
     color: var(--fg-muted);
   }
+  .charts-grid { display: grid; gap: 1.25rem; margin-top: 1rem; }
+  .chart {
+    min-height: 320px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 0.5rem;
+    background: var(--bg-elev);
+  }
+  .badge.warn, .status-warn {
+    background: color-mix(in srgb, var(--warn) 18%, transparent);
+    color: var(--warn);
+  }
 </style>
