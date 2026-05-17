@@ -11,7 +11,10 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
+from dbsprout.report.erd import build_erd_mermaid
+
 if TYPE_CHECKING:
+    from dbsprout.schema.models import DatabaseSchema
     from dbsprout.state.models import RunRecord
 
 
@@ -69,23 +72,35 @@ def _quality_results(run: RunRecord) -> list[dict[str, Any]]:
     ]
 
 
-def build_report_context(run: RunRecord | None) -> dict[str, Any]:
+def build_report_context(
+    run: RunRecord | None,
+    schema: DatabaseSchema | None = None,
+) -> dict[str, Any]:
     """Shape a :class:`RunRecord` (or ``None``) into the template context.
 
     ``run`` is ``None`` when the state DB has no recorded runs; the template
-    renders a graceful empty state in that case.
+    renders a graceful empty state in that case. ``schema`` is optional; when
+    provided, a Mermaid ``erDiagram`` source string is added under
+    ``erd_mermaid`` (S-082) for the ERD section to embed.
     """
     generated_at = datetime.now(timezone.utc).isoformat()
+    # ─── S-082 ERD (parallel-wave region; parent reconciles) ───────────
+    erd_mermaid: str | None = None
+    if schema is not None:
+        erd_mermaid = build_erd_mermaid(schema)
+    # ─── end S-082 region ──────────────────────────────────────────────
     if run is None:
         return {
             "summary": None,
             "table_stats": [],
             "quality_results": [],
             "generated_at": generated_at,
+            "erd_mermaid": erd_mermaid,
         }
     return {
         "summary": _summary(run),
         "table_stats": _table_stats(run),
         "quality_results": _quality_results(run),
         "generated_at": generated_at,
+        "erd_mermaid": erd_mermaid,
     }
