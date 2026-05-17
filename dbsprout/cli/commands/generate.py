@@ -79,6 +79,8 @@ def generate_command(  # noqa: PLR0913
     incremental: bool = False,
     snapshot: str | None = None,
     lora_path: Path | None = None,
+    report: bool = False,
+    report_output: Path | None = None,
 ) -> None:
     """Generate seed data from a schema snapshot."""
     # S-067b: --lora is only meaningful for the LLM-backed spec engine and the
@@ -195,16 +197,20 @@ def generate_command(  # noqa: PLR0913
     # Validate integrity
     from dbsprout.quality.integrity import validate_integrity  # noqa: PLC0415
 
-    report = validate_integrity(result.tables_data, schema)
-    _print_validation(report)
+    integrity = validate_integrity(result.tables_data, schema)
+    _print_validation(integrity)
 
     # Record run telemetry (best-effort; never fails generation) — S-080
-    _record_state(result, report, engine=engine, seed=seed, lora_path=resolved_lora)
+    _record_state(result, integrity, engine=engine, seed=seed, lora_path=resolved_lora)
+
+    # Optional HTML report (S-085): best-effort, never fails generation.
+    if report:
+        _emit_report(report_output, config)
 
     # Summary
     _print_summary(result, output_dir, output_format)
 
-    if not report.passed:
+    if not integrity.passed:
         console.print("[red]Integrity validation FAILED.[/red]")
         raise typer.Exit(code=1)
 
@@ -493,6 +499,27 @@ def _record_state(
         completed_at=completed_at,
         llm_call=llm_call_for(engine=engine, lora_path=lora_path, cached=False),
     )
+
+
+def _emit_report(report_output: Path | None, config: DBSproutConfig) -> None:
+    """Render the just-recorded run to an HTML report (S-085).
+
+    Best-effort: ``--report`` is a convenience layer over the standalone
+    ``dbsprout report`` command. A report failure logs a warning and never
+    changes the generation exit code (mirrors the S-080 state-write
+    contract). The output path comes from ``--report-output`` if given,
+    else ``[report].output`` from config, else the report module default.
+    """
+    try:
+        from dbsprout.report.generator import ReportGenerator  # noqa: PLC0415
+        from dbsprout.state import StateDB  # noqa: PLC0415
+        from dbsprout.state.writer import _DEFAULT_DB_PATH  # noqa: PLC0415
+
+        out_path = report_output if report_output is not None else Path(config.report.output)
+        written = ReportGenerator(out_path).generate(StateDB(_DEFAULT_DB_PATH))
+        console.print(f"[green]Report saved to[/green] {written}")
+    except Exception as exc:
+        console.print(f"[yellow]Warning: could not generate HTML report:[/yellow] {exc}")
 
 
 def _print_summary(
