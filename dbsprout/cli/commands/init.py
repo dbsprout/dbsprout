@@ -185,6 +185,11 @@ default_rows = 100
 seed = 42
 output_format = "sql"
 output_dir = "./seeds"
+
+# HTML report destination for `dbsprout report` and
+# `dbsprout generate --report` (uncomment to customize):
+# [report]
+# output = "./seeds/report.html"
 """
 
     if table_names:

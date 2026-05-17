@@ -22,6 +22,11 @@ runner = CliRunner()
 
 _ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
 
+# CLI/Rich CI flake guard: no TTY in CI narrow-wraps/ANSI-fragments option
+# tokens. Forcing a wide, colourless terminal keeps option-string asserts
+# stable across local (TTY) and CI (no-TTY) runs.
+_WIDE_ENV = {"COLUMNS": "200", "NO_COLOR": "1"}
+
 # Repo root = three parents up from this file (tests/unit/<file>).
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 
@@ -289,6 +294,72 @@ class TestGenerateProducesOutput:
         )
 
         assert result.exit_code != 0
+
+
+class TestGenerateReportFlag:
+    """``generate --report`` produces seed data AND an HTML report (S-085)."""
+
+    def test_report_flag_in_help(self) -> None:
+        result = runner.invoke(app, ["generate", "--help"], env=_WIDE_ENV)
+        assert result.exit_code == 0
+        assert "--report" in _strip_ansi(result.output)
+
+    def test_report_produces_html_and_data(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.chdir(tmp_path)
+        project_dir = _write_schema(tmp_path)
+        seeds_dir = project_dir / "seeds"
+
+        result = runner.invoke(
+            app,
+            [
+                "generate",
+                "--schema-snapshot",
+                str(project_dir / ".dbsprout" / "schema.json"),
+                "--output-dir",
+                str(seeds_dir),
+                "--output-format",
+                "sql",
+                "--rows",
+                "3",
+                "--report",
+            ],
+            env=_WIDE_ENV,
+        )
+
+        assert result.exit_code == 0, result.output
+        # Seed data was produced.
+        assert list(seeds_dir.glob("*.sql"))
+        # And the HTML report at the default location.
+        report = seeds_dir / "report.html"
+        assert report.exists()
+        out = _strip_ansi(result.output)
+        assert "Report saved to" in out
+
+    def test_no_report_flag_skips_report(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.chdir(tmp_path)
+        project_dir = _write_schema(tmp_path)
+        seeds_dir = project_dir / "seeds"
+
+        result = runner.invoke(
+            app,
+            [
+                "generate",
+                "--schema-snapshot",
+                str(project_dir / ".dbsprout" / "schema.json"),
+                "--output-dir",
+                str(seeds_dir),
+                "--rows",
+                "3",
+            ],
+            env=_WIDE_ENV,
+        )
+
+        assert result.exit_code == 0, result.output
+        assert not (seeds_dir / "report.html").exists()
 
 
 class TestGenerateDirectFormat:
