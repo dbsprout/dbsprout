@@ -6,6 +6,7 @@ import re
 
 from dbsprout.report.context import build_report_context
 from dbsprout.report.env import build_environment, render_report
+from dbsprout.state.models import QualityResult
 
 from ._fixtures import make_run
 
@@ -61,3 +62,28 @@ class TestSections:
         html = render_report(build_report_context(None))
         assert html.lstrip().lower().startswith("<!doctype html>")
         assert "no runs" in html.lower() or "no generation" in html.lower()
+
+
+class TestQualityTableRender:
+    def test_quality_table_status_classes(self) -> None:
+        html = render_report(build_report_context(make_run()))
+        assert "fk_valid" in html
+        # New classified status-* CSS classes from the S-083 partial.
+        assert "status-pass" in html
+        assert 'id="quality"' in html
+
+    def test_quality_table_warn_class_for_low_fidelity(self) -> None:
+        run = make_run().model_copy(
+            update={
+                "quality_results": [
+                    QualityResult(
+                        metric_type="fidelity",
+                        metric_name="ks_complement",
+                        score=0.5,
+                        passed=True,
+                    )
+                ]
+            }
+        )
+        html = render_report(build_report_context(run))
+        assert "status-warn" in html

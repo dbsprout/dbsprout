@@ -114,35 +114,7 @@
 
     <section id="quality">
       {% block quality %}
-      <h2>Quality Metrics</h2>
-      <table>
-        <thead>
-          <tr>
-            <th>Type</th>
-            <th>Metric</th>
-            <th>Score</th>
-            <th>Status</th>
-          </tr>
-        </thead>
-        <tbody>
-          {% for q in quality_results %}
-          <tr>
-            <td>{{ q.metric_type }}</td>
-            <td>{{ q.metric_name }}</td>
-            <td>{{ q.score }}</td>
-            <td>
-              {% if q.passed %}
-              <span class="badge pass">PASS</span>
-              {% else %}
-              <span class="badge fail">FAIL</span>
-              {% endif %}
-            </td>
-          </tr>
-          {% else %}
-          <tr><td colspan="4" class="muted">No quality metrics recorded.</td></tr>
-          {% endfor %}
-        </tbody>
-      </table>
+      {% include "partials/_quality_table.html.j2" %}
       {% endblock quality %}
     </section>
 
