@@ -258,7 +258,11 @@ testpaths = ["tests"]
 # Default run only collects tests/ (testpaths); benchmarks/ holds bench_*.py
 # files collected only via an explicit `pytest benchmarks/` invocation.
 python_files = ["test_*.py", "bench_*.py"]
-addopts = "--strict-markers -ra"
+# `-m "not slow"`: slow tests (e.g. the multi-minute CPU-bound large-DDL
+# parser hang-guard, S-101/DBS-125) are deselected by default and from
+# the pre-push hook so the suite stays fast + deterministic under
+# parallel CI load. Run them explicitly with `uv run pytest -m slow`.
+addopts = "--strict-markers -ra -m 'not slow'"
 markers = [
     "slow: marks tests as slow",
     "integration: marks tests requiring external services",
