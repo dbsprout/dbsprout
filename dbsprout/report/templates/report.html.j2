@@ -1,0 +1,175 @@
+{#-
+  DBSprout self-contained HTML report (S-081).
+
+  Extension points for the parallel next wave — override these named blocks
+  WITHOUT restructuring this template:
+    * block erd          → S-082 (Mermaid.js ERD)
+    * block charts       → S-083 (Plotly.js quality/distribution charts)
+    * block data_preview → S-084 (data preview tables)
+  Each block ships a labelled placeholder in S-081.
+-#}
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="generator" content="DBSprout">
+  <title>DBSprout — Generation Report</title>
+  {% include "partials/styles.css.j2" %}
+</head>
+<body>
+  <div class="wrap">
+    <header class="report-head">
+      <div>
+        <h1>DBSprout Generation Report</h1>
+        <p class="muted">Generated {{ generated_at }}</p>
+      </div>
+      <button id="theme-toggle" class="theme-toggle" type="button"
+              aria-label="Toggle color theme">☾ Dark</button>
+    </header>
+
+    {% if summary is none %}
+      {% block empty_state %}
+      <div class="empty-state">
+        <h2>No runs recorded</h2>
+        <p class="muted">
+          No generation runs have been recorded yet. Run
+          <code>dbsprout generate</code> and try again.
+        </p>
+      </div>
+      {% endblock empty_state %}
+    {% else %}
+
+    <section id="summary">
+      {% block summary %}
+      <h2>Run Summary</h2>
+      <div class="cards">
+        <div class="card">
+          <div class="label">Engine</div>
+          <div class="value">{{ summary.engine }}</div>
+        </div>
+        <div class="card">
+          <div class="label">Total Rows</div>
+          <div class="value">{{ summary.total_rows }}</div>
+        </div>
+        <div class="card">
+          <div class="label">Tables</div>
+          <div class="value">{{ summary.total_tables }}</div>
+        </div>
+        <div class="card">
+          <div class="label">Duration</div>
+          <div class="value">{{ summary.duration_human }}</div>
+        </div>
+        <div class="card">
+          <div class="label">Seed</div>
+          <div class="value">{{ summary.seed if summary.seed is not none else "—" }}</div>
+        </div>
+        <div class="card">
+          <div class="label">LLM</div>
+          <div class="value">{{ summary.llm_provider or "—" }}</div>
+        </div>
+      </div>
+      <p class="muted">Started {{ summary.started_at }}</p>
+      {% endblock summary %}
+    </section>
+
+    <section id="erd">
+      {% block erd %}
+      <h2>Schema ERD</h2>
+      <div class="placeholder" data-placeholder="erd">
+        Entity-relationship diagram will appear here (S-082).
+      </div>
+      {% endblock erd %}
+    </section>
+
+    <section id="table-stats">
+      {% block table_stats %}
+      <h2>Table Statistics</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>Table</th>
+            <th>Rows</th>
+            <th>Gen (ms)</th>
+            <th>Rows/sec</th>
+            <th>Errors</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for t in table_stats %}
+          <tr>
+            <td>{{ t.table_name }}</td>
+            <td>{{ t.row_count }}</td>
+            <td>{{ t.generation_ms }}</td>
+            <td>{{ t.rows_per_sec }}</td>
+            <td>{{ t.errors }}</td>
+          </tr>
+          {% else %}
+          <tr><td colspan="5" class="muted">No table statistics recorded.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      {% endblock table_stats %}
+    </section>
+
+    <section id="quality">
+      {% block quality %}
+      <h2>Quality Metrics</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>Type</th>
+            <th>Metric</th>
+            <th>Score</th>
+            <th>Status</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for q in quality_results %}
+          <tr>
+            <td>{{ q.metric_type }}</td>
+            <td>{{ q.metric_name }}</td>
+            <td>{{ q.score }}</td>
+            <td>
+              {% if q.passed %}
+              <span class="badge pass">PASS</span>
+              {% else %}
+              <span class="badge fail">FAIL</span>
+              {% endif %}
+            </td>
+          </tr>
+          {% else %}
+          <tr><td colspan="4" class="muted">No quality metrics recorded.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      {% endblock quality %}
+    </section>
+
+    <section id="charts">
+      {% block charts %}
+      <h2>Distribution Charts</h2>
+      <div class="placeholder" data-placeholder="charts">
+        Distribution &amp; quality charts will appear here (S-083).
+      </div>
+      {% endblock charts %}
+    </section>
+
+    <section id="data-preview">
+      {% block data_preview %}
+      <h2>Data Preview</h2>
+      <div class="placeholder" data-placeholder="data_preview">
+        Sample data-preview tables will appear here (S-084).
+      </div>
+      {% endblock data_preview %}
+    </section>
+
+    {% endif %}
+
+    <footer class="muted" style="margin-top:3rem;border-top:1px solid var(--border);padding-top:1rem;">
+      Generated by DBSprout — self-contained report, no server required.
+    </footer>
+  </div>
+  {% include "partials/scripts.js.j2" %}
+</body>
+</html>
