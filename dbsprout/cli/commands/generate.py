@@ -497,7 +497,12 @@ def _record_state(
         seed=seed,
         started_at=started_at,
         completed_at=completed_at,
-        llm_call=llm_call_for(engine=engine, lora_path=lora_path, cached=False),
+        llm_call=llm_call_for(
+            engine=engine,
+            lora_path=lora_path,
+            cached=False,
+            usage=result.spec_usage,
+        ),
     )
 
 

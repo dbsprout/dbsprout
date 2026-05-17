@@ -14,9 +14,11 @@ from dbsprout.schema.models import (
     TableSchema,
 )
 from dbsprout.spec.models import DataSpec, GeneratorConfig, TableSpec
+from dbsprout.spec.providers.base import SpecUsage
 from dbsprout.spec.providers.embedded import (
     EmbeddedProvider,
     _build_prompt,
+    _usage_from_llama_response,
 )
 
 if TYPE_CHECKING:
@@ -307,4 +309,73 @@ class TestLoRAHotSwap:
             with caplog.at_level("WARNING"):
                 provider._ensure_llm()
         assert "swap" in caplog.text.lower()
+        provider.close()
+
+
+class TestUsageFromLlamaResponse:
+    """Pure mapping of llama-cpp's real ``usage`` dict to SpecUsage (S-080a)."""
+
+    def test_real_llama_usage_keys(self) -> None:
+        # Exact real shape: CreateChatCompletionResponse["usage"] is a
+        # CompletionUsage TypedDict (prompt_tokens/completion_tokens/total).
+        response = {
+            "choices": [{"message": {"content": "{}"}}],
+            "usage": {
+                "prompt_tokens": 444,
+                "completion_tokens": 555,
+                "total_tokens": 999,
+            },
+        }
+        usage = _usage_from_llama_response(response)
+        # Local model → cost always 0.0 (honest, no API billing).
+        assert usage == SpecUsage(tokens_sent=444, tokens_received=555, cost_usd=0.0)
+
+    def test_missing_usage_key_is_honest_zero(self) -> None:
+        """If llama-cpp omits usage, counts stay 0 — never fabricated."""
+        response = {"choices": [{"message": {"content": "{}"}}]}
+        usage = _usage_from_llama_response(response)
+        assert usage == SpecUsage(tokens_sent=0, tokens_received=0, cost_usd=0.0)
+
+    def test_partial_usage_degrades_gracefully(self) -> None:
+        response = {"usage": {"prompt_tokens": 12}}
+        usage = _usage_from_llama_response(response)
+        assert usage.tokens_sent == 12
+        assert usage.tokens_received == 0
+        assert usage.cost_usd == 0.0
+
+
+class TestEmbeddedUsageCapture:
+    def test_get_last_usage_after_inference(self, tmp_path: Path) -> None:
+        """generate_spec captures real llama-cpp token counts (cost stays 0)."""
+        schema = _simple_schema()
+        mock_spec = _mock_dataspec(schema.schema_hash())
+
+        provider = EmbeddedProvider(cache_dir=tmp_path / "cache")
+        response = {
+            "choices": [{"message": {"content": mock_spec.model_dump_json()}}],
+            "usage": {
+                "prompt_tokens": 128,
+                "completion_tokens": 256,
+                "total_tokens": 384,
+            },
+        }
+        provider._raw_chat_completion = MagicMock(return_value=response)  # type: ignore[attr-defined]
+
+        provider.generate_spec(schema)
+
+        captured = provider.get_last_usage()
+        assert captured == SpecUsage(tokens_sent=128, tokens_received=256, cost_usd=0.0)
+        provider.close()
+
+    def test_get_last_usage_none_on_cache_hit(self, tmp_path: Path) -> None:
+        from dbsprout.spec.cache import SpecCache  # noqa: PLC0415
+
+        schema = _simple_schema()
+        cache = SpecCache(cache_dir=tmp_path / "cache")
+        cache.put(schema.schema_hash(), _mock_dataspec(schema.schema_hash()))
+        cache.close()
+
+        provider = EmbeddedProvider(cache_dir=tmp_path / "cache")
+        provider.generate_spec(schema)
+        assert provider.get_last_usage() is None
         provider.close()

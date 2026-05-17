@@ -119,6 +119,41 @@ class TestLLMCallCapture:
         assert call.cached is True
         assert call.privacy_tier == "local"
 
+    def test_usage_none_keeps_zero_defaults(self, tmp_path: Path) -> None:
+        """Back-compat: no usage → token/cost stay at honest 0 (S-080)."""
+        adapter = tmp_path / "a.gguf"
+        adapter.write_bytes(b"x")
+        call = llm_call_for(engine="spec", lora_path=adapter, cached=False)
+        assert call is not None
+        assert call.tokens_sent == 0
+        assert call.tokens_received == 0
+        assert call.cost_usd == 0.0
+
+    def test_usage_threads_real_counts_into_llm_call(self, tmp_path: Path) -> None:
+        """S-080a: real SpecUsage flows into the recorded LLMCall."""
+        from dbsprout.spec.providers.base import SpecUsage  # noqa: PLC0415
+
+        adapter = tmp_path / "a.gguf"
+        adapter.write_bytes(b"x")
+        usage = SpecUsage(tokens_sent=321, tokens_received=654, cost_usd=0.00123)
+        call = llm_call_for(engine="spec", lora_path=adapter, cached=False, usage=usage)
+        assert call is not None
+        assert call.tokens_sent == 321
+        assert call.tokens_received == 654
+        assert call.cost_usd == 0.00123
+
+    def test_usage_ignored_when_no_llm_call(self) -> None:
+        """No real call (heuristic) → still None even if usage supplied."""
+        from dbsprout.spec.providers.base import SpecUsage  # noqa: PLC0415
+
+        call = llm_call_for(
+            engine="heuristic",
+            lora_path=None,
+            cached=False,
+            usage=SpecUsage(tokens_sent=9),
+        )
+        assert call is None
+
     def test_build_run_record_includes_llm_call(self) -> None:
         call = LLMCall(
             timestamp=_T0,

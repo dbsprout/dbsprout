@@ -16,6 +16,7 @@ if TYPE_CHECKING:
 
     from dbsprout.config.models import DBSproutConfig
     from dbsprout.schema.models import DatabaseSchema
+    from dbsprout.spec.providers.base import SpecUsage
 
 from dbsprout.generate.constraints import enforce_constraints
 from dbsprout.generate.fk_sampling import sample_fk_values
@@ -33,6 +34,11 @@ class GenerateResult:
     instrumenting the per-table generation loop. It is empty when no
     tables were generated. Consumed by the state-writer (S-080) to
     persist per-table telemetry.
+
+    ``spec_usage`` carries the real LLM token/cost accounting (S-080a)
+    when the ``spec`` engine performed a real provider call; it is
+    ``None`` for the heuristic path, a spec-cache hit, or the
+    ``spec``-without-LoRA heuristic fallback (honest — no LLM call).
     """
 
     tables_data: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
@@ -41,6 +47,7 @@ class GenerateResult:
     total_tables: int = 0
     duration_seconds: float = 0.0
     table_timings: tuple[tuple[str, int, int], ...] = ()
+    spec_usage: SpecUsage | None = None
 
 
 def orchestrate(  # noqa: PLR0913
@@ -109,6 +116,7 @@ def orchestrate(  # noqa: PLR0913
         total_tables=len(parent_data),
         duration_seconds=round(duration, 3),
         table_timings=tuple(timings),
+        spec_usage=selection.spec_usage,
     )
 
 
@@ -121,6 +129,7 @@ class _EngineSelection:
     spec: Any = None
     statistical: Any = None
     table_specs: dict[str, Any] = field(default_factory=dict)
+    spec_usage: SpecUsage | None = None
 
 
 def _select_engines(
@@ -146,6 +155,7 @@ def _select_engines(
     """
     heuristic = resolve_engine("heuristic", seed=seed)
     if engine == "spec":
+        spec_usage: SpecUsage | None = None
         if lora_path is not None:
             from dbsprout.spec.analyzer import SpecAnalyzer  # noqa: PLC0415
             from dbsprout.spec.providers.embedded import (  # noqa: PLC0415
@@ -153,7 +163,10 @@ def _select_engines(
             )
 
             provider = EmbeddedProvider(lora_path=lora_path)
-            dataspec = SpecAnalyzer(provider).analyze(schema)
+            analyzer = SpecAnalyzer(provider)
+            dataspec = analyzer.analyze(schema)
+            # S-080a: surface the real token/cost the analyzer just measured.
+            spec_usage = analyzer.get_last_usage()
         else:
             from dbsprout.spec.analyzer import heuristic_fallback  # noqa: PLC0415
 
@@ -163,6 +176,7 @@ def _select_engines(
             heuristic=heuristic,
             spec=resolve_engine("spec_driven", seed=seed),
             table_specs={ts.table_name: ts for ts in dataspec.tables},
+            spec_usage=spec_usage,
         )
     if engine == "statistical":
         return _EngineSelection(

@@ -10,6 +10,8 @@ import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from dbsprout.spec.providers.base import SpecUsage
+
 if TYPE_CHECKING:
     from dbsprout.schema.models import DatabaseSchema
     from dbsprout.spec.models import DataSpec
@@ -55,6 +57,7 @@ class EmbeddedProvider:
         # original S-025 direct-``Llama`` path is preserved unchanged.
         self._lora_path: Path | None = Path(lora_path) if lora_path is not None else None
         self._loader: Any = None
+        self._last_usage: SpecUsage | None = None
 
     @property
     def lora_path(self) -> Path | None:
@@ -81,6 +84,7 @@ class EmbeddedProvider:
         """
         from dbsprout.spec.models import DataSpec as _DataSpec  # noqa: PLC0415
 
+        self._last_usage = None
         schema_hash = schema.schema_hash()
 
         # Check cache
@@ -101,10 +105,33 @@ class EmbeddedProvider:
 
         return spec
 
-    def _run_inference(self, prompt: str) -> str:  # pragma: no cover
+    def get_last_usage(self) -> SpecUsage | None:
+        """Token accounting for the most recent real inference (S-080a).
+
+        Token counts come from llama-cpp's ``usage`` dict when exposed;
+        ``cost_usd`` is always ``0.0`` (local inference is not billed).
+        Returns ``None`` after a cache hit or before any real call.
+        """
+        return self._last_usage
+
+    def _run_inference(self, prompt: str) -> str:
         """Run LLM inference with GBNF grammar constraint.
 
-        Returns raw JSON string. Requires llama-cpp-python.
+        Returns the raw JSON string and, as a side effect, records the
+        real llama-cpp token usage (S-080a) via :meth:`get_last_usage`.
+        Requires llama-cpp-python.
+        """
+        response = self._raw_chat_completion(prompt)
+        self._last_usage = _usage_from_llama_response(response)
+        content: str = response["choices"][0]["message"]["content"]
+        return content
+
+    def _raw_chat_completion(self, prompt: str) -> Any:  # pragma: no cover
+        """Call llama-cpp ``create_chat_completion`` and return the full dict.
+
+        Returns the real ``CreateChatCompletionResponse`` mapping (including
+        its ``usage`` key) so token accounting can be extracted without a
+        second inference call. Requires llama-cpp-python.
         """
         llm = self._ensure_llm()
 
@@ -123,7 +150,7 @@ class EmbeddedProvider:
 
         grammar = LlamaGrammar.from_string(grammar_str)
 
-        response = llm.create_chat_completion(
+        return llm.create_chat_completion(
             messages=[
                 {"role": "system", "content": _SYSTEM_PROMPT},
                 {"role": "user", "content": prompt},
@@ -132,9 +159,6 @@ class EmbeddedProvider:
             temperature=_DEFAULT_TEMPERATURE,
             max_tokens=_DEFAULT_MAX_TOKENS,
         )
-
-        content: str = response["choices"][0]["message"]["content"]
-        return content
 
     def _ensure_llm(self) -> Any:
         """Lazy-load the LLM model. Requires llama-cpp-python.
@@ -211,6 +235,35 @@ class EmbeddedProvider:
     def close(self) -> None:
         """Close the cache connection."""
         self._cache.close()
+
+
+def _usage_from_llama_response(response: Any) -> SpecUsage:
+    """Map llama-cpp's real ``usage`` dict to :class:`SpecUsage` (S-080a).
+
+    The pinned llama-cpp-python (>=0.3) ``CreateChatCompletionResponse``
+    carries a required ``usage`` ``CompletionUsage`` mapping with integer
+    ``prompt_tokens`` / ``completion_tokens``. If a build omits it, counts
+    stay ``0`` rather than being fabricated. ``cost_usd`` is always ``0.0``:
+    local inference is not billed.
+    """
+    usage = None
+    if isinstance(response, dict):
+        usage = response.get("usage")
+    if not isinstance(usage, dict):
+        return SpecUsage()
+    return SpecUsage(
+        tokens_sent=_as_int(usage.get("prompt_tokens", 0)),
+        tokens_received=_as_int(usage.get("completion_tokens", 0)),
+        cost_usd=0.0,
+    )
+
+
+def _as_int(value: Any) -> int:
+    """Coerce a token count to ``int``; ``0`` if not coercible (honest)."""
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return 0
 
 
 def _import_hf_hub_download() -> Any:
