@@ -130,3 +130,12 @@ def build_correlation_heatmap(run: RunRecord) -> dict[str, Any] | None:
             "config": {"displaylogo": False, "responsive": True},
         }
     return None
+
+
+def build_chart_bundle(run: RunRecord) -> dict[str, Any]:
+    """Aggregate every chart group into one JSON-serialisable bundle."""
+    return {
+        "histograms": build_numeric_histograms(run),
+        "bars": build_categorical_bars(run),
+        "heatmap": build_correlation_heatmap(run),
+    }

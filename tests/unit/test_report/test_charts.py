@@ -6,6 +6,7 @@ import json
 
 from dbsprout.report.charts import (
     build_categorical_bars,
+    build_chart_bundle,
     build_correlation_heatmap,
     build_numeric_histograms,
 )
@@ -126,3 +127,12 @@ class TestQualityTable:
     def test_empty_when_no_quality_results(self) -> None:
         run = make_run().model_copy(update={"quality_results": []})
         assert build_quality_table(run) == []
+
+
+class TestChartBundle:
+    def test_bundle_has_all_groups(self) -> None:
+        bundle = build_chart_bundle(make_run())
+        assert set(bundle) == {"histograms", "bars", "heatmap"}
+        assert isinstance(bundle["histograms"], list)
+        # JSON-serialisable as a whole (embedded in one <script>).
+        json.dumps(bundle)
