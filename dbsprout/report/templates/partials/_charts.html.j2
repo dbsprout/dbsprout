@@ -1,0 +1,49 @@
+{#- S-083 Plotly distribution / value-frequency / correlation charts.
+    Chart specs are embedded as JSON; Plotly.js is loaded from the single
+    canonical CDN (inline spec JSON is the offline structural fallback). -#}
+<h2>Distribution &amp; Quality Charts</h2>
+<div id="charts-grid" class="charts-grid">
+  <p class="muted" data-charts-empty>
+    No distribution data available for this run.
+  </p>
+</div>
+<script type="application/json" id="dbsprout-charts">
+{{ charts | tojson }}
+</script>
+<script src="https://cdn.plot.ly/plotly-2.35.2.min.js"
+        charset="utf-8"></script>
+<script>
+  (function () {
+    "use strict";
+    var node = document.getElementById("dbsprout-charts");
+    var grid = document.getElementById("charts-grid");
+    if (!node || !grid) { return; }
+    var bundle;
+    try { bundle = JSON.parse(node.textContent); }
+    catch (e) { return; }
+    var figs = [];
+    (bundle.histograms || []).forEach(function (f) { figs.push(f); });
+    (bundle.bars || []).forEach(function (f) { figs.push(f); });
+    if (bundle.heatmap) { figs.push(bundle.heatmap); }
+    if (!figs.length) { return; }
+    var empty = grid.querySelector("[data-charts-empty]");
+    if (empty) { empty.remove(); }
+    function draw() {
+      figs.forEach(function (fig, i) {
+        var el = document.createElement("div");
+        el.className = "chart";
+        el.id = "chart-" + i;
+        grid.appendChild(el);
+        if (window.Plotly) {
+          window.Plotly.newPlot(el, fig.data, fig.layout, fig.config);
+        } else {
+          el.textContent = (fig.layout && fig.layout.title &&
+            fig.layout.title.text) || "Chart (Plotly unavailable offline)";
+        }
+      });
+    }
+    if (document.readyState === "loading") {
+      document.addEventListener("DOMContentLoaded", draw);
+    } else { draw(); }
+  })();
+</script>

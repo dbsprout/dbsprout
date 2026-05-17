@@ -87,3 +87,17 @@ class TestQualityTableRender:
         )
         html = render_report(build_report_context(run))
         assert "status-warn" in html
+
+
+class TestChartsRender:
+    def test_charts_embedded_json_and_plotly(self) -> None:
+        html = render_report(build_report_context(make_run()))
+        assert 'id="dbsprout-charts"' in html
+        assert 'type="application/json"' in html
+        # Plotly loaded via the single canonical CDN host.
+        assert "cdn.plot.ly" in html
+        assert 'id="charts"' in html
+
+    def test_charts_empty_state_no_crash(self) -> None:
+        html = render_report(build_report_context(None))
+        assert html.lstrip().lower().startswith("<!doctype html>")

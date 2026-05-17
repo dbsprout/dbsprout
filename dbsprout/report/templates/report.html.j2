@@ -120,10 +120,7 @@
 
     <section id="charts">
       {% block charts %}
-      <h2>Distribution Charts</h2>
-      <div class="placeholder" data-placeholder="charts">
-        Distribution &amp; quality charts will appear here (S-083).
-      </div>
+      {% include "partials/_charts.html.j2" %}
       {% endblock charts %}
     </section>
 
