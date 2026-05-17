@@ -4,7 +4,11 @@ from __future__ import annotations
 
 import json
 
-from dbsprout.report.charts import build_numeric_histograms
+from dbsprout.report.charts import (
+    build_categorical_bars,
+    build_numeric_histograms,
+)
+from dbsprout.state.models import QualityResult
 
 from ._fixtures import make_run
 
@@ -30,3 +34,29 @@ class TestNumericHistograms:
         specs = build_numeric_histograms(run)
         for spec in specs:
             assert len(spec["data"][0]["x"]) <= 10
+
+
+class TestCategoricalBars:
+    def test_value_frequency_from_details_json(self) -> None:
+        run = make_run().model_copy(
+            update={
+                "quality_results": [
+                    QualityResult(
+                        metric_type="distribution",
+                        metric_name="users.status",
+                        score=1.0,
+                        passed=True,
+                        details_json='{"value_counts": {"active": 80, "inactive": 20}}',
+                    )
+                ]
+            }
+        )
+        specs = build_categorical_bars(run)
+        assert specs
+        bar = specs[0]["data"][0]
+        assert bar["type"] == "bar"
+        assert set(bar["x"]) == {"active", "inactive"}
+        assert dict(zip(bar["x"], bar["y"], strict=True))["active"] == 80
+
+    def test_ignores_results_without_value_counts(self) -> None:
+        assert build_categorical_bars(make_run()) == []

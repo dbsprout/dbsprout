@@ -8,6 +8,7 @@ is JS-only (CDN) at render time.
 
 from __future__ import annotations
 
+import json
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -50,4 +51,42 @@ def build_numeric_histograms(run: RunRecord) -> list[dict[str, Any]]:
                 "config": {"displaylogo": False, "responsive": True},
             }
         )
+    return specs
+
+
+def build_categorical_bars(run: RunRecord) -> list[dict[str, Any]]:
+    """Build Plotly bar specs from any quality result whose
+    ``details_json`` carries a ``{"value_counts": {label: count}}`` map.
+    """
+    specs: list[dict[str, Any]] = []
+    for q in run.quality_results:
+        if not q.details_json:
+            continue
+        try:
+            payload = json.loads(q.details_json)
+        except (ValueError, TypeError):
+            continue
+        counts = payload.get("value_counts") if isinstance(payload, dict) else None
+        if not isinstance(counts, dict) or not counts:
+            continue
+        items = sorted(counts.items(), key=lambda kv: kv[1], reverse=True)[:TOP_N]
+        specs.append(
+            {
+                "data": [
+                    {
+                        "type": "bar",
+                        "x": [str(k) for k, _ in items],
+                        "y": [v for _, v in items],
+                        "name": q.metric_name,
+                    }
+                ],
+                "layout": {
+                    "title": {"text": f"Value frequency — {q.metric_name}"},
+                    "margin": {"t": 40, "r": 16, "b": 60, "l": 48},
+                },
+                "config": {"displaylogo": False, "responsive": True},
+            }
+        )
+        if len(specs) >= TOP_N:
+            break
     return specs
