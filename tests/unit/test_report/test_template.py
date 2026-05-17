@@ -129,8 +129,10 @@ class TestErdBlock:
     def test_erd_block_keeps_other_sections(self) -> None:
         ctx = build_report_context(make_run(), schema=_demo_schema())
         html = render_report(ctx)
-        # S-083/S-084 placeholders untouched.
+        # S-083 placeholder + S-084 data-preview section untouched by the
+        # ERD change (S-084 now renders the data-preview via its partial,
+        # so assert the stable section marker rather than the old literal).
         assert "S-083" in html
-        assert "S-084" in html
+        assert 'data-section="data_preview"' in html
         assert "heuristic" in html
         assert "fk_valid" in html
