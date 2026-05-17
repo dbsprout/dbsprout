@@ -11,7 +11,10 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
+from dbsprout.report.preview import build_table_previews
+
 if TYPE_CHECKING:
+    from dbsprout.schema.models import DatabaseSchema
     from dbsprout.state.models import RunRecord
 
 
@@ -69,23 +72,41 @@ def _quality_results(run: RunRecord) -> list[dict[str, Any]]:
     ]
 
 
-def build_report_context(run: RunRecord | None) -> dict[str, Any]:
+def build_report_context(
+    run: RunRecord | None,
+    *,
+    schema: DatabaseSchema | None = None,
+    tables_data: dict[str, list[dict[str, Any]]] | None = None,
+) -> dict[str, Any]:
     """Shape a :class:`RunRecord` (or ``None``) into the template context.
 
     ``run`` is ``None`` when the state DB has no recorded runs; the template
     renders a graceful empty state in that case.
+
+    ``schema`` + ``tables_data`` are the optional S-084 data-preview inputs
+    (generated rows are not persisted in the state DB, so they are supplied
+    at report time). When either is missing the ``data_preview`` view-model
+    is empty and the section renders its placeholder.
     """
     generated_at = datetime.now(timezone.utc).isoformat()
+    # --- S-084 data preview (begin) ---
+    if schema is not None and tables_data is not None:
+        data_preview = build_table_previews(schema, tables_data)
+    else:
+        data_preview = []
+    # --- S-084 data preview (end) ---
     if run is None:
         return {
             "summary": None,
             "table_stats": [],
             "quality_results": [],
             "generated_at": generated_at,
+            "data_preview": data_preview,
         }
     return {
         "summary": _summary(run),
         "table_stats": _table_stats(run),
         "quality_results": _quality_results(run),
         "generated_at": generated_at,
+        "data_preview": data_preview,
     }

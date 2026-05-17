@@ -155,12 +155,10 @@
       {% endblock charts %}
     </section>
 
-    <section id="data-preview">
+    <section id="data-preview" data-section="data_preview">
       {% block data_preview %}
       <h2>Data Preview</h2>
-      <div class="placeholder" data-placeholder="data_preview">
-        Sample data-preview tables will appear here (S-084).
-      </div>
+      {% include "partials/_data_preview.html.j2" %}
       {% endblock data_preview %}
     </section>
 

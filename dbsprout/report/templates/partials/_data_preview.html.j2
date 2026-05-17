@@ -1,0 +1,138 @@
+{#-
+  S-084 data-preview partial. Self-contained: all preview HTML/CSS/JS lives
+  here so the SHARED styles.css.j2 / scripts.js.j2 stay untouched (3 sibling
+  stories share report.html.j2). autoescape is ON — every cell value below
+  is auto-escaped by Jinja, keeping NULL / long-text / FK rendering XSS-safe.
+-#}
+<style>
+  .preview-toc { margin: 0 0 1.25rem; padding: 0; list-style: none;
+    display: flex; flex-wrap: wrap; gap: 0.5rem; }
+  .preview-toc a { display: inline-block; padding: 0.25rem 0.6rem;
+    border: 1px solid var(--border); border-radius: var(--radius);
+    font-size: 0.85rem; text-decoration: none; color: var(--accent); }
+  .preview-table-block { margin-bottom: 2rem; }
+  .preview-table-block h3 { margin-bottom: 0.25rem; }
+  .preview-meta { color: var(--fg-muted); font-size: 0.85rem;
+    margin: 0 0 0.5rem; }
+  .preview-scroll { overflow-x: auto; max-width: 100%;
+    border: 1px solid var(--border); border-radius: var(--radius); }
+  .preview-scroll table { margin: 0; border: 0; min-width: 100%;
+    border-collapse: collapse; white-space: nowrap; }
+  .preview-scroll th { position: sticky; top: 0; background: var(--bg-elev);
+    cursor: pointer; user-select: none; }
+  .preview-scroll th .preview-type { display: block; font-weight: 400;
+    color: var(--fg-muted); font-size: 0.75rem; }
+  .preview-scroll th .preview-badge { display: inline-block;
+    margin-left: 0.25rem; padding: 0 0.3rem; font-size: 0.65rem;
+    border: 1px solid var(--border); border-radius: 4px;
+    color: var(--fg-muted); }
+  .preview-null { font-style: italic; color: var(--fg-muted); }
+  .preview-trunc { border-bottom: 1px dotted var(--fg-muted); cursor: help; }
+  .preview-fk a { color: var(--accent); text-decoration: none; }
+  .preview-fk a:hover { text-decoration: underline; }
+  .preview-empty { color: var(--fg-muted); padding: 0.75rem; }
+</style>
+
+{% if data_preview %}
+<ul class="preview-toc">
+  {% for tbl in data_preview %}
+  <li><a href="#{{ tbl.anchor }}">{{ tbl.name }}</a></li>
+  {% endfor %}
+</ul>
+
+{% for tbl in data_preview %}
+<div class="preview-table-block" id="{{ tbl.anchor }}">
+  <h3>{{ tbl.name }}</h3>
+  <p class="preview-meta">
+    Showing {{ tbl.rows | length }} of {{ tbl.total_rows }} row(s)
+  </p>
+  <div class="preview-scroll">
+    <table class="preview-sortable"
+           data-preview-rows="{{ tbl.rows | length }}"
+           data-preview-total="{{ tbl.total_rows }}">
+      <thead>
+        <tr>
+          {% for col in tbl.columns %}
+          <th class="preview-sortable-th" tabindex="0"
+              aria-label="Sort by {{ col.name }}">
+            {{ col.name }}
+            {% for badge in col.badges %}
+            <span class="preview-badge">{{ badge }}</span>
+            {% endfor %}
+            <span class="preview-type">{{ col.type }}</span>
+          </th>
+          {% endfor %}
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in tbl.rows %}
+        <tr>
+          {% for cell in row %}
+          {% if cell.kind == "null" %}
+          <td class="preview-null">NULL</td>
+          {% elif cell.kind == "fk" %}
+          <td class="preview-fk">
+            <a href="#{{ cell.ref_anchor }}"
+               title="→ {{ cell.ref_table }}">{{ cell.display }}</a>
+          </td>
+          {% elif cell.kind == "trunc" %}
+          <td><span class="preview-trunc"
+                    title="{{ cell.full }}">{{ cell.display }}</span></td>
+          {% else %}
+          <td>{{ cell.display }}</td>
+          {% endif %}
+          {% endfor %}
+        </tr>
+        {% else %}
+        <tr>
+          <td class="preview-empty" colspan="{{ tbl.columns | length or 1 }}">
+            No rows generated for this table.
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endfor %}
+
+<script>
+  (function () {
+    "use strict";
+    function cmp(a, b) {
+      var na = parseFloat(a), nb = parseFloat(b);
+      if (!isNaN(na) && !isNaN(nb)) { return na - nb; }
+      return a < b ? -1 : (a > b ? 1 : 0);
+    }
+    function wire(table) {
+      var ths = table.querySelectorAll("th");
+      ths.forEach(function (th, idx) {
+        th.addEventListener("click", function () {
+          var tbody = table.tBodies[0];
+          if (!tbody) { return; }
+          var rows = Array.prototype.slice.call(tbody.rows)
+            .filter(function (r) { return r.cells.length === ths.length; });
+          var asc = th.getAttribute("data-sort") !== "asc";
+          rows.sort(function (r1, r2) {
+            var t1 = (r1.cells[idx] || {}).textContent || "";
+            var t2 = (r2.cells[idx] || {}).textContent || "";
+            return asc ? cmp(t1.trim(), t2.trim())
+                       : cmp(t2.trim(), t1.trim());
+          });
+          ths.forEach(function (o) { o.removeAttribute("data-sort"); });
+          th.setAttribute("data-sort", asc ? "asc" : "desc");
+          rows.forEach(function (r) { tbody.appendChild(r); });
+        });
+      });
+    }
+    document.addEventListener("DOMContentLoaded", function () {
+      document.querySelectorAll("table.preview-sortable").forEach(wire);
+    });
+  })();
+</script>
+{% else %}
+<div class="placeholder" data-placeholder="data_preview">
+  Sample data-preview tables will appear here once generated rows are
+  available.
+</div>
+{% endif %}
