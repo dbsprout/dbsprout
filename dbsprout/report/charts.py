@@ -90,3 +90,43 @@ def build_categorical_bars(run: RunRecord) -> list[dict[str, Any]]:
         if len(specs) >= TOP_N:
             break
     return specs
+
+
+def build_correlation_heatmap(run: RunRecord) -> dict[str, Any] | None:
+    """Build a Plotly heatmap spec from a fidelity correlation payload.
+
+    Returns ``None`` when no quality result carries a
+    ``{"correlation": {"labels": [...], "matrix": [[...]]}}`` payload.
+    """
+    for q in run.quality_results:
+        if q.metric_type != "fidelity" or not q.details_json:
+            continue
+        try:
+            payload = json.loads(q.details_json)
+        except (ValueError, TypeError):
+            continue
+        corr = payload.get("correlation") if isinstance(payload, dict) else None
+        if not isinstance(corr, dict):
+            continue
+        labels = corr.get("labels")
+        matrix = corr.get("matrix")
+        if not isinstance(labels, list) or not isinstance(matrix, list) or not matrix:
+            continue
+        return {
+            "data": [
+                {
+                    "type": "heatmap",
+                    "z": matrix,
+                    "x": labels,
+                    "y": labels,
+                    "colorscale": "RdBu",
+                    "zmid": 0,
+                }
+            ],
+            "layout": {
+                "title": {"text": "Correlation similarity"},
+                "margin": {"t": 40, "r": 16, "b": 60, "l": 80},
+            },
+            "config": {"displaylogo": False, "responsive": True},
+        }
+    return None

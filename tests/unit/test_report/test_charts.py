@@ -6,6 +6,7 @@ import json
 
 from dbsprout.report.charts import (
     build_categorical_bars,
+    build_correlation_heatmap,
     build_numeric_histograms,
 )
 from dbsprout.state.models import QualityResult
@@ -60,3 +61,30 @@ class TestCategoricalBars:
 
     def test_ignores_results_without_value_counts(self) -> None:
         assert build_categorical_bars(make_run()) == []
+
+
+class TestCorrelationHeatmap:
+    def test_heatmap_from_correlation_payload(self) -> None:
+        run = make_run().model_copy(
+            update={
+                "quality_results": [
+                    QualityResult(
+                        metric_type="fidelity",
+                        metric_name="correlation",
+                        score=0.9,
+                        passed=True,
+                        details_json=(
+                            '{"correlation": {"labels": ["a", "b"], '
+                            '"matrix": [[1.0, 0.5], [0.5, 1.0]]}}'
+                        ),
+                    )
+                ]
+            }
+        )
+        spec = build_correlation_heatmap(run)
+        assert spec is not None
+        assert spec["data"][0]["type"] == "heatmap"
+        assert spec["data"][0]["z"] == [[1.0, 0.5], [0.5, 1.0]]
+
+    def test_none_when_no_fidelity_correlation(self) -> None:
+        assert build_correlation_heatmap(make_run()) is None
