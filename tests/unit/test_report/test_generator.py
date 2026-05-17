@@ -39,7 +39,11 @@ class TestReportGenerator:
         out = ReportGenerator(output_path=tmp_path / "r.html").generate(db)
         html = out.read_text(encoding="utf-8")
         assert html.lstrip().lower().startswith("<!doctype html>")
-        assert not re.search(r'(href|src)\s*=\s*["\']https?://', html)
+        # S-083: only the canonical Plotly CDN is permitted (see
+        # test_template.test_no_external_resources for rationale).
+        externals = re.findall(r'(?:href|src)\s*=\s*["\'](https?://[^"\']+)', html)
+        for url in externals:
+            assert "cdn.plot.ly/" in url, f"unexpected external resource: {url}"
 
     def test_output_under_one_megabyte(self, tmp_path: Path) -> None:
         db = StateDB(tmp_path / "state.db")

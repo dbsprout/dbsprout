@@ -31,9 +31,13 @@ class TestSelfContained:
 
     def test_no_external_resources(self) -> None:
         html = render_report(build_report_context(make_run()))
-        # No external stylesheet/script/asset references in S-081 skeleton.
-        assert not re.search(r'href\s*=\s*["\']https?://', html)
-        assert not re.search(r'src\s*=\s*["\']https?://', html)
+        # S-083: Plotly.js is loaded from the single canonical CDN
+        # (cdn.plot.ly) per S-081/S-083 Technical Notes; an inline
+        # bundle (~3.5 MB) would break the < 1 MB cap. Any *other*
+        # external host is still forbidden.
+        externals = re.findall(r'(?:href|src)\s*=\s*["\'](https?://[^"\']+)', html)
+        for url in externals:
+            assert "cdn.plot.ly/" in url, f"unexpected external resource: {url}"
 
     def test_theme_toggle_control_present(self) -> None:
         html = render_report(build_report_context(make_run()))
