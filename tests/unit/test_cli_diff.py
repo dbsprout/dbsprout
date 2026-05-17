@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
 
+import pytest
 import sqlalchemy as sa
 from typer.testing import CliRunner
 
@@ -2111,46 +2112,93 @@ class TestDiffEdgeCases:
         output = _strip_ansi(result.output)
         assert "no snapshots found" in output.lower()
 
-    @patch("dbsprout.migrate.snapshot.SnapshotStore")
-    def test_rich_file_source_large_ddl_under_cap(
-        self,
-        mock_store_cls: MagicMock,
-        tmp_path: Path,
-    ) -> None:
-        """AC-6: a ~9 MB .sql file (just under the 10 MB cap) parses without
-        OOM, timeout, or a 'File too large' rejection."""
-        sql_file = tmp_path / "big.sql"
+    @staticmethod
+    def _build_big_ddl(target_bytes: int) -> str:
+        """Build a DDL string of ``CREATE TABLE`` statements >= target_bytes.
+
+        Shared by the fast structural check and the slow CPU-time
+        hang-guard so both exercise the identical parser input shape.
+        """
         stmt = "CREATE TABLE big_{i} (id INTEGER PRIMARY KEY, c1 INTEGER, c2 INTEGER);\n"
-        target = 9 * 1000 * 1000  # ~9 MB, comfortably under 10 * 1024 * 1024
         lines: list[str] = []
         size = 0
         i = 0
-        while size < target:
+        while size < target_bytes:
             line = stmt.format(i=i)
             lines.append(line)
             size += len(line)
             i += 1
-        sql_file.write_text("".join(lines))
+        return "".join(lines)
 
-        file_size = sql_file.stat().st_size
-        assert 9_000_000 <= file_size < 10 * 1024 * 1024, f"setup size {file_size}"
+    @patch("dbsprout.migrate.snapshot.SnapshotStore")
+    def test_rich_file_source_under_cap_structural(
+        self,
+        mock_store_cls: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        """AC-6 (fast half): a small .sql file routed through the real
+        ``diff --file`` path parses without a 'File too large' rejection
+        and exits cleanly.
+
+        This is the always-run integration tripwire: it guards the CLI
+        file-source + size-cap wiring cheaply (<1 s). The CPU-bound
+        super-linear / hang protection for *large* inputs lives in the
+        ``slow``-marked ``test_large_ddl_parse_no_superlinear_blowup``
+        below (deselected by default; runnable via ``pytest -m slow``).
+        Split out under S-101 (DBS-125) because the old combined
+        wall-clock test was non-deterministic under parallel CPU load.
+        """
+        sql_file = tmp_path / "small.sql"
+        sql_file.write_text(self._build_big_ddl(8_000))
 
         mock_store = MagicMock()
         mock_store.load_latest.return_value = _simple_schema_for_diff()
         mock_store_cls.return_value = mock_store
 
-        start = time.perf_counter()
         result = runner.invoke(
             app,
             ["diff", "--file", str(sql_file), "--output-dir", str(tmp_path)],
         )
-        elapsed = time.perf_counter() - start
 
         assert result.exit_code in (0, 1), _strip_ansi(result.output)
         assert "File too large" not in _strip_ansi(result.output)
-        # The pure-Python DDL parser is linear (~4.4 s/MB, profiled), so a
-        # ~9 MB file legitimately takes tens of seconds. This generous bound
-        # is a hang / O(n²)-regression tripwire, NOT a perf budget — a 9 MB
-        # O(n²) parse would run for many minutes. See story "Finding during
-        # AC-6 implementation" note.
-        assert elapsed < 180.0, f"9MB DDL parse took {elapsed:.1f}s (hang guard)"
+
+    @pytest.mark.slow
+    def test_large_ddl_parse_no_superlinear_blowup(self) -> None:
+        """AC-6 (slow half): a ~9 MB DDL body parses in *CPU time*
+        consistent with the profiled linear ~4.4 s/MB rate.
+
+        Hang / O(n^2) regression tripwire. ``parse_ddl`` is the exact hot
+        path the CLI ``diff --file`` route calls (parse_schema_file ->
+        parse_ddl); calling it directly removes CLI/Typer overhead so the
+        measurement isolates the parser. ``time.process_time()`` counts
+        only CPU consumed by this process, so the threshold is immune to
+        wall-clock scheduler contention from concurrent CI / pre-push
+        jobs (the S-101 / DBS-125 flake). A super-linear (O(n^2)) parse
+        of ~9 MB would burn *thousands* of CPU-seconds, so the generous
+        150 s CPU cap (vs ~40 s linear baseline, ~3.75x margin) still
+        fails hard on a real regression or a hang.
+
+        ``slow``-marked and deselected by default (see pyproject
+        ``addopts = -m "not slow"``) so it never inflates the default /
+        pre-push suite; run explicitly via ``uv run pytest -m slow``.
+        """
+        target = 9 * 1000 * 1000  # ~9 MB, just under the 10 MB schema cap
+        sql_text = self._build_big_ddl(target)
+        body_size = len(sql_text.encode("utf-8"))
+        assert 9_000_000 <= body_size < 10 * 1024 * 1024, f"setup size {body_size}"
+
+        cpu_start = time.process_time()
+        schema = parse_ddl(sql_text)
+        cpu_elapsed = time.process_time() - cpu_start
+
+        # Structural correctness: every CREATE TABLE became a table.
+        expected_tables = sql_text.count("CREATE TABLE ")
+        assert len(schema.tables) == expected_tables, (
+            f"parsed {len(schema.tables)} tables, expected {expected_tables}"
+        )
+        # Hang / O(n^2) tripwire on CPU time (contention-immune).
+        assert cpu_elapsed < 150.0, (
+            f"9MB DDL parse used {cpu_elapsed:.1f}s CPU (super-linear / "
+            f"hang guard; linear baseline ~40s)"
+        )
