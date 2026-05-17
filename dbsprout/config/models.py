@@ -74,6 +74,20 @@ class LLMConfig(BaseModel):
     lora_path: Path | None = None
 
 
+class ReportConfig(BaseModel):
+    """HTML report settings from the ``[report]`` section (S-085).
+
+    ``output`` is the destination path for the self-contained HTML report
+    produced by ``dbsprout report`` and ``dbsprout generate --report``. The
+    CLI ``--output`` flag overrides this value. All fields optional so a
+    config with no ``[report]`` section loads unchanged.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    output: str = "./seeds/report.html"
+
+
 class DBSproutConfig(BaseModel):
     """Root configuration loaded from ``dbsprout.toml``."""
 
@@ -84,6 +98,7 @@ class DBSproutConfig(BaseModel):
     privacy: PrivacyConfig = Field(default_factory=PrivacyConfig)
     train: TrainConfig = Field(default_factory=TrainConfig)
     llm: LLMConfig = Field(default_factory=LLMConfig)
+    report: ReportConfig = Field(default_factory=ReportConfig)
     tables: dict[str, TableOverride] = Field(default_factory=dict)
 
     @classmethod

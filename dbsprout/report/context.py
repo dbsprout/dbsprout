@@ -16,8 +16,11 @@ from dbsprout.report.charts import build_chart_bundle
 from dbsprout.report.quality_table import build_quality_table
 
 # ── end S-083 region ────────────────────────────────────────────────
+from dbsprout.report.erd import build_erd_mermaid
+from dbsprout.report.preview import build_table_previews
 
 if TYPE_CHECKING:
+    from dbsprout.schema.models import DatabaseSchema
     from dbsprout.state.models import RunRecord
 
 
@@ -75,13 +78,36 @@ def _quality_results(run: RunRecord) -> list[dict[str, Any]]:
     ]
 
 
-def build_report_context(run: RunRecord | None) -> dict[str, Any]:
+def build_report_context(
+    run: RunRecord | None,
+    *,
+    schema: DatabaseSchema | None = None,
+    tables_data: dict[str, list[dict[str, Any]]] | None = None,
+) -> dict[str, Any]:
     """Shape a :class:`RunRecord` (or ``None``) into the template context.
 
     ``run`` is ``None`` when the state DB has no recorded runs; the template
-    renders a graceful empty state in that case.
+    renders a graceful empty state in that case. ``schema`` is optional; when
+    provided, a Mermaid ``erDiagram`` source string is added under
+    ``erd_mermaid`` (S-082) for the ERD section to embed.
+
+    ``schema`` + ``tables_data`` are the optional S-084 data-preview inputs
+    (generated rows are not persisted in the state DB, so they are supplied
+    at report time). When either is missing the ``data_preview`` view-model
+    is empty and the section renders its placeholder.
     """
     generated_at = datetime.now(timezone.utc).isoformat()
+    # ─── S-082 ERD (parallel-wave region; parent reconciles) ───────────
+    erd_mermaid: str | None = None
+    if schema is not None:
+        erd_mermaid = build_erd_mermaid(schema)
+    # ─── end S-082 region ──────────────────────────────────────────────
+    # --- S-084 data preview (begin) ---
+    if schema is not None and tables_data is not None:
+        data_preview = build_table_previews(schema, tables_data)
+    else:
+        data_preview = []
+    # --- S-084 data preview (end) ---
     if run is None:
         return {
             "summary": None,
@@ -92,6 +118,8 @@ def build_report_context(run: RunRecord | None) -> dict[str, Any]:
             "charts": {"histograms": [], "bars": [], "heatmap": None},
             "quality_table": [],
             # ── end S-083 region ────────────────────────────────────
+            "erd_mermaid": erd_mermaid,
+            "data_preview": data_preview,
         }
     return {
         "summary": _summary(run),
@@ -102,4 +130,6 @@ def build_report_context(run: RunRecord | None) -> dict[str, Any]:
         "charts": build_chart_bundle(run),
         "quality_table": build_quality_table(run),
         # ── end S-083 region ────────────────────────────────────────
+        "erd_mermaid": erd_mermaid,
+        "data_preview": data_preview,
     }

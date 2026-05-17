@@ -112,6 +112,16 @@ def generate_proxy(  # noqa: PLR0913
         "--lora",
         help="Path to a .gguf LoRA adapter (requires --engine spec).",
     ),
+    report: bool = typer.Option(
+        False,
+        "--report",
+        help="Also write a self-contained HTML report for this run.",
+    ),
+    report_output: str | None = typer.Option(
+        None,
+        "--report-output",
+        help="Report destination (default: [report].output or ./seeds/report.html).",
+    ),
 ) -> None:
     """Generate seed data from a schema snapshot."""
     from pathlib import Path  # noqa: PLC0415
@@ -136,6 +146,8 @@ def generate_proxy(  # noqa: PLR0913
         incremental=incremental,
         snapshot=snapshot,
         lora_path=Path(lora) if lora else None,
+        report=report,
+        report_output=Path(report_output) if report_output else None,
     )
 
 
@@ -210,6 +222,31 @@ def diff_proxy(
         snapshot=snapshot,
         output_format=output_format,
         output_dir=Path(output_dir),
+    )
+
+
+@app.command(name="report")
+def report_proxy(
+    output: str | None = typer.Option(
+        None,
+        "--output",
+        "-o",
+        help="Report destination path (default: ./seeds/report.html or [report].output).",
+    ),
+    run_id: int | None = typer.Option(
+        None,
+        "--run-id",
+        help="Render a specific historical run id (default: most recent run).",
+    ),
+) -> None:
+    """Generate an HTML report from recorded generation runs (no regeneration)."""
+    from pathlib import Path  # noqa: PLC0415
+
+    from dbsprout.cli.commands.report import report_command  # noqa: PLC0415
+
+    report_command(
+        output=Path(output) if output else None,
+        run_id=run_id,
     )
 
 

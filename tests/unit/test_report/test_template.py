@@ -6,9 +6,50 @@ import re
 
 from dbsprout.report.context import build_report_context
 from dbsprout.report.env import build_environment, render_report
+from dbsprout.schema.models import (
+    ColumnSchema,
+    ColumnType,
+    DatabaseSchema,
+    ForeignKeySchema,
+    TableSchema,
+)
 from dbsprout.state.models import QualityResult
 
 from ._fixtures import make_run
+
+
+def _demo_schema() -> DatabaseSchema:
+    users = TableSchema(
+        name="users",
+        columns=[
+            ColumnSchema(
+                name="id",
+                data_type=ColumnType.INTEGER,
+                primary_key=True,
+                nullable=False,
+            )
+        ],
+        primary_key=["id"],
+    )
+    orders = TableSchema(
+        name="orders",
+        columns=[
+            ColumnSchema(
+                name="id",
+                data_type=ColumnType.INTEGER,
+                primary_key=True,
+                nullable=False,
+            ),
+            ColumnSchema(
+                name="user_id",
+                data_type=ColumnType.INTEGER,
+                nullable=False,
+            ),
+        ],
+        primary_key=["id"],
+        foreign_keys=[ForeignKeySchema(columns=["user_id"], ref_table="users", ref_columns=["id"])],
+    )
+    return DatabaseSchema(tables=[users, orders])
 
 
 class TestEnvironment:
@@ -105,3 +146,41 @@ class TestChartsRender:
     def test_charts_empty_state_no_crash(self) -> None:
         html = render_report(build_report_context(None))
         assert html.lstrip().lower().startswith("<!doctype html>")
+
+
+class TestErdBlock:
+    def test_placeholder_when_no_schema(self) -> None:
+        html = render_report(build_report_context(make_run()))
+        assert 'id="erd"' in html
+        assert "S-082" in html
+        assert 'class="mermaid"' not in html
+
+    def test_mermaid_block_when_schema(self) -> None:
+        ctx = build_report_context(make_run(), schema=_demo_schema())
+        html = render_report(ctx)
+        assert 'id="erd"' in html
+        assert '<pre class="mermaid">' in html
+        assert "erDiagram" in html
+        assert "users {" in html
+        assert "orders {" in html
+
+    def test_erd_block_no_external_resources(self) -> None:
+        ctx = build_report_context(make_run(), schema=_demo_schema())
+        html = render_report(ctx)
+        # The ERD partial embeds Mermaid offline (no external URL). The only
+        # permitted external resource in the whole report is the Plotly CDN
+        # (cdn.plot.ly) added by S-083; assert no OTHER external https.
+        externals = re.findall(r'(?:href|src)\s*=\s*["\'](https?://[^"\']+)', html)
+        for url in externals:
+            assert "cdn.plot.ly/" in url, f"unexpected external resource: {url}"
+
+    def test_erd_block_keeps_other_sections(self) -> None:
+        ctx = build_report_context(make_run(), schema=_demo_schema())
+        html = render_report(ctx)
+        # S-083 placeholder + S-084 data-preview section untouched by the
+        # ERD change (S-084 now renders the data-preview via its partial,
+        # so assert the stable section marker rather than the old literal).
+        assert "S-083" in html
+        assert 'data-section="data_preview"' in html
+        assert "heuristic" in html
+        assert "fk_valid" in html

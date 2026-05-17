@@ -13,6 +13,7 @@ from dbsprout.config.models import (
     GenerationConfig,
     LLMConfig,
     PrivacyConfig,
+    ReportConfig,
     SchemaConfig,
     TableOverride,
 )
@@ -103,6 +104,31 @@ base_model = "some/model"
         path.write_text("[train]\nbogus = 1\n")
         with pytest.raises(ValidationError):
             load_config(path)
+
+
+class TestReportConfig:
+    def test_default_output_path(self) -> None:
+        cfg = DBSproutConfig()
+        assert isinstance(cfg.report, ReportConfig)
+        assert cfg.report == ReportConfig()
+        assert cfg.report.output == "./seeds/report.html"
+
+    def test_report_section_round_trip(self, tmp_path: Path) -> None:
+        path = tmp_path / "dbsprout.toml"
+        path.write_text('[report]\noutput = "custom/r.html"\n')
+        cfg = load_config(path)
+        assert cfg.report.output == "custom/r.html"
+
+    def test_report_section_rejects_unknown_key(self, tmp_path: Path) -> None:
+        path = tmp_path / "dbsprout.toml"
+        path.write_text("[report]\nbogus = 1\n")
+        with pytest.raises(ValidationError):
+            load_config(path)
+
+    def test_report_config_frozen(self) -> None:
+        rc = ReportConfig()
+        with pytest.raises(ValidationError):
+            rc.output = "x.html"  # type: ignore[misc]
 
 
 class TestSchemaConfig:
