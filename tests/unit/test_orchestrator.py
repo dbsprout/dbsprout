@@ -212,3 +212,25 @@ class TestGenerateResult:
         assert result.total_tables == 2
         assert result.total_rows == 10  # 5 users + 5 orders
         assert isinstance(result.tables_data, dict)
+
+
+class TestPerTableTimings:
+    def test_table_timings_populated(self) -> None:
+        """GenerateResult.table_timings has one entry per generated table."""
+        schema = _users_orders_schema()
+        config = DBSproutConfig()
+
+        result = orchestrate(schema, config, seed=42, default_rows=5)
+
+        timings = {name: (rows, ms) for name, rows, ms in result.table_timings}
+        assert set(timings) == {"users", "orders"}
+        assert timings["users"][0] == 5
+        assert timings["orders"][0] == 5
+        for _name, _rows, ms in result.table_timings:
+            assert ms >= 0
+
+    def test_table_timings_default_empty(self) -> None:
+        """Empty schema yields no timings (default ``()``)."""
+        config = DBSproutConfig()
+        result = orchestrate(DatabaseSchema(tables=[]), config, seed=1, default_rows=5)
+        assert result.table_timings == ()

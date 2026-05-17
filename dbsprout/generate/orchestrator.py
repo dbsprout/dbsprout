@@ -26,13 +26,21 @@ from dbsprout.spec.heuristics import map_columns
 
 @dataclass(frozen=True)
 class GenerateResult:
-    """Result of a generation run."""
+    """Result of a generation run.
+
+    ``table_timings`` is a tuple of ``(table_name, row_count,
+    generation_ms)`` triples, one per generated table, captured by
+    instrumenting the per-table generation loop. It is empty when no
+    tables were generated. Consumed by the state-writer (S-080) to
+    persist per-table telemetry.
+    """
 
     tables_data: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
     insertion_order: list[str] = field(default_factory=list)
     total_rows: int = 0
     total_tables: int = 0
     duration_seconds: float = 0.0
+    table_timings: tuple[tuple[str, int, int], ...] = ()
 
 
 def orchestrate(  # noqa: PLR0913
@@ -63,6 +71,7 @@ def orchestrate(  # noqa: PLR0913
 
     selection = _select_engines(engine, schema, seed, lora_path)
     parent_data: dict[str, list[dict[str, Any]]] = {}
+    timings: list[tuple[str, int, int]] = []
 
     for table_name in insertion_order:
         if _is_excluded(table_name, config):
@@ -74,6 +83,7 @@ def orchestrate(  # noqa: PLR0913
 
         num_rows = _get_row_count(table_name, config, default_rows)
         mappings = all_mappings.get(table_name, {})
+        table_start = time.perf_counter_ns()
         rows = _generate_rows(
             selection,
             table_schema,
@@ -83,8 +93,10 @@ def orchestrate(  # noqa: PLR0913
         )
         sample_fk_values(table_schema, parent_data, rows, seed)
         rows = enforce_constraints(table_schema, rows, seed)
+        table_ms = (time.perf_counter_ns() - table_start) // 1_000_000
 
         parent_data[table_name] = rows
+        timings.append((table_name, len(rows), table_ms))
 
     duration = time.monotonic() - start
     total_rows = sum(len(rows) for rows in parent_data.values())
@@ -96,6 +108,7 @@ def orchestrate(  # noqa: PLR0913
         total_rows=total_rows,
         total_tables=len(parent_data),
         duration_seconds=round(duration, 3),
+        table_timings=tuple(timings),
     )
 
 
