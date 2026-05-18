@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 import logging
 import os
+import stat
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -357,3 +359,72 @@ class TestLegacyFormat:
         loaded = store.load_latest()
         assert loaded is not None
         assert loaded.table_names() == minimal_schema.table_names()
+
+
+# ── Privacy-tier file-permission hardening ───────────────────────────────
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX file modes not enforced on Windows")
+class TestSnapshotPermissionHardening:
+    def test_save_hardens_permissions_when_tier_not_local(
+        self, tmp_path: Path, minimal_schema: DatabaseSchema
+    ) -> None:
+        """tier > local → dir 0o700, file 0o600 (no world/group access)."""
+        snap_dir = tmp_path / "snaps"
+        store = SnapshotStore(base_dir=snap_dir, privacy_tier="cloud")
+        info = store.save(minimal_schema)
+
+        assert stat.S_IMODE(snap_dir.stat().st_mode) == 0o700
+        assert stat.S_IMODE(info.path.stat().st_mode) == 0o600
+
+    def test_save_redacted_tier_also_hardened(
+        self, tmp_path: Path, minimal_schema: DatabaseSchema
+    ) -> None:
+        snap_dir = tmp_path / "snaps"
+        store = SnapshotStore(base_dir=snap_dir, privacy_tier="redacted")
+        info = store.save(minimal_schema)
+
+        assert stat.S_IMODE(snap_dir.stat().st_mode) == 0o700
+        assert stat.S_IMODE(info.path.stat().st_mode) == 0o600
+
+    def test_save_default_tier_does_not_chmod(
+        self,
+        tmp_path: Path,
+        minimal_schema: DatabaseSchema,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Default (local) tier must not invoke chmod (no behaviour change)."""
+        calls: list[object] = []
+        real_chmod = os.chmod
+
+        def _spy_chmod(path: object, mode: int, *a: object, **k: object) -> None:
+            calls.append((path, mode))
+            real_chmod(path, mode, *a, **k)  # type: ignore[arg-type]
+
+        monkeypatch.setattr(os, "chmod", _spy_chmod)
+
+        store = SnapshotStore(base_dir=tmp_path / "snaps")  # default local
+        store.save(minimal_schema)
+
+        assert calls == []
+
+    def test_privacy_tier_defaults_to_local(self, tmp_path: Path) -> None:
+        store = SnapshotStore(base_dir=tmp_path)
+        assert store.privacy_tier == "local"
+
+    def test_idempotent_resave_rehardens_existing_file(
+        self, tmp_path: Path, minimal_schema: DatabaseSchema
+    ) -> None:
+        """A snapshot first written under ``local`` is hardened when the
+        same schema is re-saved under a stricter tier."""
+        snap_dir = tmp_path / "snaps"
+        local_store = SnapshotStore(base_dir=snap_dir)  # local
+        info = local_store.save(minimal_schema)
+        # World/group-readable under the default tier (umask-dependent).
+
+        cloud_store = SnapshotStore(base_dir=snap_dir, privacy_tier="cloud")
+        info2 = cloud_store.save(minimal_schema)  # idempotent hit
+
+        assert info2.path == info.path  # same file (idempotent)
+        assert stat.S_IMODE(info.path.stat().st_mode) == 0o600
+        assert stat.S_IMODE(snap_dir.stat().st_mode) == 0o700

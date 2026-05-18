@@ -336,3 +336,108 @@ class TestInitTomlContent:
         content = (tmp_path / "dbsprout.toml").read_text()
         assert "snapshot" in content
         assert ".dbsprout/snapshots/" in content
+
+
+# ── TOML is well-formed + injection-safe ─────────────────────────────────
+
+
+def _load_toml(path: Path) -> dict[str, object]:
+    """Parse a generated TOML file with the stdlib parser."""
+    try:
+        import tomllib  # noqa: PLC0415
+    except ModuleNotFoundError:  # pragma: no cover - py3.10 fallback
+        import tomli as tomllib  # type: ignore[no-redef]  # noqa: PLC0415
+
+    with path.open("rb") as fh:
+        return tomllib.load(fh)
+
+
+class TestInitTomlIsValid:
+    @patch("dbsprout.cli.commands.init.resolve_cycles")
+    @patch("dbsprout.cli.commands.init.introspect")
+    def test_generated_toml_round_trips(
+        self, mock_introspect: MagicMock, mock_resolve: MagicMock, tmp_path: Path
+    ) -> None:
+        schema = _simple_schema()
+        mock_introspect.return_value = schema
+        mock_resolve.return_value = _mock_resolved(schema)
+
+        result = runner.invoke(
+            app, ["init", "--db", "sqlite:///test.db", "--output-dir", str(tmp_path)]
+        )
+        assert result.exit_code == 0
+
+        parsed = _load_toml(tmp_path / "dbsprout.toml")
+        assert parsed["schema"]["dialect"] == "sqlite"  # type: ignore[index]
+        assert parsed["generation"]["default_rows"] == 100  # type: ignore[index]
+        assert parsed["generation"]["seed"] == 42  # type: ignore[index]
+        assert parsed["generation"]["output_format"] == "sql"  # type: ignore[index]
+
+
+class TestInitTomlInjection:
+    @patch("dbsprout.cli.commands.init.resolve_cycles")
+    @patch("dbsprout.cli.commands.init.introspect")
+    def test_dialect_injection_blocked(
+        self, mock_introspect: MagicMock, mock_resolve: MagicMock, tmp_path: Path
+    ) -> None:
+        """A malicious dialect must not inject extra TOML keys."""
+        malicious = 'sqlite"\nsource = "injected"'
+        schema = DatabaseSchema(
+            tables=[
+                TableSchema(
+                    name="users",
+                    columns=[
+                        ColumnSchema(name="id", data_type=ColumnType.INTEGER, nullable=False),
+                    ],
+                    primary_key=["id"],
+                ),
+            ],
+            dialect=malicious,
+            source="introspect",
+        )
+        mock_introspect.return_value = schema
+        mock_resolve.return_value = _mock_resolved(schema)
+
+        result = runner.invoke(
+            app, ["init", "--db", "sqlite:///test.db", "--output-dir", str(tmp_path)]
+        )
+        assert result.exit_code == 0
+
+        parsed = _load_toml(tmp_path / "dbsprout.toml")
+        # The malicious string is preserved verbatim as the dialect value.
+        assert parsed["schema"]["dialect"] == malicious  # type: ignore[index]
+        # No injected top-level "source = injected" key.
+        assert "source" not in parsed
+        # The real (sanitized) DB URL is the only source value.
+        assert parsed["schema"]["source"] != "injected"  # type: ignore[index]
+        assert parsed["schema"]["source"] == "sqlite:///test.db"  # type: ignore[index]
+
+    def test_source_injection_blocked(self, tmp_path: Path) -> None:
+        """A malicious DDL file path (the ``source`` value) stays inert.
+
+        The ``--file`` path stores the file path string verbatim as the
+        ``source`` value; a path crafted with TOML metacharacters must not
+        inject extra keys.
+        """
+        evil_name = 'schema".sql\nsnapshot = "/etc/passwd'
+        ddl_file = tmp_path / "schema.sql"
+        ddl_file.write_text("CREATE TABLE users (id INTEGER PRIMARY KEY);")
+
+        with patch("dbsprout.schema.parsers.parse_schema_file") as mock_parse:
+            mock_parse.return_value = _simple_schema()
+            result = runner.invoke(
+                app,
+                [
+                    "init",
+                    "--file",
+                    evil_name,
+                    "--output-dir",
+                    str(tmp_path),
+                ],
+            )
+        assert result.exit_code == 0
+
+        parsed = _load_toml(tmp_path / "dbsprout.toml")
+        assert "snapshot" not in parsed  # not injected at top level
+        assert parsed["schema"]["source"] == evil_name  # type: ignore[index]
+        assert parsed["schema"]["snapshot"] == ".dbsprout/snapshots/"  # type: ignore[index]
