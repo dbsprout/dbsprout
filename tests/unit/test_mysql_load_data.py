@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import uuid
 from datetime import date, datetime, time
 from decimal import Decimal
@@ -574,3 +575,30 @@ class TestLocalInfileErrorDetection:
             MysqlLoadDataWriter().write(
                 _simple_data(), _simple_schema(), ["users"], "mysql://localhost/test"
             )
+
+
+# ── LOAD DATA INFILE path escaping (S-103) ──────────────────────────────
+
+
+class TestLoadDataSqlEscaping:
+    """AC: temp-path escaping robust vs backslash + single-quote combos."""
+
+    def test_backslash_and_quote_escaped_without_double_escape(self) -> None:
+        """A path with both ``\\`` and ``'`` escapes correctly (S-103).
+
+        Backslash must be escaped to ``\\\\`` BEFORE the single quote is
+        escaped to ``\\'``; otherwise the injected backslash is double-escaped.
+        """
+        sql = MysqlLoadDataWriter._load_data_sql("t", ["c"], r"/tmp/a\b'c")  # noqa: S108 — synthetic string, never a real file
+        assert r"LOAD DATA LOCAL INFILE '/tmp/a\\b\'c'" in sql
+
+    def test_plain_absolute_path_unchanged(self) -> None:
+        """A plain absolute path is emitted verbatim (no special chars)."""
+        sql = MysqlLoadDataWriter._load_data_sql("t", ["c"], "/tmp/plain123")  # noqa: S108 — synthetic string, never a real file
+        assert "LOAD DATA LOCAL INFILE '/tmp/plain123' " in sql
+
+    def test_relative_path_normalised_to_absolute(self) -> None:
+        """A relative temp path is normalised via ``os.path.abspath``."""
+        sql = MysqlLoadDataWriter._load_data_sql("t", ["c"], "rel.txt")
+        expected = os.path.abspath("rel.txt")
+        assert f"LOAD DATA LOCAL INFILE '{expected}' " in sql

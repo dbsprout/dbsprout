@@ -310,7 +310,9 @@ class MysqlLoadDataWriter:
         """Build a LOAD DATA LOCAL INFILE statement targeting ``dest``."""
         quoted_dest = _quote_mysql_identifier(dest)
         quoted_cols = ", ".join(_quote_mysql_identifier(c) for c in columns)
-        safe_path = tmp_path.replace("'", "\\'")
+        # Escape backslash BEFORE the single quote so the backslash we inject
+        # for the quote is not itself double-escaped (S-103).
+        safe_path = os.path.abspath(tmp_path).replace("\\", "\\\\").replace("'", "\\'")
         return (
             f"LOAD DATA LOCAL INFILE '{safe_path}' "
             f"INTO TABLE {quoted_dest} "
