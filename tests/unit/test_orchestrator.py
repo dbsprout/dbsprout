@@ -212,3 +212,70 @@ class TestGenerateResult:
         assert result.total_tables == 2
         assert result.total_rows == 10  # 5 users + 5 orders
         assert isinstance(result.tables_data, dict)
+
+
+class TestPerTableTimings:
+    def test_table_timings_populated(self) -> None:
+        """GenerateResult.table_timings has one entry per generated table."""
+        schema = _users_orders_schema()
+        config = DBSproutConfig()
+
+        result = orchestrate(schema, config, seed=42, default_rows=5)
+
+        timings = {name: (rows, ms) for name, rows, ms in result.table_timings}
+        assert set(timings) == {"users", "orders"}
+        assert timings["users"][0] == 5
+        assert timings["orders"][0] == 5
+        for _name, _rows, ms in result.table_timings:
+            assert ms >= 0
+
+    def test_table_timings_default_empty(self) -> None:
+        """Empty schema yields no timings (default ``()``)."""
+        config = DBSproutConfig()
+        result = orchestrate(DatabaseSchema(tables=[]), config, seed=1, default_rows=5)
+        assert result.table_timings == ()
+
+
+class TestSpecUsagePassthrough:
+    """S-080a: orchestrate surfaces real spec LLM usage on GenerateResult."""
+
+    def test_spec_usage_default_none(self) -> None:
+        """Heuristic path performs no LLM call → spec_usage is None (honest)."""
+        schema = _users_orders_schema()
+        result = orchestrate(schema, DBSproutConfig(), seed=1, default_rows=2)
+        assert result.spec_usage is None
+
+    def test_spec_usage_none_for_spec_without_lora(self) -> None:
+        """spec engine w/o lora uses heuristic_fallback → no LLM, None usage."""
+        schema = _users_orders_schema()
+        result = orchestrate(schema, DBSproutConfig(), seed=1, default_rows=2, engine="spec")
+        assert result.spec_usage is None
+
+    def test_spec_usage_threaded_from_analyzer(self) -> None:
+        """spec engine + lora: analyzer's real usage rides on GenerateResult."""
+        from pathlib import Path  # noqa: PLC0415
+        from unittest.mock import patch  # noqa: PLC0415
+
+        from dbsprout.spec.analyzer import heuristic_fallback  # noqa: PLC0415
+        from dbsprout.spec.providers.base import SpecUsage  # noqa: PLC0415
+
+        schema = _users_orders_schema()
+        fake_spec = heuristic_fallback(schema)
+        usage = SpecUsage(tokens_sent=99, tokens_received=88, cost_usd=0.0)
+
+        with (
+            patch("dbsprout.spec.providers.embedded.EmbeddedProvider"),
+            patch("dbsprout.spec.analyzer.SpecAnalyzer") as m_analyzer,
+        ):
+            m_analyzer.return_value.analyze.return_value = fake_spec
+            m_analyzer.return_value.get_last_usage.return_value = usage
+            result = orchestrate(
+                schema,
+                DBSproutConfig(),
+                seed=42,
+                default_rows=2,
+                engine="spec",
+                lora_path=Path("/tmp/a.gguf"),  # noqa: S108 — mock boundary
+            )
+
+        assert result.spec_usage == usage

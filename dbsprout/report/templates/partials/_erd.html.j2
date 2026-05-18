@@ -1,0 +1,61 @@
+{#-
+  S-082 — Schema ERD partial.
+
+  Self-contained: when `erd_mermaid` is set we embed the auto-generated
+  Mermaid `erDiagram` source inside a <pre class="mermaid"> element. The
+  source is the deliverable and is human-readable as-is; a tiny inline
+  bootstrap upgrades it to a rendered SVG only if a *local* (non-CDN)
+  Mermaid asset is reachable, otherwise the readable source remains —
+  no external https resources, stays under the report size cap.
+-#}
+<h2>Schema ERD</h2>
+{% if erd_mermaid %}
+<style>
+  #erd .erd-diagram {
+    background: var(--bg-elev);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 1rem;
+    overflow-x: auto;
+  }
+  #erd pre.mermaid {
+    margin: 0;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 0.8rem;
+    line-height: 1.45;
+    color: var(--fg);
+    white-space: pre;
+  }
+  #erd .erd-hint { margin-top: 0.5rem; }
+</style>
+<div class="erd-diagram">
+  <pre class="mermaid">{{ erd_mermaid }}</pre>
+</div>
+<p class="muted erd-hint">
+  Entity-relationship diagram auto-generated from the database schema.
+</p>
+<script>
+  (function () {
+    "use strict";
+    // Offline-first: only attempt to render if a locally-bundled Mermaid
+    // (relative path, never a remote CDN) has been provided alongside the
+    // report. Absent that, the readable erDiagram source above stays as-is.
+    var local = "mermaid.min.js";
+    var s = document.createElement("script");
+    s.src = local;
+    s.onload = function () {
+      try {
+        if (window.mermaid && window.mermaid.initialize) {
+          window.mermaid.initialize({ startOnLoad: true });
+        }
+      } catch (e) { /* keep readable source */ }
+    };
+    s.onerror = function () { /* no local asset: source stays visible */ };
+    document.head.appendChild(s);
+  })();
+</script>
+{% else %}
+<div class="placeholder" data-placeholder="erd">
+  Entity-relationship diagram will appear here (S-082).
+</div>
+{% endif %}

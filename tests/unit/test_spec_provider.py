@@ -14,9 +14,11 @@ from dbsprout.schema.models import (
     TableSchema,
 )
 from dbsprout.spec.models import DataSpec, GeneratorConfig, TableSpec
+from dbsprout.spec.providers.base import SpecUsage
 from dbsprout.spec.providers.embedded import (
     EmbeddedProvider,
     _build_prompt,
+    _usage_from_llama_response,
 )
 
 if TYPE_CHECKING:
@@ -196,3 +198,184 @@ class TestEnsureLlm:
             else:
                 sys.modules.pop("llama_cpp", None)
             provider.close()
+
+
+class TestLoRAHotSwap:
+    """S-067: additive LoRA hot-swap support on the embedded provider."""
+
+    def test_default_lora_path_none_behaviour_unchanged(self, tmp_path: Path) -> None:
+        """No lora_path -> identical S-025 behaviour, no ModelLoader created."""
+        provider = EmbeddedProvider(cache_dir=tmp_path / "cache")
+        assert provider.lora_path is None
+        assert provider._loader is None
+        provider.close()
+
+    def test_ctor_accepts_lora_path(self, tmp_path: Path) -> None:
+        adapter = tmp_path / "myschema.gguf"
+        adapter.write_bytes(b"\x00")
+        provider = EmbeddedProvider(cache_dir=tmp_path / "cache", lora_path=adapter)
+        assert provider.lora_path == adapter
+        provider.close()
+
+    def test_set_lora_swaps_via_loader(self, tmp_path: Path) -> None:
+        """set_lora() routes the next inference load through ModelLoader."""
+        from unittest.mock import MagicMock, patch  # noqa: PLC0415
+
+        adapter = tmp_path / "myschema.gguf"
+        adapter.write_bytes(b"\x00")
+        provider = EmbeddedProvider(cache_dir=tmp_path / "cache")
+        provider._download_model = MagicMock(  # type: ignore[assignment]
+            return_value=tmp_path / "base.gguf"
+        )
+
+        with patch("dbsprout.train.loader.ModelLoader") as loader_cls:
+            handle = MagicMock(name="LlamaHandle")
+            loader_cls.return_value.load.return_value = MagicMock(handle=handle, swap_seconds=0.4)
+
+            provider.set_lora(adapter)
+            assert provider.lora_path == adapter
+            llm = provider._ensure_llm()
+
+            loader_cls.return_value.load.assert_called_once()
+            _, kwargs = loader_cls.return_value.load.call_args
+            assert kwargs["lora_path"] == adapter
+            # Handle comes straight off load() — no redundant get_handle().
+            assert llm is handle
+        provider.close()
+
+    def test_set_lora_none_clears_adapter(self, tmp_path: Path) -> None:
+        adapter = tmp_path / "myschema.gguf"
+        adapter.write_bytes(b"\x00")
+        provider = EmbeddedProvider(cache_dir=tmp_path / "cache", lora_path=adapter)
+        provider.set_lora(None)
+        assert provider.lora_path is None
+        provider.close()
+
+    def test_set_lora_resets_cached_llm(self, tmp_path: Path) -> None:
+        """Swapping adapters drops the previously cached handle (hot-swap)."""
+        from unittest.mock import MagicMock  # noqa: PLC0415
+
+        provider = EmbeddedProvider(cache_dir=tmp_path / "cache")
+        provider._llm = MagicMock(name="stale")
+        provider.set_lora(tmp_path / "new.gguf")
+        assert provider._llm is None
+        provider.close()
+
+    def test_loader_path_uses_4096_n_ctx_like_base_path(self, tmp_path: Path) -> None:
+        """Review #13: the LoRA path must use the same 4096 n_ctx as S-025.
+
+        A 512 default would overflow the spec prompt; assert the n_ctx kwarg
+        reaches the (mocked) Llama ctor on the loader path.
+        """
+        from unittest.mock import MagicMock, patch  # noqa: PLC0415
+
+        adapter = tmp_path / "myschema.gguf"
+        adapter.write_bytes(b"\x00")
+        provider = EmbeddedProvider(cache_dir=tmp_path / "cache", lora_path=adapter)
+        provider._download_model = MagicMock(  # type: ignore[assignment]
+            return_value=tmp_path / "base.gguf"
+        )
+
+        with patch("dbsprout.train.loader.ModelLoader") as loader_cls:
+            handle = MagicMock(name="LlamaHandle")
+            loader_cls.return_value.load.return_value = MagicMock(handle=handle, swap_seconds=0.3)
+            loader_cls.return_value.get_handle.return_value = handle
+
+            llm = provider._ensure_llm()
+
+            _, kwargs = loader_cls.return_value.load.call_args
+            assert kwargs["n_ctx"] == 4096
+            # Review #14: handle comes straight off load() — no redundant
+            # second get_handle() lookup.
+            assert llm is handle
+            loader_cls.return_value.get_handle.assert_not_called()
+        provider.close()
+
+    def test_loader_path_logs_slow_swap(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Review #14: a >= 2s swap is observable at runtime (logged warning)."""
+        from unittest.mock import MagicMock, patch  # noqa: PLC0415
+
+        adapter = tmp_path / "s.gguf"
+        adapter.write_bytes(b"\x00")
+        provider = EmbeddedProvider(cache_dir=tmp_path / "cache", lora_path=adapter)
+        provider._download_model = MagicMock(  # type: ignore[assignment]
+            return_value=tmp_path / "base.gguf"
+        )
+        with patch("dbsprout.train.loader.ModelLoader") as loader_cls:
+            handle = MagicMock(name="LlamaHandle")
+            loader_cls.return_value.load.return_value = MagicMock(handle=handle, swap_seconds=2.5)
+            with caplog.at_level("WARNING"):
+                provider._ensure_llm()
+        assert "swap" in caplog.text.lower()
+        provider.close()
+
+
+class TestUsageFromLlamaResponse:
+    """Pure mapping of llama-cpp's real ``usage`` dict to SpecUsage (S-080a)."""
+
+    def test_real_llama_usage_keys(self) -> None:
+        # Exact real shape: CreateChatCompletionResponse["usage"] is a
+        # CompletionUsage TypedDict (prompt_tokens/completion_tokens/total).
+        response = {
+            "choices": [{"message": {"content": "{}"}}],
+            "usage": {
+                "prompt_tokens": 444,
+                "completion_tokens": 555,
+                "total_tokens": 999,
+            },
+        }
+        usage = _usage_from_llama_response(response)
+        # Local model → cost always 0.0 (honest, no API billing).
+        assert usage == SpecUsage(tokens_sent=444, tokens_received=555, cost_usd=0.0)
+
+    def test_missing_usage_key_is_honest_zero(self) -> None:
+        """If llama-cpp omits usage, counts stay 0 — never fabricated."""
+        response = {"choices": [{"message": {"content": "{}"}}]}
+        usage = _usage_from_llama_response(response)
+        assert usage == SpecUsage(tokens_sent=0, tokens_received=0, cost_usd=0.0)
+
+    def test_partial_usage_degrades_gracefully(self) -> None:
+        response = {"usage": {"prompt_tokens": 12}}
+        usage = _usage_from_llama_response(response)
+        assert usage.tokens_sent == 12
+        assert usage.tokens_received == 0
+        assert usage.cost_usd == 0.0
+
+
+class TestEmbeddedUsageCapture:
+    def test_get_last_usage_after_inference(self, tmp_path: Path) -> None:
+        """generate_spec captures real llama-cpp token counts (cost stays 0)."""
+        schema = _simple_schema()
+        mock_spec = _mock_dataspec(schema.schema_hash())
+
+        provider = EmbeddedProvider(cache_dir=tmp_path / "cache")
+        response = {
+            "choices": [{"message": {"content": mock_spec.model_dump_json()}}],
+            "usage": {
+                "prompt_tokens": 128,
+                "completion_tokens": 256,
+                "total_tokens": 384,
+            },
+        }
+        provider._raw_chat_completion = MagicMock(return_value=response)  # type: ignore[attr-defined]
+
+        provider.generate_spec(schema)
+
+        captured = provider.get_last_usage()
+        assert captured == SpecUsage(tokens_sent=128, tokens_received=256, cost_usd=0.0)
+        provider.close()
+
+    def test_get_last_usage_none_on_cache_hit(self, tmp_path: Path) -> None:
+        from dbsprout.spec.cache import SpecCache  # noqa: PLC0415
+
+        schema = _simple_schema()
+        cache = SpecCache(cache_dir=tmp_path / "cache")
+        cache.put(schema.schema_hash(), _mock_dataspec(schema.schema_hash()))
+        cache.close()
+
+        provider = EmbeddedProvider(cache_dir=tmp_path / "cache")
+        provider.generate_spec(schema)
+        assert provider.get_last_usage() is None
+        provider.close()

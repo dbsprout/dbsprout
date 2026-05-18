@@ -541,4 +541,4 @@ class TestEmptySchema:
         report = validate_integrity(data, schema)
 
         assert report.passed
-        assert report.checks == []
+        assert report.checks == ()

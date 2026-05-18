@@ -6,12 +6,19 @@ reject unknown TOML keys with clear validation errors.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Literal
+from pathlib import Path  # noqa: TC003 - runtime use by Pydantic field annotations
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-if TYPE_CHECKING:
-    from pathlib import Path
+# ``dbsprout.train.config`` is the lightweight ``[train]`` model submodule
+# (pydantic + pathlib only). The package's PEP 562 ``__getattr__`` keeps the
+# heavy training submodules (trainer/mlx_trainer/loader/exporter +
+# ``rich.progress``) off this import — they used to be eagerly re-exported by
+# ``dbsprout/train/__init__.py``, adding ~150 ms to every CLI command and
+# breaking the <500 ms startup budget. Importing the submodule directly here
+# keeps ``DBSproutConfig`` fully defined for Pydantic without that cost.
+from dbsprout.train.config import TrainConfig
 
 
 class SchemaConfig(BaseModel):
@@ -31,6 +38,7 @@ class GenerationConfig(BaseModel):
 
     default_rows: int = Field(default=100, ge=1)
     seed: int = Field(default=42, ge=0)
+    max_rows_per_table: int | None = Field(default=None, ge=1)
     engine: Literal["heuristic", "spec", "statistical", "finetuned"] = "heuristic"
     output_format: Literal["sql", "csv", "json", "jsonl", "parquet"] = "sql"
     output_dir: str = "./seeds"
@@ -53,6 +61,34 @@ class PrivacyConfig(BaseModel):
     tier: Literal["local", "redacted", "cloud"] = "local"
 
 
+class LLMConfig(BaseModel):
+    """LLM settings from the ``[llm]`` section.
+
+    ``lora_path`` is the on-disk fine-tuned adapter used by the ``spec``
+    engine (S-067/S-067b). It is the persistent home for ``--lora``: the CLI
+    flag overrides this value (S-067c). All fields optional so a config with
+    no ``[llm]`` section loads unchanged.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    lora_path: Path | None = None
+
+
+class ReportConfig(BaseModel):
+    """HTML report settings from the ``[report]`` section (S-085).
+
+    ``output`` is the destination path for the self-contained HTML report
+    produced by ``dbsprout report`` and ``dbsprout generate --report``. The
+    CLI ``--output`` flag overrides this value. All fields optional so a
+    config with no ``[report]`` section loads unchanged.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    output: str = "./seeds/report.html"
+
+
 class DBSproutConfig(BaseModel):
     """Root configuration loaded from ``dbsprout.toml``."""
 
@@ -61,6 +97,9 @@ class DBSproutConfig(BaseModel):
     schema_: SchemaConfig = Field(default_factory=SchemaConfig, alias="schema")
     generation: GenerationConfig = Field(default_factory=GenerationConfig)
     privacy: PrivacyConfig = Field(default_factory=PrivacyConfig)
+    train: TrainConfig = Field(default_factory=TrainConfig)
+    llm: LLMConfig = Field(default_factory=LLMConfig)
+    report: ReportConfig = Field(default_factory=ReportConfig)
     tables: dict[str, TableOverride] = Field(default_factory=dict)
 
     @classmethod

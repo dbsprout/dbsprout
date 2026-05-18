@@ -13,6 +13,8 @@ from datetime import date, datetime, time
 from decimal import Decimal
 from typing import TYPE_CHECKING, Any, Literal
 
+from dbsprout.output._perms import restrict_file_permissions
+
 if TYPE_CHECKING:
     from pathlib import Path
 
@@ -52,6 +54,8 @@ def _order_row(row: dict[str, Any], columns: list[str]) -> dict[str, Any]:
 
 class JSONWriter:
     """Write generated data as JSON or JSONL files."""
+
+    format: str = "json"
 
     def write(
         self,
@@ -98,9 +102,11 @@ def _write_json(filepath: Path, rows: list[dict[str, Any]]) -> None:
     """Write rows as a pretty-printed JSON array."""
     content = json.dumps(rows, cls=_SeedDataEncoder, indent=2, ensure_ascii=False)
     filepath.write_text(content + "\n", encoding="utf-8")
+    restrict_file_permissions(filepath)
 
 
 def _write_jsonl(filepath: Path, rows: list[dict[str, Any]]) -> None:
     """Write rows as JSONL (one JSON object per line)."""
     lines = [json.dumps(row, cls=_SeedDataEncoder, ensure_ascii=False) for row in rows]
     filepath.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    restrict_file_permissions(filepath)

@@ -8,16 +8,37 @@ from __future__ import annotations
 
 import typer
 
+from dbsprout.cli.commands.models import models_app
+from dbsprout.cli.commands.plugins import plugins_app
+from dbsprout.cli.commands.train import train_app
+
+
+def _validate_snapshot_hash(value: str | None) -> str | None:
+    """Typer callback: reject non-hex ``--snapshot`` prefixes (S-054a AC-4)."""
+    if value is None:
+        return None
+    import re  # noqa: PLC0415
+
+    if re.fullmatch(r"[0-9a-f]{1,64}", value) is None:
+        msg = "must be a lowercase hex prefix (1-64 chars of 0-9a-f)"
+        raise typer.BadParameter(msg)
+    return value
+
+
 app = typer.Typer(
     name="dbsprout",
     help="Generate realistic seed data from your database schema.",
     no_args_is_help=True,
 )
 
+app.add_typer(models_app, name="models")
+app.add_typer(plugins_app, name="plugins")
+app.add_typer(train_app, name="train")
+
 
 @app.command(name="init")
 def init_proxy(  # noqa: PLR0913
-    db: str | None = typer.Option(None, "--db", help="Database URL."),
+    db: str | None = typer.Option(None, "--db", help="Database URL.", envvar="DBSPROUT_TARGET_DB"),
     file: str | None = typer.Option(None, "--file", help="DDL file."),
     django: bool = typer.Option(False, "--django", help="Introspect Django models."),
     django_apps: str | None = typer.Option(
@@ -57,12 +78,49 @@ def generate_proxy(  # noqa: PLR0913
     dialect: str = typer.Option("postgresql", "--dialect", "-d"),
     engine: str = typer.Option("heuristic", "--engine", "-e"),
     privacy: str = typer.Option("local", "--privacy"),
-    db: str | None = typer.Option(None, "--db", help="Target database URL for direct insertion."),
+    reference_data: str | None = typer.Option(
+        None,
+        "--reference-data",
+        help="Reference CSV (file or per-table dir) for --engine statistical.",
+    ),
+    db: str | None = typer.Option(
+        None, "--db", help="Target database URL for direct insertion.", envvar="DBSPROUT_TARGET_DB"
+    ),
     upsert: bool = typer.Option(False, "--upsert", help="Generate UPSERT (insert-or-update) SQL."),
     insert_method: str = typer.Option(
         "auto",
         "--insert-method",
         help="Insertion method for direct output: auto, copy, load_data, batch.",
+    ),
+    file: str | None = typer.Option(
+        None,
+        "--file",
+        help="Schema file for incremental (SQL/DBML/Mermaid/PlantUML/Prisma).",
+    ),
+    incremental: bool = typer.Option(
+        False,
+        "--incremental",
+        help="Apply only schema-diff-driven updates to existing seed data.",
+    ),
+    snapshot: str | None = typer.Option(
+        None,
+        "--snapshot",
+        help="Base snapshot hash prefix (default: latest).",
+    ),
+    lora: str | None = typer.Option(
+        None,
+        "--lora",
+        help="Path to a .gguf LoRA adapter (requires --engine spec).",
+    ),
+    report: bool = typer.Option(
+        False,
+        "--report",
+        help="Also write a self-contained HTML report for this run.",
+    ),
+    report_output: str | None = typer.Option(
+        None,
+        "--report-output",
+        help="Report destination (default: [report].output or ./seeds/report.html).",
     ),
 ) -> None:
     """Generate seed data from a schema snapshot."""
@@ -80,9 +138,16 @@ def generate_proxy(  # noqa: PLR0913
         dialect=dialect,
         engine=engine,
         privacy=privacy,
+        reference_data=Path(reference_data) if reference_data else None,
         target_db=db,
         upsert=upsert,
         insert_method=insert_method,
+        file=file,
+        incremental=incremental,
+        snapshot=snapshot,
+        lora_path=Path(lora) if lora else None,
+        report=report,
+        report_output=Path(report_output) if report_output else None,
     )
 
 
@@ -123,6 +188,68 @@ def validate_proxy(  # noqa: PLR0913
     )
 
 
+@app.command(name="diff")
+def diff_proxy(
+    db: str | None = typer.Option(None, "--db", help="Database URL.", envvar="DBSPROUT_TARGET_DB"),
+    file: str | None = typer.Option(
+        None, "--file", "-f", help="Schema file (SQL/DBML/Mermaid/PlantUML/Prisma)."
+    ),
+    snapshot: str | None = typer.Option(
+        None,
+        "--snapshot",
+        help="Base snapshot hash prefix (default: latest).",
+        callback=_validate_snapshot_hash,
+    ),
+    output_format: str = typer.Option("rich", "--format", help="Output format: rich, json."),
+    output_dir: str = typer.Option(
+        ".",
+        "--output-dir",
+        "-o",
+        help=(
+            "Project root containing .dbsprout/. Config and snapshots are read "
+            "from this directory — run from a trusted location."
+        ),
+    ),
+) -> None:
+    """Report schema changes since the last snapshot."""
+    from pathlib import Path  # noqa: PLC0415
+
+    from dbsprout.cli.commands.diff import diff_command  # noqa: PLC0415
+
+    diff_command(
+        db=db,
+        file=file,
+        snapshot=snapshot,
+        output_format=output_format,
+        output_dir=Path(output_dir),
+    )
+
+
+@app.command(name="report")
+def report_proxy(
+    output: str | None = typer.Option(
+        None,
+        "--output",
+        "-o",
+        help="Report destination path (default: ./seeds/report.html or [report].output).",
+    ),
+    run_id: int | None = typer.Option(
+        None,
+        "--run-id",
+        help="Render a specific historical run id (default: most recent run).",
+    ),
+) -> None:
+    """Generate an HTML report from recorded generation runs (no regeneration)."""
+    from pathlib import Path  # noqa: PLC0415
+
+    from dbsprout.cli.commands.report import report_command  # noqa: PLC0415
+
+    report_command(
+        output=Path(output) if output else None,
+        run_id=run_id,
+    )
+
+
 @app.command(name="audit")
 def audit_proxy(
     last: int | None = typer.Option(None, "--last", "-n", min=1),
@@ -133,6 +260,43 @@ def audit_proxy(
     audit_command(last=last)
 
 
+@app.command(name="doctor")
+def doctor_proxy(
+    db: str | None = typer.Option(
+        None, "--db", help="Database URL to test.", envvar="DBSPROUT_TARGET_DB"
+    ),
+    config_path: str | None = typer.Option(
+        "dbsprout.toml", "--config", help="Config file to scan for secrets."
+    ),
+) -> None:
+    """Diagnose the local environment for common configuration issues."""
+    from dbsprout.cli.commands.doctor import doctor_command  # noqa: PLC0415
+
+    doctor_command(db=db, config_path=config_path)
+
+
 @app.callback()
-def main() -> None:
-    """DBSprout — realistic database seed data from your schema."""
+def main(
+    verbose: bool = typer.Option(False, "--verbose", "-v", help="Show full tracebacks on error."),
+) -> None:
+    """DBSprout — realistic database seed data from your schema.
+
+    ``--verbose`` is declared here so Typer accepts it as a global option;
+    it is actually consumed by :func:`run` before Typer dispatches (the
+    error guard needs to know whether to print a traceback).
+    """
+
+
+def run() -> None:
+    """Console-script entrypoint: render DBSproutError as a Rich panel.
+
+    ``--verbose`` is parsed manually here (it is consumed before Typer is even
+    invoked) so the global guard knows whether to print a traceback.
+    """
+    import sys  # noqa: PLC0415
+
+    from dbsprout.cli.error_handler import handle_cli_errors  # noqa: PLC0415
+
+    verbose = "--verbose" in sys.argv or "-v" in sys.argv
+    with handle_cli_errors(verbose=verbose):
+        app()

@@ -1,0 +1,27 @@
+{#- S-083 quality-metrics table (classified pass/fail/warn). -#}
+<h2>Quality Metrics</h2>
+<table>
+  <thead>
+    <tr><th>Type</th><th>Metric</th><th>Score</th><th>Status</th></tr>
+  </thead>
+  <tbody>
+    {% for q in quality_table %}
+    <tr>
+      <td>{{ q.metric_type }}</td>
+      <td>{{ q.metric_name }}</td>
+      <td>{{ q.score }}</td>
+      <td>
+        {% if q.status == "pass" %}
+        <span class="badge pass status-pass">PASS</span>
+        {% elif q.status == "warn" %}
+        <span class="badge warn status-warn">WARN</span>
+        {% else %}
+        <span class="badge fail status-fail">FAIL</span>
+        {% endif %}
+      </td>
+    </tr>
+    {% else %}
+    <tr><td colspan="4" class="muted">No quality metrics recorded.</td></tr>
+    {% endfor %}
+  </tbody>
+</table>

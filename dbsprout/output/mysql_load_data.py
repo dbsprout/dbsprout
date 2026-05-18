@@ -18,6 +18,8 @@ from decimal import Decimal
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urlparse
 
+from dbsprout.output._perms import restrict_file_permissions
+
 if TYPE_CHECKING:
     from types import ModuleType
 
@@ -113,7 +115,9 @@ def _write_temp_file(content: str) -> str:
         mode="w", suffix=".tsv", delete=False, encoding="utf-8"
     ) as tmp:
         tmp.write(content)
-        return tmp.name
+        path = tmp.name
+    restrict_file_permissions(path)
+    return path
 
 
 def _cleanup_temp_files(paths: list[str]) -> None:
@@ -123,18 +127,73 @@ def _cleanup_temp_files(paths: list[str]) -> None:
             os.unlink(f)
 
 
+_STAGING_PREFIX = "_dbsprout_stg_"
+
+
+def _staging_name(table_name: str) -> str:
+    """Deterministic staging table name for a target table."""
+    return f"{_STAGING_PREFIX}{table_name}"
+
+
+def _build_mysql_merge_sql(
+    target: str, staging: str, columns: list[str], pk_columns: list[str]
+) -> str:
+    """INSERT INTO target (cols) SELECT cols FROM staging ON DUPLICATE KEY UPDATE.
+
+    All-PK tables (no updatable columns) use ``INSERT IGNORE``.
+    """
+    # Identifiers are backtick-quoted from the schema (no user-supplied SQL).
+    qt = _quote_mysql_identifier(target)
+    qs = _quote_mysql_identifier(staging)
+    qcols = ", ".join(_quote_mysql_identifier(c) for c in columns)
+    update_cols = [c for c in columns if c not in pk_columns]
+    select = f"({qcols}) SELECT {qcols} FROM {qs}"  # noqa: S608  # nosec B608 - schema-quoted
+    if not update_cols:
+        return f"INSERT IGNORE INTO {qt} {select}"  # nosec B608
+    sets = ", ".join(
+        f"{_quote_mysql_identifier(c)} = VALUES({_quote_mysql_identifier(c)})" for c in update_cols
+    )
+    return f"INSERT INTO {qt} {select} ON DUPLICATE KEY UPDATE {sets}"  # nosec B608
+
+
+_LOCAL_INFILE_ERROR_CODES = frozenset({1148, 3948})
+
+
+def _is_local_infile_error(exc: Exception) -> bool:
+    """Check if an exception is a MySQL local_infile disabled error."""
+    if pymysql is not None:
+        try:
+            if not isinstance(exc, pymysql.err.OperationalError):
+                return False
+        except TypeError:
+            pass  # pymysql may be mocked in tests
+    if not (hasattr(exc, "args") and exc.args and isinstance(exc.args[0], int)):
+        return False
+    return exc.args[0] in _LOCAL_INFILE_ERROR_CODES
+
+
 class MysqlLoadDataWriter:
     """Write generated data directly to MySQL via LOAD DATA LOCAL INFILE."""
 
-    def write(
+    format: str = "mysql_load_data"
+
+    def write(  # noqa: PLR0913
         self,
         tables_data: dict[str, list[dict[str, Any]]],
         schema: DatabaseSchema,
         insertion_order: list[str],
         db_url: str,
         batch_size: int = 10_000,
+        upsert: bool = False,
     ) -> Any:
         """Insert data via LOAD DATA for each table in topological order.
+
+        When ``upsert`` is True and a table has a primary key, data is loaded
+        into a session-scoped ``TEMPORARY`` staging table, merged into the
+        target via ``INSERT ... SELECT ... ON DUPLICATE KEY UPDATE``, and the
+        staging table is always dropped (even on failure). Tables without a
+        primary key fall back to a plain LOAD into the target, matching the
+        SQL writer's ``build_upsert`` behaviour.
 
         Returns an InsertResult with counts and duration.
         """
@@ -143,7 +202,7 @@ class MysqlLoadDataWriter:
         if pymysql is None:
             msg = (
                 "pymysql is required for direct MySQL insertion. "
-                "Install it with: pip install dbsprout[db]"
+                'Install it with: pip install "dbsprout[db]"'
             )
             raise ImportError(msg)
 
@@ -168,13 +227,27 @@ class MysqlLoadDataWriter:
                 try:
                     cur.execute("SET FOREIGN_KEY_CHECKS=0")
                     tables_inserted, total_rows = self._load_tables(
-                        cur, tables_data, schema, insertion_order, batch_size, temp_files
+                        cur,
+                        tables_data,
+                        schema,
+                        insertion_order,
+                        batch_size,
+                        temp_files,
+                        upsert,
                     )
                     conn.commit()
                 except RuntimeError:
                     raise
                 except Exception as exc:
                     conn.rollback()
+                    if _is_local_infile_error(exc):
+                        msg = (
+                            "MySQL LOAD DATA LOCAL INFILE is disabled. "
+                            "Enable local_infile on the server with: "
+                            "SET GLOBAL local_infile = 1; "
+                            "and ensure the client connection uses local_infile=True."
+                        )
+                        raise RuntimeError(msg) from exc
                     msg = (
                         f"MySQL insertion failed: {type(exc).__name__}. "
                         "Verify the --db URL and ensure the server is reachable."
@@ -204,6 +277,7 @@ class MysqlLoadDataWriter:
         insertion_order: list[str],
         batch_size: int,
         temp_files: list[str],
+        upsert: bool = False,
     ) -> tuple[int, int]:
         """Load all tables via LOAD DATA, returning (tables_inserted, total_rows)."""
         tables_inserted = 0
@@ -218,26 +292,74 @@ class MysqlLoadDataWriter:
             columns = (
                 [col.name for col in table_schema.columns] if table_schema else list(rows[0].keys())
             )
+            pk_columns = (
+                list(table_schema.primary_key)
+                if upsert and table_schema and table_schema.primary_key
+                else []
+            )
 
-            for i in range(0, len(rows), batch_size):
-                batch = rows[i : i + batch_size]
-                content = build_load_data_content(columns, batch)
-                tmp_path = _write_temp_file(content)
-                temp_files.append(tmp_path)
-
-                quoted_table = _quote_mysql_identifier(table_name)
-                quoted_cols = ", ".join(_quote_mysql_identifier(c) for c in columns)
-                safe_path = tmp_path.replace("'", "\\'")
-                load_sql = (
-                    f"LOAD DATA LOCAL INFILE '{safe_path}' "
-                    f"INTO TABLE {quoted_table} "
-                    "FIELDS TERMINATED BY '\\t' "
-                    "LINES TERMINATED BY '\\n' "
-                    f"({quoted_cols})"
-                )
-                cur.execute(load_sql)
+            self._load_one_table(cur, table_name, columns, rows, batch_size, temp_files, pk_columns)
 
             tables_inserted += 1
             total_rows += len(rows)
 
         return tables_inserted, total_rows
+
+    @staticmethod
+    def _load_data_sql(dest: str, columns: list[str], tmp_path: str) -> str:
+        """Build a LOAD DATA LOCAL INFILE statement targeting ``dest``."""
+        quoted_dest = _quote_mysql_identifier(dest)
+        quoted_cols = ", ".join(_quote_mysql_identifier(c) for c in columns)
+        # Escape backslash BEFORE the single quote so the backslash we inject
+        # for the quote is not itself double-escaped (S-103).
+        safe_path = os.path.abspath(tmp_path).replace("\\", "\\\\").replace("'", "\\'")
+        return (
+            f"LOAD DATA LOCAL INFILE '{safe_path}' "
+            f"INTO TABLE {quoted_dest} "
+            "FIELDS TERMINATED BY '\\t' "
+            "LINES TERMINATED BY '\\n' "
+            f"({quoted_cols})"
+        )
+
+    def _load_batches(  # noqa: PLR0913
+        self,
+        cur: Any,
+        dest: str,
+        columns: list[str],
+        rows: list[dict[str, Any]],
+        batch_size: int,
+        temp_files: list[str],
+    ) -> None:
+        """LOAD DATA all batches of ``rows`` into ``dest`` (target or staging)."""
+        for i in range(0, len(rows), batch_size):
+            batch = rows[i : i + batch_size]
+            content = build_load_data_content(columns, batch)
+            tmp_path = _write_temp_file(content)
+            temp_files.append(tmp_path)
+            cur.execute(self._load_data_sql(dest, columns, tmp_path))
+
+    def _load_one_table(  # noqa: PLR0913
+        self,
+        cur: Any,
+        table_name: str,
+        columns: list[str],
+        rows: list[dict[str, Any]],
+        batch_size: int,
+        temp_files: list[str],
+        pk_columns: list[str],
+    ) -> None:
+        """Load one table, using a TEMPORARY staging table when upserting."""
+        if not pk_columns:
+            self._load_batches(cur, table_name, columns, rows, batch_size, temp_files)
+            return
+
+        staging = _staging_name(table_name)
+        quoted_stg = _quote_mysql_identifier(staging)
+        quoted_tgt = _quote_mysql_identifier(table_name)
+        try:
+            cur.execute(f"CREATE TEMPORARY TABLE {quoted_stg} LIKE {quoted_tgt}")
+            self._load_batches(cur, staging, columns, rows, batch_size, temp_files)
+            cur.execute(_build_mysql_merge_sql(table_name, staging, columns, pk_columns))
+        finally:
+            with contextlib.suppress(Exception):
+                cur.execute(f"DROP TEMPORARY TABLE IF EXISTS {quoted_stg}")

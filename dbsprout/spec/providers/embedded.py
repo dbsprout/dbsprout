@@ -7,11 +7,12 @@ constraints for guaranteed valid JSON output. No API keys needed.
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-if TYPE_CHECKING:
-    from pathlib import Path
+from dbsprout.spec.providers.base import SpecUsage
 
+if TYPE_CHECKING:
     from dbsprout.schema.models import DatabaseSchema
     from dbsprout.spec.models import DataSpec
 
@@ -42,6 +43,7 @@ class EmbeddedProvider:
         cache_dir: Path | str = ".dbsprout/cache",
         model_repo: str = _DEFAULT_MODEL_REPO,
         model_file: str = _DEFAULT_MODEL_FILE,
+        lora_path: Path | str | None = None,
     ) -> None:
         from dbsprout.spec.cache import SpecCache  # noqa: PLC0415
 
@@ -49,6 +51,30 @@ class EmbeddedProvider:
         self._model_repo = model_repo
         self._model_file = model_file
         self._llm: Any = None
+        # S-067 LoRA hot-swap: when a ``lora_path`` is in use the ``Llama``
+        # handle is owned by a ``ModelLoader`` (LRU cache + restart-free swap).
+        # When ``lora_path`` is ``None`` the loader is never created and the
+        # original S-025 direct-``Llama`` path is preserved unchanged.
+        self._lora_path: Path | None = Path(lora_path) if lora_path is not None else None
+        self._loader: Any = None
+        self._last_usage: SpecUsage | None = None
+
+    @property
+    def lora_path(self) -> Path | None:
+        """The active LoRA adapter path, or ``None`` for the base model."""
+        return self._lora_path
+
+    def set_lora(self, lora_path: Path | str | None) -> None:
+        """Hot-swap the LoRA adapter used for subsequent inference.
+
+        Sets the adapter and drops the cached ``Llama`` handle so the next
+        :meth:`_run_inference` reloads via the :class:`ModelLoader` (which
+        unloads the previous handle before constructing the new one — no
+        process restart). Passing ``None`` reverts to the base model.
+        """
+        self._lora_path = Path(lora_path) if lora_path is not None else None
+        # Force the next _ensure_llm() to (re)load through the loader.
+        self._llm = None
 
     def generate_spec(self, schema: DatabaseSchema) -> DataSpec:
         """Generate a DataSpec from a database schema.
@@ -58,6 +84,7 @@ class EmbeddedProvider:
         """
         from dbsprout.spec.models import DataSpec as _DataSpec  # noqa: PLC0415
 
+        self._last_usage = None
         schema_hash = schema.schema_hash()
 
         # Check cache
@@ -78,10 +105,33 @@ class EmbeddedProvider:
 
         return spec
 
-    def _run_inference(self, prompt: str) -> str:  # pragma: no cover
+    def get_last_usage(self) -> SpecUsage | None:
+        """Token accounting for the most recent real inference (S-080a).
+
+        Token counts come from llama-cpp's ``usage`` dict when exposed;
+        ``cost_usd`` is always ``0.0`` (local inference is not billed).
+        Returns ``None`` after a cache hit or before any real call.
+        """
+        return self._last_usage
+
+    def _run_inference(self, prompt: str) -> str:
         """Run LLM inference with GBNF grammar constraint.
 
-        Returns raw JSON string. Requires llama-cpp-python.
+        Returns the raw JSON string and, as a side effect, records the
+        real llama-cpp token usage (S-080a) via :meth:`get_last_usage`.
+        Requires llama-cpp-python.
+        """
+        response = self._raw_chat_completion(prompt)
+        self._last_usage = _usage_from_llama_response(response)
+        content: str = response["choices"][0]["message"]["content"]
+        return content
+
+    def _raw_chat_completion(self, prompt: str) -> Any:  # pragma: no cover
+        """Call llama-cpp ``create_chat_completion`` and return the full dict.
+
+        Returns the real ``CreateChatCompletionResponse`` mapping (including
+        its ``usage`` key) so token accounting can be extracted without a
+        second inference call. Requires llama-cpp-python.
         """
         llm = self._ensure_llm()
 
@@ -90,17 +140,17 @@ class EmbeddedProvider:
         grammar_str = generate_dataspec_grammar()
 
         try:
-            from llama_cpp import LlamaGrammar  # type: ignore[import-not-found]  # noqa: PLC0415
+            from llama_cpp import LlamaGrammar  # noqa: PLC0415
         except ImportError:
             msg = (
                 "llama-cpp-python is required for embedded LLM inference. "
-                "Install with: pip install dbsprout[llm]"
+                "Install it with: pip install dbsprout[llm]"
             )
             raise ImportError(msg) from None
 
         grammar = LlamaGrammar.from_string(grammar_str)
 
-        response = llm.create_chat_completion(
+        return llm.create_chat_completion(
             messages=[
                 {"role": "system", "content": _SYSTEM_PROMPT},
                 {"role": "user", "content": prompt},
@@ -110,32 +160,65 @@ class EmbeddedProvider:
             max_tokens=_DEFAULT_MAX_TOKENS,
         )
 
-        content: str = response["choices"][0]["message"]["content"]
-        return content
+    def _ensure_llm(self) -> Any:
+        """Lazy-load the LLM model. Requires llama-cpp-python.
 
-    def _ensure_llm(self) -> Any:  # pragma: no cover
-        """Lazy-load the LLM model. Requires llama-cpp-python."""
+        When a LoRA adapter is active (S-067) the ``Llama`` handle is loaded
+        and cached by a :class:`~dbsprout.train.loader.ModelLoader`, enabling
+        restart-free hot-swap between adapters. Without an adapter the original
+        S-025 direct-``Llama`` construction path is used unchanged.
+        """
         if self._llm is not None:
             return self._llm
 
         model_path = self._download_model()
+
+        if self._lora_path is not None:
+            self._llm = self._load_via_loader(model_path)
+            return self._llm
 
         try:
             from llama_cpp import Llama  # noqa: PLC0415
         except ImportError:
             msg = (
                 "llama-cpp-python is required for embedded LLM inference. "
-                "Install with: pip install dbsprout[llm]"
+                "Install it with: pip install dbsprout[llm]"
             )
             raise ImportError(msg) from None
 
         logger.info("Loading model from %s", model_path)
-        self._llm = Llama(
+        self._llm = Llama(  # pragma: no cover - real model load, never in CI
             model_path=str(model_path),
             n_ctx=_DEFAULT_N_CTX,
             verbose=False,
         )
         return self._llm
+
+    def _load_via_loader(self, model_path: Path) -> Any:
+        """Load (or hot-swap) the model+adapter through the ModelLoader.
+
+        Threads the same ``n_ctx`` as the S-025 base path so the LoRA path
+        does not overflow the spec prompt, and uses the handle returned by
+        ``load()`` directly (no redundant second ``get_handle`` lookup). A
+        slow swap (>= the loader's budget) is surfaced as a WARNING so the
+        ``<2s`` AC is observable at runtime.
+        """
+        from dbsprout.train.loader import (  # noqa: PLC0415
+            _MAX_SWAP_SECONDS,
+            ModelLoader,
+        )
+
+        if self._loader is None:
+            self._loader = ModelLoader()
+        loaded = self._loader.load(model_path, lora_path=self._lora_path, n_ctx=_DEFAULT_N_CTX)
+        if loaded.swap_seconds >= _MAX_SWAP_SECONDS:
+            logger.warning(
+                "LoRA hot-swap took %.2fs (>= %.1fs budget) for adapter %s",
+                loaded.swap_seconds,
+                _MAX_SWAP_SECONDS,
+                self._lora_path,
+            )
+        return loaded.handle
 
     def _download_model(self) -> Path:  # pragma: no cover
         """Download the model from Hugging Face if not cached."""
@@ -154,14 +237,43 @@ class EmbeddedProvider:
         self._cache.close()
 
 
+def _usage_from_llama_response(response: Any) -> SpecUsage:
+    """Map llama-cpp's real ``usage`` dict to :class:`SpecUsage` (S-080a).
+
+    The pinned llama-cpp-python (>=0.3) ``CreateChatCompletionResponse``
+    carries a required ``usage`` ``CompletionUsage`` mapping with integer
+    ``prompt_tokens`` / ``completion_tokens``. If a build omits it, counts
+    stay ``0`` rather than being fabricated. ``cost_usd`` is always ``0.0``:
+    local inference is not billed.
+    """
+    usage = None
+    if isinstance(response, dict):
+        usage = response.get("usage")
+    if not isinstance(usage, dict):
+        return SpecUsage()
+    return SpecUsage(
+        tokens_sent=_as_int(usage.get("prompt_tokens", 0)),
+        tokens_received=_as_int(usage.get("completion_tokens", 0)),
+        cost_usd=0.0,
+    )
+
+
+def _as_int(value: Any) -> int:
+    """Coerce a token count to ``int``; ``0`` if not coercible (honest)."""
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return 0
+
+
 def _import_hf_hub_download() -> Any:
     """Import hf_hub_download with a clear error on missing dependency."""
     try:
-        from huggingface_hub import hf_hub_download  # type: ignore[import-not-found]  # noqa: PLC0415, I001
+        from huggingface_hub import hf_hub_download  # noqa: PLC0415
     except ImportError:
         msg = (
             "huggingface-hub is required for model download. "
-            "Install with: pip install dbsprout[llm]"
+            "Install it with: pip install dbsprout[llm]"
         )
         raise ImportError(msg) from None
     return hf_hub_download

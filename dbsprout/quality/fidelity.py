@@ -10,7 +10,7 @@ import contextlib
 import csv
 import math
 from collections import Counter
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
@@ -44,7 +44,7 @@ class FidelityMetric:
 class FidelityReport:
     """Overall fidelity validation report."""
 
-    metrics: list[FidelityMetric] = field(default_factory=list)
+    metrics: tuple[FidelityMetric, ...] = ()
     overall_score: float = 0.0
     passed: bool = True
 
@@ -57,7 +57,10 @@ def ks_complement(real: list[float], synthetic: list[float]) -> float:
     if not real or not synthetic:
         return 1.0
     if ks_2samp is None:
-        return 0.0
+        msg = (
+            'scipy is required for fidelity metrics. Install it with: pip install "dbsprout[stats]"'
+        )
+        raise ImportError(msg)
     stat, _ = ks_2samp(real, synthetic)
     return 1.0 - float(stat)
 
@@ -97,10 +100,14 @@ def correlation_similarity(
 
     diff = real_clean - syn_clean
     n = len(col_names)
-    max_norm = 2.0 * n * n
+    # Off-diagonal correlation entries differ by at most 2.0 each, and there
+    # are n*(n-1) of them (the diagonal is always 1.0 → zero diff). The tight
+    # max Frobenius norm is therefore 2*sqrt(n*(n-1)); the previous
+    # sqrt(2*n*n) bound over-estimated, deflating similarity scores.
+    max_norm = 2.0 * math.sqrt(n * (n - 1))
     frobenius = float(np.sqrt(np.sum(diff**2)))
 
-    return max(0.0, 1.0 - frobenius / math.sqrt(max_norm))
+    return max(0.0, 1.0 - frobenius / max_norm)
 
 
 def cardinality_similarity(real: list[Any], synthetic: list[Any]) -> float:
@@ -134,8 +141,24 @@ def _coerce_value(value: str) -> int | float | str:
     return value
 
 
-def load_reference_csv(path: Path, table_name: str) -> list[dict[str, Any]]:  # noqa: ARG001
-    """Load reference data from a CSV file with automatic type coercion."""
+_MAX_REFERENCE_ROWS = 100_000
+_FORMULA_PREFIXES = ("=", "+", "-", "@")
+
+
+def _sanitize_csv_string(value: str) -> str:
+    """Neutralize CSV formula injection (CWE-1236) by prefixing a quote."""
+    if value and value[0] in _FORMULA_PREFIXES:
+        return "'" + value
+    return value
+
+
+def load_reference_csv(path: Path) -> list[dict[str, Any]]:
+    """Load reference data from a CSV file with automatic type coercion.
+
+    Caps at ``_MAX_REFERENCE_ROWS`` rows to bound memory on attacker- or
+    accident-supplied files, and neutralizes spreadsheet formula injection
+    (CWE-1236) in string cells before coercion.
+    """
     if not path.exists():
         msg = f"Reference data file not found: {path}"
         raise FileNotFoundError(msg)
@@ -144,7 +167,10 @@ def load_reference_csv(path: Path, table_name: str) -> list[dict[str, Any]]:  # 
     with path.open(encoding="utf-8", newline="") as f:
         reader = csv.DictReader(f)
         for row in reader:
-            rows.append({k: _coerce_value(v) for k, v in row.items()})
+            if len(rows) >= _MAX_REFERENCE_ROWS:
+                msg = f"Reference CSV {path} exceeds the {_MAX_REFERENCE_ROWS}-row cap."
+                raise ValueError(msg)
+            rows.append({k: _coerce_value(_sanitize_csv_string(v)) for k, v in row.items()})
     return rows
 
 
@@ -175,7 +201,9 @@ def validate_fidelity(
 ) -> FidelityReport:
     """Validate fidelity of synthetic data against reference distributions."""
     if ks_2samp is None:
-        msg = "scipy is required for fidelity metrics. Install it with: pip install dbsprout[stats]"
+        msg = (
+            'scipy is required for fidelity metrics. Install it with: pip install "dbsprout[stats]"'
+        )
         raise ImportError(msg)
 
     metrics: list[FidelityMetric] = []
@@ -252,4 +280,4 @@ def validate_fidelity(
 
     overall = sum(m.score for m in metrics) / len(metrics) if metrics else 0.0
     passed = overall >= threshold
-    return FidelityReport(metrics=metrics, overall_score=overall, passed=passed)
+    return FidelityReport(metrics=tuple(metrics), overall_score=overall, passed=passed)

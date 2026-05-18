@@ -13,6 +13,8 @@ from datetime import date, datetime, time
 from decimal import Decimal
 from typing import TYPE_CHECKING, Any
 
+from dbsprout.output._perms import restrict_file_permissions
+
 if TYPE_CHECKING:
     from pathlib import Path
 
@@ -100,7 +102,14 @@ def _format_complex(value: Any, config: dict[str, str]) -> str:
 def _quote_string(value: str, config: dict[str, str]) -> str:
     """Quote a string value with dialect-appropriate escaping."""
     if config["escape"] == "backslash":
-        escaped = value.replace("\\", "\\\\").replace("'", "\\'")
+        escaped = (
+            value.replace("\\", "\\\\")
+            .replace("'", "\\'")
+            .replace("\x00", "\\0")
+            .replace("\n", "\\n")
+            .replace("\r", "\\r")
+            .replace("\x1a", "\\Z")
+        )
     else:
         escaped = value.replace("'", "''")
     return f"'{escaped}'"
@@ -155,6 +164,11 @@ def build_upsert(
     if not pk_columns:
         return build_insert(table_name, columns, rows, config)
 
+    missing = [c for c in pk_columns if c not in columns]
+    if missing:
+        msg = f"pk_columns {missing} are not a subset of columns {columns}; cannot build an UPSERT."
+        raise ValueError(msg)
+
     style = config.get("upsert_style", "on_conflict")
 
     if style == "merge":
@@ -171,7 +185,13 @@ def _build_on_conflict(
     config: dict[str, str],
     pk_columns: list[str],
 ) -> str:
-    """PostgreSQL / SQLite ON CONFLICT upsert."""
+    """PostgreSQL / SQLite ON CONFLICT upsert.
+
+    The order of ``pk_columns`` is significant for SQLite ``ON CONFLICT``:
+    it must match a UNIQUE / PRIMARY KEY index's column order on the target
+    table, otherwise SQLite raises "ON CONFLICT clause does not match any
+    PRIMARY KEY or UNIQUE constraint". PostgreSQL is order-insensitive here.
+    """
     quoted_table = quote_identifier(table_name, config)
     quoted_cols = ", ".join(quote_identifier(c, config) for c in columns)
     excluded = config.get("excluded_prefix", "EXCLUDED")
@@ -262,6 +282,8 @@ def _build_merge(
 class SQLWriter:
     """Write generated data as SQL INSERT files."""
 
+    format: str = "sql"
+
     def write(  # noqa: PLR0913
         self,
         tables_data: dict[str, list[dict[str, Any]]],
@@ -296,6 +318,7 @@ class SQLWriter:
 
             content = _build_file(table_name, columns, rows, config, batch_size, pk_columns)
             filepath.write_text(content, encoding="utf-8")
+            restrict_file_permissions(filepath)
             written.append(filepath)
 
         return written

@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog xmlns="http://www.liquibase.org/xml/ns/dbchangelog">
+  <include file="01-first.xml" relativeToChangelogFile="true"/>
+  <include file="02-second.xml" relativeToChangelogFile="true"/>
+</databaseChangeLog>

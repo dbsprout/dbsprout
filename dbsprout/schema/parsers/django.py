@@ -49,6 +49,44 @@ _DJANGO_TYPE_MAP: dict[str, ColumnType] = {
 
 _AUTO_FIELDS: frozenset[str] = frozenset({"AutoField", "BigAutoField", "SmallAutoField"})
 
+# Django DATABASES["default"]["ENGINE"] backend → dbsprout dialect string.
+# Ordered most-specific first; matched as a substring of the ENGINE path so
+# wrapping backends (GIS, ``*_psycopg2``, third-party MSSQL) still resolve.
+_ENGINE_DIALECT_MARKERS: tuple[tuple[str, str], ...] = (
+    ("postgis", "postgresql"),
+    ("postgresql", "postgresql"),
+    ("spatialite", "sqlite"),
+    ("sqlite3", "sqlite"),
+    ("mysql", "mysql"),
+    ("oracle", "oracle"),
+    ("pyodbc", "mssql"),
+    ("mssql", "mssql"),
+)
+
+
+def _infer_dialect(settings: Any) -> str | None:
+    """Infer the dbsprout dialect from a Django settings object.
+
+    Reads ``settings.DATABASES["default"]["ENGINE"]`` and maps the Django
+    backend path to a dbsprout dialect string (``postgresql``, ``mysql``,
+    ``sqlite``, ``oracle``, ``mssql``). Returns ``None`` for an unknown,
+    missing, empty, or unreadable ENGINE — never a hardcoded fallback.
+    """
+    if settings is None:
+        return None
+    try:
+        databases = settings.DATABASES
+        default = databases["default"]
+        engine = default["ENGINE"]
+    except (AttributeError, KeyError, TypeError):
+        return None
+    if not isinstance(engine, str) or not engine:
+        return None
+    for marker, dialect in _ENGINE_DIALECT_MARKERS:
+        if marker in engine:
+            return dialect
+    return None
+
 
 def _field_to_column(field: Any) -> ColumnSchema:
     """Convert a Django field (or mock) to a ColumnSchema.
@@ -96,13 +134,24 @@ def _fk_column_type(field: Any) -> ColumnType:
     return _DJANGO_TYPE_MAP.get(ref_internal, ColumnType.INTEGER)
 
 
+_DJANGO_ON_DELETE_MAP: dict[str, str] = {
+    "CASCADE": "CASCADE",
+    "SET_NULL": "SET NULL",
+    "SET_DEFAULT": "SET DEFAULT",
+    "PROTECT": "RESTRICT",
+    "RESTRICT": "RESTRICT",
+    "DO_NOTHING": "NO ACTION",
+}
+
+
 def _fk_to_foreign_key(field: Any) -> ForeignKeySchema:
     """Convert a Django ForeignKey / OneToOneField to a ForeignKeySchema."""
     ref_table: str = field.related_model._meta.db_table
     ref_column: str = field.related_model._meta.pk.column
-    on_delete: str = getattr(
+    raw_action: str = getattr(
         field.remote_field.on_delete, "__name__", str(field.remote_field.on_delete)
     )
+    on_delete: str | None = _DJANGO_ON_DELETE_MAP.get(raw_action)
 
     return ForeignKeySchema(
         columns=[field.column],
@@ -261,6 +310,15 @@ def parse_django_models(
 
     from django.apps import apps  # type: ignore[import-not-found]  # noqa: PLC0415
 
+    try:
+        from django.conf import (  # type: ignore[import-not-found]  # noqa: PLC0415
+            settings,
+        )
+
+        dialect = _infer_dialect(settings)
+    except ImportError:
+        dialect = None
+
     all_models: list[Any] = list(apps.get_models())
 
     if app_labels is not None:
@@ -281,6 +339,6 @@ def parse_django_models(
 
     return DatabaseSchema(
         tables=tables,
-        dialect="postgresql",
+        dialect=dialect,
         source="django",
     )

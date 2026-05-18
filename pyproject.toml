@@ -28,11 +28,15 @@ dependencies = [
     "networkx>=3.0",
     "sqlglot>=25.0",
     "tomli>=2.0; python_version < '3.11'",
+    "tomli-w>=1.0",
     "mimesis>=18.0",
     "faker>=33.0",
     "numpy>=1.26",
     "diskcache>=5.6",
+    "defusedxml>=0.7",
     "pydbml>=1.0",
+    "httpx>=0.27",
+    "jinja2>=3.1",
 ]
 
 [project.urls]
@@ -41,18 +45,60 @@ Repository = "https://github.com/dbsprout/dbsprout"
 "Bug Tracker" = "https://github.com/dbsprout/dbsprout/issues"
 
 [project.scripts]
-dbsprout = "dbsprout.cli.app:app"
+dbsprout = "dbsprout.cli.app:run"
+
+[project.entry-points."dbsprout.parsers"]
+ddl = "dbsprout.plugins.adapters:ddl_parser"
+dbml = "dbsprout.plugins.adapters:dbml_parser"
+mermaid = "dbsprout.plugins.adapters:mermaid_parser"
+plantuml = "dbsprout.plugins.adapters:plantuml_parser"
+prisma = "dbsprout.plugins.adapters:prisma_parser"
+
+[project.entry-points."dbsprout.generators"]
+heuristic = "dbsprout.generate.engines.heuristic:HeuristicEngine"
+spec_driven = "dbsprout.generate.engines.spec_driven:SpecDrivenEngine"
+
+[project.entry-points."dbsprout.outputs"]
+sql = "dbsprout.output.sql_writer:SQLWriter"
+csv = "dbsprout.output.csv_writer:CSVWriter"
+json = "dbsprout.output.json_writer:JSONWriter"
+jsonl = "dbsprout.output.json_writer:JSONWriter"
+parquet = "dbsprout.output.parquet_writer:ParquetWriter"
+pg_copy = "dbsprout.output.pg_copy:PgCopyWriter"
+mysql_load_data = "dbsprout.output.mysql_load_data:MysqlLoadDataWriter"
+sa_batch = "dbsprout.output.sa_batch:SaBatchWriter"
+
+[project.entry-points."dbsprout.llm_providers"]
+embedded = "dbsprout.spec.providers.embedded:EmbeddedProvider"
+ollama = "dbsprout.spec.providers.ollama:OllamaProvider"
+cloud = "dbsprout.spec.providers.cloud:CloudProvider"
+
+[project.entry-points."dbsprout.migration_frameworks"]
+alembic = "dbsprout.migrate.parsers.alembic:AlembicParser"
+django = "dbsprout.migrate.parsers.django:DjangoMigrationParser"
+flyway = "dbsprout.migrate.parsers.flyway:FlywayMigrationParser"
+liquibase = "dbsprout.migrate.parsers.liquibase:LiquibaseMigrationParser"
+prisma = "dbsprout.migrate.parsers.prisma:PrismaMigrationParser"
+
+[project.entry-points."dbsprout.train_extractors"]
+live_db = "dbsprout.train.extractor:SampleExtractor"
+
+[project.entry-points."dbsprout.train_serializers"]
+great = "dbsprout.train.serializer:DataPreparer"
 
 [project.optional-dependencies]
 dev = [
     "pytest>=8.0",
     "pytest-cov>=5.0",
+    "pytest-benchmark>=4.0",
     "ruff>=0.9.0",
     "mypy>=1.14",
     "bandit[toml]>=1.8",
     "pre-commit>=4.0",
     "sqlalchemy>=2.0",
     "types-networkx>=3.0",
+    "testcontainers[postgres,mysql]>=4.0",
+    "mongomock>=4.0",
 ]
 db = [
     "sqlalchemy>=2.0",
@@ -77,6 +123,9 @@ llm = [
     "llama-cpp-python>=0.3",
     "huggingface-hub>=0.20",
 ]
+migrate = [
+    "alembic>=1.12,<2.0",
+]
 cloud = [
     "litellm>=1.0",
     "instructor>=1.0",
@@ -84,9 +133,17 @@ cloud = [
 privacy = [
     "presidio-analyzer>=2.0",
 ]
+mongo = [
+    "pymongo>=4.0",
+    "pymongo-schema>=0.4",
+]
 stats = [
     "scipy>=1.14",
     "scikit-learn>=1.5",
+]
+docs = [
+    "mkdocs>=1.6",
+    "mkdocs-material>=9.5",
 ]
 train-cuda = [
     "unsloth>=2024.0",
@@ -95,20 +152,27 @@ train-mlx = [
     "mlx>=0.20",
     "mlx-lm>=0.20",
 ]
+train-dp = [
+    "opacus>=1.4",
+]
 web = [
     "fastapi>=0.115",
     "uvicorn>=0.34",
-    "jinja2>=3.1",
+    "jinja2>=3.1.3",  # CVE-2024-22195
 ]
 tui = [
     "textual>=1.0",
 ]
 data = [
-    "polars>=1.0",
+    "polars>=1.0,<2.0",
 ]
-# Excludes train-cuda/train-mlx (platform-specific) and cloud (subset of llm)
+train = [
+    "polars>=1.0,<2.0",
+    "sqlalchemy>=2.0",
+]
+# Excludes train-cuda/train-mlx/train-dp (platform-specific / heavy opt-in) and cloud (subset of llm)
 all = [
-    "dbsprout[db,pg,gen,llm,stats,data,web,tui]",
+    "dbsprout[db,pg,gen,llm,stats,data,web,tui,train]",
 ]
 
 [build-system]
@@ -152,6 +216,7 @@ ignore = [
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**/*.py" = ["S101", "ARG001", "ARG002", "T20"]
+"tests/**/fixtures/**/*.py" = ["S101", "ARG001", "ARG002", "T20", "E402", "ANN", "D"]  # fixture files mirror real-world layouts (e.g. Alembic revisions put metadata above imports)
 "dbsprout/cli/commands/*.py" = ["B008"]  # typer.Option() in function defaults is the standard pattern
 "dbsprout/schema/parsers/*.py" = ["PLR0912", "PLR0915"]  # parser functions are inherently branchy
 "dbsprout/spec/patterns.py" = ["E501"]  # pattern data declarations are naturally wide
@@ -179,6 +244,10 @@ plugins = ["pydantic.mypy"]
 module = "tests.*"
 disallow_untyped_defs = false
 
+[[tool.mypy.overrides]]
+module = ["polars", "polars.*", "alembic", "alembic.*", "psycopg", "psycopg.*", "unsloth", "unsloth.*", "trl", "trl.*", "datasets", "datasets.*", "torch", "torch.*", "mlx", "mlx.*", "mlx_lm", "mlx_lm.*", "litellm", "litellm.*", "instructor", "instructor.*", "llama_cpp", "llama_cpp.*", "huggingface_hub", "huggingface_hub.*", "peft", "peft.*", "transformers", "transformers.*", "scipy", "scipy.*", "presidio_analyzer", "presidio_analyzer.*", "presidio_anonymizer", "presidio_anonymizer.*", "opacus", "opacus.*", "pymongo", "pymongo.*", "pymongo_schema", "pymongo_schema.*", "mongomock", "mongomock.*"]
+ignore_missing_imports = true
+
 # ─── Bandit ────────────────────────────────────────────────────────────
 [tool.bandit]
 exclude_dirs = ["tests", ".venv"]
@@ -187,16 +256,31 @@ skips = ["B101", "B311"]  # B101: assert in tests; B311: random is fine for seed
 # ─── Pytest ────────────────────────────────────────────────────────────
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "--strict-markers -ra"
+# Default run only collects tests/ (testpaths); benchmarks/ holds bench_*.py
+# files collected only via an explicit `pytest benchmarks/` invocation.
+python_files = ["test_*.py", "bench_*.py"]
+# `-m "not slow"`: slow tests (e.g. the multi-minute CPU-bound large-DDL
+# parser hang-guard, S-101/DBS-125) are deselected by default and from
+# the pre-push hook so the suite stays fast + deterministic under
+# parallel CI load. Run them explicitly with `uv run pytest -m slow`.
+addopts = "--strict-markers -ra -m 'not slow'"
 markers = [
     "slow: marks tests as slow",
     "integration: marks tests requiring external services",
+    "benchmark: marks performance benchmark tests (run via 'pytest benchmarks/')",
 ]
 
 # ─── Coverage ──────────────────────────────────────────────────────────
 [tool.coverage.run]
 source = ["dbsprout"]
 branch = true
+omit = [
+    # Optional-dependency modules — only active when extras are installed
+    "dbsprout/output/parquet_writer.py",   # requires polars ([data] extra)
+    "dbsprout/quality/fidelity.py",         # requires scipy  ([stats] extra)
+    "dbsprout/quality/detection.py",        # requires sklearn ([stats] extra)
+    "dbsprout/schema/parsers/mongodb.py",  # requires pymongo-schema ([mongo] extra)
+]
 
 [tool.coverage.report]
 fail_under = 95

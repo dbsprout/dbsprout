@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog xmlns="http://www.liquibase.org/xml/ns/dbchangelog">
+  <changeSet id="c3" author="bob">
+    <addColumn tableName="users">
+      <column name="display_name" type="VARCHAR(120)"/>
+    </addColumn>
+    <modifyDataType tableName="users" columnName="email" newDataType="VARCHAR(320)"/>
+  </changeSet>
+</databaseChangeLog>

@@ -281,7 +281,7 @@ class TestLoadReferenceCsv:
         """Load a CSV file into list[dict]."""
         csv_path = tmp_path / "users.csv"
         csv_path.write_text("id,age,city\n1,25,NYC\n2,30,LA\n")
-        rows = load_reference_csv(csv_path, "users")
+        rows = load_reference_csv(csv_path)
 
         assert len(rows) == 2
         assert rows[0]["city"] == "NYC"
@@ -290,7 +290,7 @@ class TestLoadReferenceCsv:
         """Numeric strings should be coerced to int/float."""
         csv_path = tmp_path / "data.csv"
         csv_path.write_text("id,score\n1,3.14\n2,2.71\n")
-        rows = load_reference_csv(csv_path, "data")
+        rows = load_reference_csv(csv_path)
 
         assert isinstance(rows[0]["score"], float)
         assert isinstance(rows[0]["id"], int)
@@ -298,7 +298,7 @@ class TestLoadReferenceCsv:
     def test_missing_file(self, tmp_path: Path) -> None:
         """Missing CSV file should raise FileNotFoundError."""
         with pytest.raises(FileNotFoundError):
-            load_reference_csv(tmp_path / "nope.csv", "t")
+            load_reference_csv(tmp_path / "nope.csv")
 
 
 # ── Import Guard ───────────────────────────────────────────────────

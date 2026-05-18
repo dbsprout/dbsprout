@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import uuid
 from datetime import date, datetime, time
 from decimal import Decimal
@@ -283,7 +284,7 @@ class TestMysqlLoadDataWriterImportError:
     def test_raises_on_missing_pymysql(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr("dbsprout.output.mysql_load_data.pymysql", None)
 
-        with pytest.raises(ImportError, match="pip install dbsprout\\[db\\]"):
+        with pytest.raises(ImportError, match=r'pip install "dbsprout\[db\]"'):
             MysqlLoadDataWriter().write(
                 _simple_data(),
                 _simple_schema(),
@@ -345,6 +346,150 @@ class TestMysqlLoadDataWriterErrorHandling:
         assert cleanup_called
 
 
+# ── MysqlLoadDataWriter UPSERT (S-094-F1) ────────────────────────────
+
+
+def _no_pk_schema() -> DatabaseSchema:
+    return DatabaseSchema(
+        tables=[
+            TableSchema(
+                name="logs",
+                columns=[
+                    ColumnSchema(name="msg", data_type=ColumnType.VARCHAR),
+                    ColumnSchema(name="level", data_type=ColumnType.VARCHAR),
+                ],
+                primary_key=[],
+            ),
+        ],
+    )
+
+
+def _all_pk_schema() -> DatabaseSchema:
+    return DatabaseSchema(
+        tables=[
+            TableSchema(
+                name="link",
+                columns=[
+                    ColumnSchema(name="a_id", data_type=ColumnType.INTEGER, primary_key=True),
+                    ColumnSchema(name="b_id", data_type=ColumnType.INTEGER, primary_key=True),
+                ],
+                primary_key=["a_id", "b_id"],
+            ),
+        ],
+    )
+
+
+def _sql_strings(cur: MagicMock) -> list[str]:
+    return [str(c.args[0]) for c in cur.execute.call_args_list if c.args]
+
+
+class TestMysqlLoadDataWriterUpsert:
+    def test_upsert_with_pk_uses_temp_staging_and_merge(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        mock_conn = _make_mock_conn()
+        mock_pymysql = _make_mock_pymysql(mock_conn)
+        monkeypatch.setattr("dbsprout.output.mysql_load_data.pymysql", mock_pymysql)
+
+        MysqlLoadDataWriter().write(
+            {"users": [{"id": 1, "email": "a@b.com"}]},
+            _simple_schema(),
+            ["users"],
+            "mysql://localhost/test",
+            upsert=True,
+        )
+        cur = mock_conn.cursor.return_value
+        joined = " ".join(_sql_strings(cur))
+        assert "CREATE TEMPORARY TABLE" in joined
+        assert "_dbsprout_stg_users" in joined
+        assert "LOAD DATA" in joined
+        assert "ON DUPLICATE KEY UPDATE" in joined
+        load = next(s for s in _sql_strings(cur) if "LOAD DATA" in s)
+        assert "_dbsprout_stg_users" in load
+        assert any("DROP TEMPORARY TABLE" in s for s in _sql_strings(cur))
+
+    def test_upsert_all_pk_uses_insert_ignore(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        mock_conn = _make_mock_conn()
+        mock_pymysql = _make_mock_pymysql(mock_conn)
+        monkeypatch.setattr("dbsprout.output.mysql_load_data.pymysql", mock_pymysql)
+
+        MysqlLoadDataWriter().write(
+            {"link": [{"a_id": 1, "b_id": 2}]},
+            _all_pk_schema(),
+            ["link"],
+            "mysql://localhost/test",
+            upsert=True,
+        )
+        cur = mock_conn.cursor.return_value
+        joined = " ".join(_sql_strings(cur))
+        assert "INSERT IGNORE INTO" in joined
+        assert "ON DUPLICATE KEY UPDATE" not in joined
+
+    def test_upsert_no_pk_falls_back_to_plain_load(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        mock_conn = _make_mock_conn()
+        mock_pymysql = _make_mock_pymysql(mock_conn)
+        monkeypatch.setattr("dbsprout.output.mysql_load_data.pymysql", mock_pymysql)
+
+        MysqlLoadDataWriter().write(
+            {"logs": [{"msg": "hi", "level": "INFO"}]},
+            _no_pk_schema(),
+            ["logs"],
+            "mysql://localhost/test",
+            upsert=True,
+        )
+        cur = mock_conn.cursor.return_value
+        joined = " ".join(_sql_strings(cur))
+        assert "CREATE TEMPORARY TABLE" not in joined
+        assert "ON DUPLICATE KEY UPDATE" not in joined
+        load = next(s for s in _sql_strings(cur) if "LOAD DATA" in s)
+        assert "`logs`" in load
+        assert "_dbsprout_stg" not in load
+
+    def test_non_upsert_path_unchanged(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Regression: default (upsert=False) does no staging, no merge."""
+        mock_conn = _make_mock_conn()
+        mock_pymysql = _make_mock_pymysql(mock_conn)
+        monkeypatch.setattr("dbsprout.output.mysql_load_data.pymysql", mock_pymysql)
+
+        MysqlLoadDataWriter().write(
+            _simple_data(),
+            _simple_schema(),
+            ["users", "orders"],
+            "mysql://localhost/test",
+        )
+        cur = mock_conn.cursor.return_value
+        joined = " ".join(_sql_strings(cur))
+        assert "CREATE TEMPORARY TABLE" not in joined
+        assert "ON DUPLICATE KEY UPDATE" not in joined
+        assert "_dbsprout_stg" not in joined
+
+    def test_upsert_drops_staging_on_merge_failure(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """No orphan staging table when the merge step raises."""
+        mock_pymysql = MagicMock()
+        mock_conn = _make_mock_conn()
+        mock_pymysql.connect.return_value = mock_conn
+        dropped: list[str] = []
+
+        def execute_side_effect(sql: str) -> None:
+            if "INSERT INTO" in sql and "SELECT" in sql:
+                raise Exception("merge boom")
+            if "DROP TEMPORARY TABLE" in sql:
+                dropped.append(sql)
+
+        mock_conn.cursor.return_value.execute = execute_side_effect
+        monkeypatch.setattr("dbsprout.output.mysql_load_data.pymysql", mock_pymysql)
+
+        with pytest.raises(RuntimeError):
+            MysqlLoadDataWriter().write(
+                {"users": [{"id": 1, "email": "a@b.com"}]},
+                _simple_schema(),
+                ["users"],
+                "mysql://localhost/test",
+                upsert=True,
+            )
+        assert dropped, "staging table must be dropped even on merge failure"
+
+
 # ── Mock helpers ─────────────────────────────────────────────────────
 
 
@@ -359,3 +504,101 @@ def _make_mock_pymysql(conn: MagicMock) -> MagicMock:
     mod = MagicMock()
     mod.connect.return_value = conn
     return mod
+
+
+# ── local_infile error detection ────────────────────────────────────────
+
+
+class TestLocalInfileErrorDetection:
+    """AC: Detect MySQL local_infile disabled error with specific message."""
+
+    def test_local_infile_error_1148_detected(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Error 1148 (LOAD DATA not allowed) produces helpful message."""
+        mock_conn = _make_mock_conn()
+        mock_pymysql = _make_mock_pymysql(mock_conn)
+
+        op_error = type("OperationalError", (Exception,), {})
+        mock_pymysql.err.OperationalError = op_error
+
+        call_count = 0
+
+        def execute_side_effect(sql: str) -> None:
+            nonlocal call_count
+            call_count += 1
+            if "LOAD DATA" in sql:
+                raise op_error(1148, "The used command is not allowed")
+
+        mock_conn.cursor.return_value.execute = execute_side_effect
+        monkeypatch.setattr("dbsprout.output.mysql_load_data.pymysql", mock_pymysql)
+
+        with pytest.raises(RuntimeError, match="local_infile"):
+            MysqlLoadDataWriter().write(
+                _simple_data(), _simple_schema(), ["users"], "mysql://localhost/test"
+            )
+
+    def test_local_infile_error_3948_detected(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Error 3948 (loading local data disabled) produces helpful message."""
+        mock_conn = _make_mock_conn()
+        mock_pymysql = _make_mock_pymysql(mock_conn)
+
+        op_error = type("OperationalError", (Exception,), {})
+        mock_pymysql.err.OperationalError = op_error
+
+        def execute_side_effect(sql: str) -> None:
+            if "LOAD DATA" in sql:
+                raise op_error(3948, "Loading local data is disabled")
+
+        mock_conn.cursor.return_value.execute = execute_side_effect
+        monkeypatch.setattr("dbsprout.output.mysql_load_data.pymysql", mock_pymysql)
+
+        with pytest.raises(RuntimeError, match="local_infile"):
+            MysqlLoadDataWriter().write(
+                _simple_data(), _simple_schema(), ["users"], "mysql://localhost/test"
+            )
+
+    def test_other_operational_error_not_masked(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Non-local_infile OperationalErrors propagate as generic RuntimeError."""
+        mock_conn = _make_mock_conn()
+        mock_pymysql = _make_mock_pymysql(mock_conn)
+
+        op_error = type("OperationalError", (Exception,), {})
+        mock_pymysql.err.OperationalError = op_error
+
+        def execute_side_effect(sql: str) -> None:
+            if "LOAD DATA" in sql:
+                raise op_error(2003, "Can't connect to MySQL server")
+
+        mock_conn.cursor.return_value.execute = execute_side_effect
+        monkeypatch.setattr("dbsprout.output.mysql_load_data.pymysql", mock_pymysql)
+
+        with pytest.raises(RuntimeError, match="insertion failed"):
+            MysqlLoadDataWriter().write(
+                _simple_data(), _simple_schema(), ["users"], "mysql://localhost/test"
+            )
+
+
+# ── LOAD DATA INFILE path escaping (S-103) ──────────────────────────────
+
+
+class TestLoadDataSqlEscaping:
+    """AC: temp-path escaping robust vs backslash + single-quote combos."""
+
+    def test_backslash_and_quote_escaped_without_double_escape(self) -> None:
+        """A path with both ``\\`` and ``'`` escapes correctly (S-103).
+
+        Backslash must be escaped to ``\\\\`` BEFORE the single quote is
+        escaped to ``\\'``; otherwise the injected backslash is double-escaped.
+        """
+        sql = MysqlLoadDataWriter._load_data_sql("t", ["c"], r"/tmp/a\b'c")  # noqa: S108 — synthetic string, never a real file
+        assert r"LOAD DATA LOCAL INFILE '/tmp/a\\b\'c'" in sql
+
+    def test_plain_absolute_path_unchanged(self) -> None:
+        """A plain absolute path is emitted verbatim (no special chars)."""
+        sql = MysqlLoadDataWriter._load_data_sql("t", ["c"], "/tmp/plain123")  # noqa: S108 — synthetic string, never a real file
+        assert "LOAD DATA LOCAL INFILE '/tmp/plain123' " in sql
+
+    def test_relative_path_normalised_to_absolute(self) -> None:
+        """A relative temp path is normalised via ``os.path.abspath``."""
+        sql = MysqlLoadDataWriter._load_data_sql("t", ["c"], "rel.txt")
+        expected = os.path.abspath("rel.txt")
+        assert f"LOAD DATA LOCAL INFILE '{expected}' " in sql

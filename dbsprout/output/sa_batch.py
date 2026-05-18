@@ -30,6 +30,8 @@ def _quote_identifier(name: str) -> str:
 class SaBatchWriter:
     """Generic batch INSERT writer using SQLAlchemy text() + executemany."""
 
+    format: str = "sa_batch"
+
     def write(
         self,
         tables_data: dict[str, list[dict[str, Any]]],

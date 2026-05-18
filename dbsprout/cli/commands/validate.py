@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any
 
 import typer
 from rich.console import Console
+from rich.markup import escape
 from rich.table import Table
 
 from dbsprout.config.models import DBSproutConfig
@@ -126,7 +127,13 @@ def _print_rich(report: IntegrityReport) -> None:
 
     for check in report.checks:
         status = "[green]PASS[/green]" if check.passed else "[red]FAIL[/red]"
-        table.add_row(check.check, check.table, check.column, status, check.details)
+        table.add_row(
+            escape(check.check),
+            escape(check.table),
+            escape(check.column),
+            status,
+            escape(check.details),
+        )
 
     console.print(table)
 
@@ -156,10 +163,10 @@ def _load_reference_data(
             if not csv_path.is_relative_to(reference_path.resolve()):
                 continue
             if csv_path.exists():
-                ref_data[table.name] = load_reference_csv(csv_path, table.name)
+                ref_data[table.name] = load_reference_csv(csv_path)
     else:
         table_name = reference_path.stem
-        ref_data[table_name] = load_reference_csv(reference_path, table_name)
+        ref_data[table_name] = load_reference_csv(reference_path)
 
     return ref_data
 
@@ -220,7 +227,7 @@ def _print_detection_rich(report: DetectionReport) -> None:
             acc_display = f"[yellow]{acc_str}[/yellow]"
         else:
             acc_display = f"[red]{acc_str}[/red]"
-        table.add_row(m.metric, m.table, acc_display, m.details)
+        table.add_row(escape(m.metric), escape(m.table), acc_display, escape(m.details))
 
     console.print(table)
     status = "[green]PASS[/green]" if report.passed else "[red]FAIL[/red]"
@@ -247,7 +254,13 @@ def _print_fidelity_rich(report: FidelityReport) -> None:
             score_display = f"[yellow]{score_str}[/yellow]"
         else:
             score_display = f"[red]{score_str}[/red]"
-        table.add_row(m.metric, m.table, m.column, score_display, m.details)
+        table.add_row(
+            escape(m.metric),
+            escape(m.table),
+            escape(m.column),
+            score_display,
+            escape(m.details),
+        )
 
     console.print(table)
     status = "[green]PASS[/green]" if report.passed else "[red]FAIL[/red]"
