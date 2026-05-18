@@ -57,11 +57,14 @@ class MissingDependencyError(DBSproutError):
 
     The *fix* names the exact ``pip install`` command. When *extra* is
     ``None`` the package ships with core DBSprout and a plain
-    ``pip install dbsprout`` reinstall is suggested.
+    ``pip install dbsprout`` reinstall is suggested. When an *extra* is
+    given the bracketed target is quoted (``pip install "dbsprout[extra]"``)
+    so it copy-pastes safely into shells that glob ``[]`` (zsh/bash),
+    matching the S-094 output-writer convention.
     """
 
     def __init__(self, *, package: str, extra: str | None) -> None:
-        command = "pip install dbsprout" if extra is None else f"pip install dbsprout[{extra}]"
+        command = "pip install dbsprout" if extra is None else f'pip install "dbsprout[{extra}]"'
         super().__init__(
             what=f"The optional dependency '{package}' is not installed.",
             why="This feature needs an extra that is not part of the core install.",
