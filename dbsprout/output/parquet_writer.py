@@ -10,6 +10,7 @@ import json
 import math
 import re
 import uuid
+from datetime import datetime
 from decimal import Decimal
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -37,35 +38,57 @@ _COLUMN_TYPE_MAP: dict[ColumnType, Any] = {
     ColumnType.FLOAT: "Float64",
     ColumnType.DECIMAL: "Float64",
     ColumnType.BOOLEAN: "Boolean",
-    ColumnType.VARCHAR: "Utf8",
-    ColumnType.TEXT: "Utf8",
+    ColumnType.VARCHAR: "String",
+    ColumnType.TEXT: "String",
     ColumnType.DATE: "Date",
     ColumnType.DATETIME: "Datetime",
     ColumnType.TIMESTAMP: "Datetime",
     ColumnType.TIME: "Time",
-    ColumnType.UUID: "Utf8",
-    ColumnType.JSON: "Utf8",
+    ColumnType.UUID: "String",
+    ColumnType.JSON: "String",
     ColumnType.BINARY: "Binary",
-    ColumnType.ENUM: "Utf8",
-    ColumnType.ARRAY: "Utf8",
-    ColumnType.UNKNOWN: "Utf8",
+    ColumnType.ENUM: "String",
+    ColumnType.ARRAY: "String",
+    ColumnType.UNKNOWN: "String",
 }
 
 
-def _polars_dtype(column_type: ColumnType) -> Any:
+_DT_TYPES = frozenset({ColumnType.DATETIME, ColumnType.TIMESTAMP})
+
+
+def _polars_dtype(column_type: ColumnType, *, tz: str | None = None) -> Any:
     """Map a ColumnType to a Polars data type.
 
     Must only be called when ``pl`` is not None (i.e. after the import guard).
+    A non-empty ``tz`` makes a Datetime column timezone-aware so tz-aware
+    inputs round-trip without being silently flattened to naive ``us``.
     """
     name = _COLUMN_TYPE_MAP[column_type]
     if name == "Datetime":
-        return pl.Datetime("us")
+        return pl.Datetime("us", time_zone=tz) if tz else pl.Datetime("us")
     return getattr(pl, name)
 
 
-def _build_schema(table_schema: TableSchema) -> dict[str, Any]:
-    """Build a Polars schema dict from a TableSchema."""
-    return {col.name: _polars_dtype(col.data_type) for col in table_schema.columns}
+def _detect_tz(rows: list[dict[str, Any]], column: str) -> str | None:
+    """Return the tzinfo name of the first tz-aware datetime in *column*."""
+    for row in rows:
+        value = row.get(column)
+        if isinstance(value, datetime) and value.tzinfo is not None:
+            return str(value.tzinfo)
+    return None
+
+
+def _build_schema(table_schema: TableSchema, rows: list[dict[str, Any]]) -> dict[str, Any]:
+    """Build a Polars schema dict from a TableSchema.
+
+    Datetime/timestamp columns whose generated values are tz-aware get a
+    timezone-qualified ``pl.Datetime`` so the timezone is preserved on disk.
+    """
+    out: dict[str, Any] = {}
+    for col in table_schema.columns:
+        tz = _detect_tz(rows, col.name) if col.data_type in _DT_TYPES else None
+        out[col.name] = _polars_dtype(col.data_type, tz=tz)
+    return out
 
 
 def _is_nan_or_inf(value: Any) -> bool:
@@ -166,7 +189,7 @@ class ParquetWriter:
             safe_name = table_name
             if not _SAFE_TABLE_NAME.match(table_name):
                 safe_name = re.sub(r"[^\w]", "_", table_name)
-            polars_schema = _build_schema(table_schema)
+            polars_schema = _build_schema(table_schema, rows)
             filename = f"{idx + 1:03d}_{safe_name}.parquet"
             filepath = output_dir / filename
 
