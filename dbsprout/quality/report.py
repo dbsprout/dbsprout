@@ -8,10 +8,21 @@ QualityReport envelope with a ``from_reports()`` factory method.
 from __future__ import annotations
 
 import dataclasses
+import math
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
 from pydantic import BaseModel, ConfigDict
+
+
+def _clamp_score(value: float) -> float:
+    """Replace NaN/Inf scores with finite values for valid JSON output."""
+    if math.isnan(value):
+        return 0.0
+    if math.isinf(value):
+        return 1.0 if value > 0 else 0.0
+    return value
+
 
 if TYPE_CHECKING:
     from dbsprout.quality.detection import DetectionReport
@@ -133,16 +144,27 @@ class QualityReport(BaseModel):
         if fidelity is not None:
             fidelity_model = FidelityReportModel(
                 passed=fidelity.passed,
-                overall_score=fidelity.overall_score,
-                metrics=[FidelityMetricModel(**dataclasses.asdict(m)) for m in fidelity.metrics],
+                overall_score=_clamp_score(fidelity.overall_score),
+                metrics=[
+                    FidelityMetricModel(**{**dataclasses.asdict(m), "score": _clamp_score(m.score)})
+                    for m in fidelity.metrics
+                ],
             )
 
         detection_model: DetectionReportModel | None = None
         if detection is not None:
             detection_model = DetectionReportModel(
                 passed=detection.passed,
-                overall_score=detection.overall_score,
-                metrics=[DetectionMetricModel(**dataclasses.asdict(m)) for m in detection.metrics],
+                overall_score=_clamp_score(detection.overall_score),
+                metrics=[
+                    DetectionMetricModel(
+                        **{
+                            **dataclasses.asdict(m),
+                            "accuracy": _clamp_score(m.accuracy),
+                        }
+                    )
+                    for m in detection.metrics
+                ],
             )
 
         passed = all(r.passed for r in (integrity, fidelity, detection) if r is not None)
