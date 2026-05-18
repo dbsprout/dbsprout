@@ -10,7 +10,7 @@ import contextlib
 import csv
 import math
 from collections import Counter
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
@@ -44,7 +44,7 @@ class FidelityMetric:
 class FidelityReport:
     """Overall fidelity validation report."""
 
-    metrics: list[FidelityMetric] = field(default_factory=list)
+    metrics: tuple[FidelityMetric, ...] = ()
     overall_score: float = 0.0
     passed: bool = True
 
@@ -280,4 +280,4 @@ def validate_fidelity(
 
     overall = sum(m.score for m in metrics) / len(metrics) if metrics else 0.0
     passed = overall >= threshold
-    return FidelityReport(metrics=metrics, overall_score=overall, passed=passed)
+    return FidelityReport(metrics=tuple(metrics), overall_score=overall, passed=passed)

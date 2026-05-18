@@ -6,7 +6,7 @@ detailed report with per-check pass/fail results.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -28,7 +28,7 @@ class CheckResult:
 class IntegrityReport:
     """Overall integrity validation report."""
 
-    checks: list[CheckResult] = field(default_factory=list)
+    checks: tuple[CheckResult, ...] = ()
     passed: bool = True
 
 
@@ -54,7 +54,7 @@ def validate_integrity(
         checks.extend(_check_fk_satisfaction(table, tables_data))
 
     passed = all(c.passed for c in checks)
-    return IntegrityReport(checks=checks, passed=passed)
+    return IntegrityReport(checks=tuple(checks), passed=passed)
 
 
 def _check_fk_satisfaction(
