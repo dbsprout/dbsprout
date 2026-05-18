@@ -10,16 +10,16 @@ from __future__ import annotations
 
 import contextlib
 import os
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-    from pathlib import Path
 
 _RESTRICTED_MODE = 0o640
 
 
-def restrict_file_permissions(path: Path) -> None:
-    """Restrict *path* to ``0o640``. No-op off POSIX or if absent."""
+def restrict_file_permissions(path: str | os.PathLike[str]) -> None:
+    """Restrict *path* to ``0o640``. No-op off POSIX or if absent.
+
+    Accepts any ``str`` or :class:`os.PathLike` (``pathlib.Path``,
+    ``tempfile`` name, …) so every writer can call it uniformly.
+    """
     if os.name != "posix":
         return
     with contextlib.suppress(OSError):

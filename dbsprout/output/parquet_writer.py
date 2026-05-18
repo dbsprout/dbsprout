@@ -13,6 +13,7 @@ import uuid
 from decimal import Decimal
 from typing import TYPE_CHECKING, Any, Literal
 
+from dbsprout.output._perms import restrict_file_permissions
 from dbsprout.schema.models import ColumnType
 
 if TYPE_CHECKING:
@@ -150,6 +151,7 @@ class ParquetWriter:
                 df = pl.DataFrame(col_data, schema=polars_schema)
 
             df.write_parquet(filepath, compression=_COMPRESSION)
+            restrict_file_permissions(filepath)
             written.append(filepath)
 
         return written
