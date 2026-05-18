@@ -28,6 +28,7 @@ dependencies = [
     "networkx>=3.0",
     "sqlglot>=25.0",
     "tomli>=2.0; python_version < '3.11'",
+    "tomli-w>=1.0",
     "mimesis>=18.0",
     "faker>=33.0",
     "numpy>=1.26",

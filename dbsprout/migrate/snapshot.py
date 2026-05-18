@@ -56,13 +56,27 @@ class SnapshotMetadata(BaseModel):
 class SnapshotStore:
     """Content-addressed, append-only snapshot store."""
 
-    def __init__(self, base_dir: Path | None = None) -> None:
+    def __init__(self, base_dir: Path | None = None, *, privacy_tier: str = "local") -> None:
         self._base_dir: Path = base_dir if base_dir is not None else Path(".dbsprout") / "snapshots"
+        # When the privacy tier is stricter than ``local``, snapshot files
+        # (which embed table/column names and FK structure) are hardened to
+        # owner-only access. The default ``local`` tier keeps OS defaults.
+        self._privacy_tier: str = privacy_tier
 
     @property
     def base_dir(self) -> Path:
         """Read-only access to the snapshot directory path."""
         return self._base_dir
+
+    @property
+    def privacy_tier(self) -> str:
+        """Configured privacy tier (``local``/``redacted``/``cloud``)."""
+        return self._privacy_tier
+
+    @property
+    def _hardened(self) -> bool:
+        """True when snapshots must be owner-only (tier stricter than local)."""
+        return self._privacy_tier != "local"
 
     # ── Public API ──────────────────────────────────────────────────
 
@@ -76,6 +90,8 @@ class SnapshotStore:
             raise ValueError(msg)
 
         self._base_dir.mkdir(parents=True, exist_ok=True)
+        if self._hardened:
+            os.chmod(self._base_dir, 0o700)
 
         schema_hash = schema.schema_hash()
         hash_prefix = schema_hash[:8]
@@ -106,6 +122,8 @@ class SnapshotStore:
         }
         tmp_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
         os.replace(tmp_path, final_path)
+        if self._hardened:
+            os.chmod(final_path, 0o600)
 
         return SnapshotInfo(
             path=final_path,
