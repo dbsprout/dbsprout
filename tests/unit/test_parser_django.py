@@ -16,6 +16,7 @@ from dbsprout.schema.models import ColumnType
 from dbsprout.schema.parsers.django import (
     _field_to_column,
     _fk_to_foreign_key,
+    _infer_dialect,
     _m2m_junction_table,
     _model_to_table,
     parse_django_models,
@@ -405,6 +406,74 @@ class TestModelFiltering:
         assert result is None
 
 
+def _settings_with_engine(engine: Any) -> MagicMock:
+    """Build a mock django settings object whose default DB has ``engine``."""
+    settings = MagicMock()
+    settings.DATABASES = {"default": {"ENGINE": engine}}
+    return settings
+
+
+class TestInferDialect:
+    """Test _infer_dialect ENGINE → dbsprout dialect mapping."""
+
+    @pytest.mark.parametrize(
+        ("engine", "expected"),
+        [
+            ("django.db.backends.postgresql", "postgresql"),
+            ("django.db.backends.postgresql_psycopg2", "postgresql"),
+            ("django.contrib.gis.db.backends.postgis", "postgresql"),
+            ("django.db.backends.mysql", "mysql"),
+            ("django.contrib.gis.db.backends.mysql", "mysql"),
+            ("django.db.backends.sqlite3", "sqlite"),
+            ("django.contrib.gis.db.backends.spatialite", "sqlite"),
+            ("django.db.backends.oracle", "oracle"),
+            ("django.contrib.gis.db.backends.oracle", "oracle"),
+            ("mssql", "mssql"),
+            ("sql_server.pyodbc", "mssql"),
+            ("django_mssql_backend", "mssql"),
+        ],
+    )
+    def test_known_engine_maps_to_dialect(
+        self,
+        engine: str,
+        expected: str,
+    ) -> None:
+        assert _infer_dialect(_settings_with_engine(engine)) == expected
+
+    def test_unknown_engine_returns_none(self) -> None:
+        assert _infer_dialect(_settings_with_engine("some.exotic.backend")) is None
+
+    def test_empty_engine_returns_none(self) -> None:
+        assert _infer_dialect(_settings_with_engine("")) is None
+
+    def test_non_string_engine_returns_none(self) -> None:
+        assert _infer_dialect(_settings_with_engine(MagicMock())) is None
+
+    def test_missing_engine_key_returns_none(self) -> None:
+        settings = MagicMock()
+        settings.DATABASES = {"default": {}}
+        assert _infer_dialect(settings) is None
+
+    def test_missing_default_alias_returns_none(self) -> None:
+        settings = MagicMock()
+        settings.DATABASES = {"replica": {"ENGINE": "django.db.backends.mysql"}}
+        assert _infer_dialect(settings) is None
+
+    def test_databases_not_a_mapping_returns_none(self) -> None:
+        settings = MagicMock()
+        settings.DATABASES = "not-a-dict"
+        assert _infer_dialect(settings) is None
+
+    def test_settings_none_returns_none(self) -> None:
+        assert _infer_dialect(None) is None
+
+    def test_settings_without_databases_returns_none(self) -> None:
+        class _Bare:
+            pass
+
+        assert _infer_dialect(_Bare()) is None
+
+
 @pytest.fixture
 def django_env(monkeypatch: pytest.MonkeyPatch) -> None:
     """Set DJANGO_SETTINGS_MODULE for parse_django_models tests."""
@@ -566,6 +635,76 @@ class TestParseDjangoModels:
 
         with pytest.raises(ValueError, match="No Django models found"):
             parse_django_models()
+
+    def test_dialect_inferred_from_settings(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        model = _make_concrete_model(db_table="app_user")
+        mock_django = MagicMock()
+        mock_apps_module = MagicMock()
+        mock_apps_module.apps.get_models.return_value = [model]
+        mock_conf_module = MagicMock()
+        mock_conf_module.settings = _settings_with_engine("django.db.backends.sqlite3")
+
+        monkeypatch.setitem(sys.modules, "django", mock_django)
+        monkeypatch.setitem(sys.modules, "django.apps", mock_apps_module)
+        monkeypatch.setitem(sys.modules, "django.conf", mock_conf_module)
+
+        result = parse_django_models()
+        assert result.dialect == "sqlite"
+
+    def test_dialect_inferred_mysql(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        model = _make_concrete_model(db_table="app_user")
+        mock_django = MagicMock()
+        mock_apps_module = MagicMock()
+        mock_apps_module.apps.get_models.return_value = [model]
+        mock_conf_module = MagicMock()
+        mock_conf_module.settings = _settings_with_engine("django.db.backends.mysql")
+
+        monkeypatch.setitem(sys.modules, "django", mock_django)
+        monkeypatch.setitem(sys.modules, "django.apps", mock_apps_module)
+        monkeypatch.setitem(sys.modules, "django.conf", mock_conf_module)
+
+        result = parse_django_models()
+        assert result.dialect == "mysql"
+
+    def test_dialect_none_when_settings_unavailable(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        model = _make_concrete_model(db_table="app_user")
+        mock_django = MagicMock()
+        mock_apps_module = MagicMock()
+        mock_apps_module.apps.get_models.return_value = [model]
+
+        monkeypatch.setitem(sys.modules, "django", mock_django)
+        monkeypatch.setitem(sys.modules, "django.apps", mock_apps_module)
+        monkeypatch.delitem(sys.modules, "django.conf", raising=False)
+
+        result = parse_django_models()
+        assert result.dialect is None
+
+    def test_dialect_none_for_unknown_engine(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        model = _make_concrete_model(db_table="app_user")
+        mock_django = MagicMock()
+        mock_apps_module = MagicMock()
+        mock_apps_module.apps.get_models.return_value = [model]
+        mock_conf_module = MagicMock()
+        mock_conf_module.settings = _settings_with_engine("weird.custom.backend")
+
+        monkeypatch.setitem(sys.modules, "django", mock_django)
+        monkeypatch.setitem(sys.modules, "django.apps", mock_apps_module)
+        monkeypatch.setitem(sys.modules, "django.conf", mock_conf_module)
+
+        result = parse_django_models()
+        assert result.dialect is None
 
 
 # ── CLI integration tests for --django / --django-apps ──────────────────
