@@ -156,10 +156,10 @@ def _load_reference_data(
             if not csv_path.is_relative_to(reference_path.resolve()):
                 continue
             if csv_path.exists():
-                ref_data[table.name] = load_reference_csv(csv_path, table.name)
+                ref_data[table.name] = load_reference_csv(csv_path)
     else:
         table_name = reference_path.stem
-        ref_data[table_name] = load_reference_csv(reference_path, table_name)
+        ref_data[table_name] = load_reference_csv(reference_path)
 
     return ref_data
 

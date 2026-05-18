@@ -141,8 +141,24 @@ def _coerce_value(value: str) -> int | float | str:
     return value
 
 
-def load_reference_csv(path: Path, table_name: str) -> list[dict[str, Any]]:  # noqa: ARG001
-    """Load reference data from a CSV file with automatic type coercion."""
+_MAX_REFERENCE_ROWS = 100_000
+_FORMULA_PREFIXES = ("=", "+", "-", "@")
+
+
+def _sanitize_csv_string(value: str) -> str:
+    """Neutralize CSV formula injection (CWE-1236) by prefixing a quote."""
+    if value and value[0] in _FORMULA_PREFIXES:
+        return "'" + value
+    return value
+
+
+def load_reference_csv(path: Path) -> list[dict[str, Any]]:
+    """Load reference data from a CSV file with automatic type coercion.
+
+    Caps at ``_MAX_REFERENCE_ROWS`` rows to bound memory on attacker- or
+    accident-supplied files, and neutralizes spreadsheet formula injection
+    (CWE-1236) in string cells before coercion.
+    """
     if not path.exists():
         msg = f"Reference data file not found: {path}"
         raise FileNotFoundError(msg)
@@ -151,7 +167,10 @@ def load_reference_csv(path: Path, table_name: str) -> list[dict[str, Any]]:  # 
     with path.open(encoding="utf-8", newline="") as f:
         reader = csv.DictReader(f)
         for row in reader:
-            rows.append({k: _coerce_value(v) for k, v in row.items()})
+            if len(rows) >= _MAX_REFERENCE_ROWS:
+                msg = f"Reference CSV {path} exceeds the {_MAX_REFERENCE_ROWS}-row cap."
+                raise ValueError(msg)
+            rows.append({k: _coerce_value(_sanitize_csv_string(v)) for k, v in row.items()})
     return rows
 
 
