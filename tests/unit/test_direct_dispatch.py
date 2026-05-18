@@ -297,3 +297,132 @@ class TestInsertMethodValidation:
                 insert_method="batch",
             )
         mock_writer.write.assert_called_once()
+
+
+# ── --upsert direct wiring (S-094-F1) ────────────────────────────────
+
+
+class TestDirectInsertUpsertWiring:
+    """`--upsert` is threaded into the PG COPY / MySQL LOAD DATA writers."""
+
+    def test_pg_copy_receives_upsert_true(self) -> None:
+        mock_writer = MagicMock()
+        mock_writer.write.return_value = MagicMock(
+            total_rows=1, tables_inserted=1, duration_seconds=0.01
+        )
+        with (
+            patch.dict("sys.modules", {"psycopg": MagicMock()}),
+            patch(
+                "dbsprout.output.pg_copy.PgCopyWriter",
+                return_value=mock_writer,
+            ),
+        ):
+            _run_direct_insert(
+                _make_generate_result(),
+                _make_schema(),
+                ["users"],
+                "postgresql://host/db",
+                upsert=True,
+            )
+        assert mock_writer.write.call_args.kwargs.get("upsert") is True
+
+    def test_mysql_load_data_receives_upsert_true(self) -> None:
+        mock_writer = MagicMock()
+        mock_writer.write.return_value = MagicMock(
+            total_rows=1, tables_inserted=1, duration_seconds=0.01
+        )
+        with (
+            patch.dict("sys.modules", {"pymysql": MagicMock()}),
+            patch(
+                "dbsprout.output.mysql_load_data.MysqlLoadDataWriter",
+                return_value=mock_writer,
+            ),
+        ):
+            _run_direct_insert(
+                _make_generate_result(),
+                _make_schema(),
+                ["users"],
+                "mysql://host/db",
+                upsert=True,
+            )
+        assert mock_writer.write.call_args.kwargs.get("upsert") is True
+
+    def test_default_upsert_false_not_passed_truthy(self) -> None:
+        """Regression: default invocation does not request upsert."""
+        mock_writer = MagicMock()
+        mock_writer.write.return_value = MagicMock(
+            total_rows=1, tables_inserted=1, duration_seconds=0.01
+        )
+        with (
+            patch.dict("sys.modules", {"psycopg": MagicMock()}),
+            patch(
+                "dbsprout.output.pg_copy.PgCopyWriter",
+                return_value=mock_writer,
+            ),
+        ):
+            _run_direct_insert(
+                _make_generate_result(),
+                _make_schema(),
+                ["users"],
+                "postgresql://host/db",
+            )
+        assert mock_writer.write.call_args.kwargs.get("upsert") in (False, None)
+
+
+class TestUpsertDirectNoIgnoreWarning:
+    """`--upsert --output-format direct` must NOT print the sql-only warning."""
+
+    def test_direct_upsert_no_warning(self) -> None:
+        from dbsprout.cli.commands.generate import _write_output  # noqa: PLC0415
+
+        buf = StringIO()
+        test_console = Console(file=buf, force_terminal=False)
+        mock_writer = MagicMock()
+        mock_writer.write.return_value = MagicMock(
+            total_rows=1, tables_inserted=1, duration_seconds=0.01
+        )
+        with (
+            patch("dbsprout.cli.commands.generate.console", test_console),
+            patch.dict("sys.modules", {"psycopg": MagicMock()}),
+            patch(
+                "dbsprout.output.pg_copy.PgCopyWriter",
+                return_value=mock_writer,
+            ),
+        ):
+            _write_output(
+                _make_generate_result(),
+                _make_schema(),
+                ["users"],
+                __import__("pathlib").Path("/tmp"),  # noqa: S108
+                "direct",
+                "postgresql",
+                "postgresql://host/db",
+                True,
+                "auto",
+            )
+        assert "only applies to" not in buf.getvalue()
+
+    def test_csv_upsert_still_warns(self) -> None:
+        from dbsprout.cli.commands.generate import _write_output  # noqa: PLC0415
+
+        buf = StringIO()
+        test_console = Console(file=buf, force_terminal=False)
+        with (
+            patch("dbsprout.cli.commands.generate.console", test_console),
+            patch(
+                "dbsprout.cli.commands.generate._resolve_writer",
+                return_value=MagicMock(),
+            ),
+        ):
+            _write_output(
+                _make_generate_result(),
+                _make_schema(),
+                ["users"],
+                __import__("pathlib").Path("/tmp"),  # noqa: S108
+                "csv",
+                "postgresql",
+                None,
+                True,
+                "auto",
+            )
+        assert "only applies to" in buf.getvalue()

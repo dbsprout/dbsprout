@@ -127,6 +127,68 @@ class TestPgCopyLive:
 
 
 @pytest.mark.integration
+class TestPgCopyUpsertLive:
+    """S-094-F1: upsert via TEMP staging table — re-run updates, not duplicates."""
+
+    def test_rerun_updates_not_duplicates(
+        self,
+        pg_url: str,
+        test_schema: DatabaseSchema,
+    ) -> None:
+        """Second run with upsert=True updates the row, count stays 1."""
+        create_pg_tables(pg_url, test_schema)
+        try:
+            import psycopg  # noqa: PLC0415
+
+            first = {"users": [{"id": 1, "email": "old@test.com"}], "posts": []}
+            PgCopyWriter().write(first, test_schema, ["users", "posts"], pg_url, upsert=True)
+
+            second = {"users": [{"id": 1, "email": "new@test.com"}], "posts": []}
+            PgCopyWriter().write(second, test_schema, ["users", "posts"], pg_url, upsert=True)
+
+            with psycopg.connect(pg_url) as conn, conn.cursor() as cur:
+                cur.execute('SELECT COUNT(*) FROM "users"')
+                assert cur.fetchone()[0] == 1
+                cur.execute('SELECT "email" FROM "users" WHERE "id" = 1')
+                assert cur.fetchone()[0] == "new@test.com"
+                # Staging table must not survive the transaction
+                cur.execute(
+                    "SELECT COUNT(*) FROM information_schema.tables "
+                    "WHERE table_name LIKE '_dbsprout_stg_%'"
+                )
+                assert cur.fetchone()[0] == 0
+        finally:
+            drop_pg_tables(pg_url, test_schema)
+
+    def test_no_orphan_staging_on_failure(
+        self,
+        pg_url: str,
+        test_schema: DatabaseSchema,
+    ) -> None:
+        """A mid-merge failure leaves no orphan staging table (TEMP auto-drop)."""
+        create_pg_tables(pg_url, test_schema)
+        try:
+            import psycopg  # noqa: PLC0415
+
+            # FK violation on posts forces the transaction to abort.
+            bad = {
+                "users": [{"id": 1, "email": "u@test.com"}],
+                "posts": [{"id": 1, "user_id": 999, "title": "orphan"}],
+            }
+            with pytest.raises(RuntimeError):
+                PgCopyWriter().write(bad, test_schema, ["users", "posts"], pg_url, upsert=True)
+
+            with psycopg.connect(pg_url) as conn, conn.cursor() as cur:
+                cur.execute(
+                    "SELECT COUNT(*) FROM information_schema.tables "
+                    "WHERE table_name LIKE '_dbsprout_stg_%'"
+                )
+                assert cur.fetchone()[0] == 0
+        finally:
+            drop_pg_tables(pg_url, test_schema)
+
+
+@pytest.mark.integration
 @pytest.mark.slow
 def test_pg_copy_throughput_10k_rows_per_sec(pg_url: str) -> None:
     """AC: PG COPY >=10K rows/sec (CI-safe; production target 100K+)."""

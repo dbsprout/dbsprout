@@ -444,6 +444,142 @@ class TestPgCopyWriterProgress:
         assert progress_cls.call_args.kwargs["disable"] is False
 
 
+# ── PgCopyWriter UPSERT (S-094-F1) ───────────────────────────────────
+
+
+def _no_pk_schema() -> DatabaseSchema:
+    """Schema whose single table has no primary key."""
+    return DatabaseSchema(
+        tables=[
+            TableSchema(
+                name="logs",
+                columns=[
+                    ColumnSchema(name="msg", data_type=ColumnType.VARCHAR),
+                    ColumnSchema(name="level", data_type=ColumnType.VARCHAR),
+                ],
+                primary_key=[],
+            ),
+        ],
+    )
+
+
+def _all_pk_schema() -> DatabaseSchema:
+    """Schema whose single table is all-primary-key (composite)."""
+    return DatabaseSchema(
+        tables=[
+            TableSchema(
+                name="link",
+                columns=[
+                    ColumnSchema(name="a_id", data_type=ColumnType.INTEGER, primary_key=True),
+                    ColumnSchema(name="b_id", data_type=ColumnType.INTEGER, primary_key=True),
+                ],
+                primary_key=["a_id", "b_id"],
+            ),
+        ],
+    )
+
+
+def _executed_sql(cursor: MagicMock) -> list[str]:
+    """Collect SQL strings executed on the cursor (psycopg.sql objects str()'d)."""
+    return [str(c.args[0]) for c in cursor.execute.call_args_list if c.args]
+
+
+class TestPgCopyWriterUpsert:
+    def test_upsert_with_pk_uses_temp_staging_and_merge(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        mock_conn = _make_mock_conn()
+        mock_connect = _make_mock_connect(mock_conn)
+        monkeypatch.setattr("dbsprout.output.pg_copy.psycopg", _mock_psycopg(mock_connect))
+
+        PgCopyWriter().write(
+            {"users": [{"id": 1, "email": "a@b.com"}]},
+            _simple_schema(),
+            ["users"],
+            "pg://localhost/test",
+            upsert=True,
+        )
+        cursor = mock_conn.cursor.return_value.__enter__.return_value
+        sql = " ".join(_executed_sql(cursor))
+        assert "CREATE" in sql
+        assert "TEMP" in sql
+        assert "_dbsprout_stg_users" in sql
+        assert "ON CONFLICT" in sql
+        assert "DO UPDATE SET" in sql
+        # COPY targets the staging table, not the real table
+        copy_sql = " ".join(str(c.args[0]) for c in cursor.copy.call_args_list)
+        assert "_dbsprout_stg_users" in copy_sql
+
+    def test_upsert_all_pk_table_uses_do_nothing(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        mock_conn = _make_mock_conn()
+        mock_connect = _make_mock_connect(mock_conn)
+        monkeypatch.setattr("dbsprout.output.pg_copy.psycopg", _mock_psycopg(mock_connect))
+
+        PgCopyWriter().write(
+            {"link": [{"a_id": 1, "b_id": 2}]},
+            _all_pk_schema(),
+            ["link"],
+            "pg://localhost/test",
+            upsert=True,
+        )
+        cursor = mock_conn.cursor.return_value.__enter__.return_value
+        sql = " ".join(_executed_sql(cursor))
+        assert "ON CONFLICT" in sql
+        assert "DO NOTHING" in sql
+
+    def test_upsert_no_pk_falls_back_to_plain_copy(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        mock_conn = _make_mock_conn()
+        mock_connect = _make_mock_connect(mock_conn)
+        monkeypatch.setattr("dbsprout.output.pg_copy.psycopg", _mock_psycopg(mock_connect))
+
+        PgCopyWriter().write(
+            {"logs": [{"msg": "hi", "level": "INFO"}]},
+            _no_pk_schema(),
+            ["logs"],
+            "pg://localhost/test",
+            upsert=True,
+        )
+        cursor = mock_conn.cursor.return_value.__enter__.return_value
+        sql = " ".join(_executed_sql(cursor))
+        assert "ON CONFLICT" not in sql
+        assert "_dbsprout_stg_logs" not in sql
+        copy_sql = " ".join(str(c.args[0]) for c in cursor.copy.call_args_list)
+        assert '"logs"' in copy_sql
+        assert "_dbsprout_stg" not in copy_sql
+
+    def test_non_upsert_path_unchanged(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Regression: default (upsert=False) does no staging, no ON CONFLICT."""
+        mock_conn = _make_mock_conn()
+        mock_connect = _make_mock_connect(mock_conn)
+        monkeypatch.setattr("dbsprout.output.pg_copy.psycopg", _mock_psycopg(mock_connect))
+
+        PgCopyWriter().write(
+            _simple_data(), _simple_schema(), ["users", "orders"], "pg://localhost/test"
+        )
+        cursor = mock_conn.cursor.return_value.__enter__.return_value
+        sql = " ".join(_executed_sql(cursor))
+        assert "ON CONFLICT" not in sql
+        assert "_dbsprout_stg" not in sql
+        copy_sql = " ".join(str(c.args[0]) for c in cursor.copy.call_args_list)
+        assert "_dbsprout_stg" not in copy_sql
+
+    def test_upsert_returns_insert_result(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        mock_conn = _make_mock_conn()
+        mock_connect = _make_mock_connect(mock_conn)
+        monkeypatch.setattr("dbsprout.output.pg_copy.psycopg", _mock_psycopg(mock_connect))
+
+        result = PgCopyWriter().write(
+            _simple_data(),
+            _simple_schema(),
+            ["users", "orders"],
+            "pg://localhost/test",
+            upsert=True,
+        )
+        assert isinstance(result, InsertResult)
+        assert result.tables_inserted == 2
+        assert result.total_rows == 3
+
+
 # ── Mock helpers ─────────────────────────────────────────────────────
 
 
@@ -481,8 +617,56 @@ def _make_mock_connect(conn: MagicMock) -> MagicMock:
     return MagicMock(return_value=conn)
 
 
+class _FakeComposed:
+    """Renders like psycopg.sql composables: str() yields the final SQL text.
+
+    Faithful to the psycopg3 ``sql`` contract used by the writer:
+    ``SQL(template).format(**named)``, ``SQL(sep).join(iterable)``,
+    ``Identifier(name)`` (double-quoted), ``Literal(value)``.
+    """
+
+    def __init__(self, text: str) -> None:
+        self._text = text
+
+    def __str__(self) -> str:
+        return self._text
+
+    def join(self, parts: Any) -> _FakeComposed:
+        return _FakeComposed(self._text.join(str(p) for p in parts))
+
+    def format(self, *args: Any, **kwargs: Any) -> _FakeComposed:
+        text = self._text
+        for i, a in enumerate(args):
+            text = text.replace("{}", str(a), 1) if "{}" in text else text
+            text = text.replace(f"{{{i}}}", str(a))
+        for k, v in kwargs.items():
+            text = text.replace(f"{{{k}}}", str(v))
+        return _FakeComposed(text)
+
+
+class _FakeSqlModule:
+    """Faithful stand-in for ``psycopg.sql`` (SQL/Identifier/Literal)."""
+
+    @staticmethod
+    def SQL(s: str) -> _FakeComposed:  # noqa: N802 (mirrors psycopg.sql.SQL)
+        return _FakeComposed(s)
+
+    @staticmethod
+    def Identifier(n: str) -> _FakeComposed:  # noqa: N802 (mirrors psycopg API)
+        return _FakeComposed(f'"{n}"')
+
+    @staticmethod
+    def Literal(v: Any) -> _FakeComposed:  # noqa: N802 (mirrors psycopg API)
+        return _FakeComposed(repr(v))
+
+
+def _fake_sql_module() -> _FakeSqlModule:
+    return _FakeSqlModule()
+
+
 def _mock_psycopg(connect: MagicMock) -> MagicMock:
-    """Create a mock psycopg module."""
+    """Create a mock psycopg module with a faithful ``sql`` submodule."""
     mod = MagicMock()
     mod.connect = connect
+    mod.sql = _fake_sql_module()
     return mod

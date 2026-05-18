@@ -97,6 +97,53 @@ def build_copy_data(columns: list[str], rows: list[dict[str, Any]]) -> str:
     return "\n".join(lines) + "\n"
 
 
+_STAGING_PREFIX = "_dbsprout_stg_"
+
+
+def _staging_name(table_name: str) -> str:
+    """Deterministic staging table name for a target table."""
+    return f"{_STAGING_PREFIX}{table_name}"
+
+
+def _build_create_staging(target: str, staging: str) -> Any:
+    """CREATE TEMP TABLE <staging> mirroring <target>, auto-dropped at commit."""
+    return psycopg.sql.SQL(
+        "CREATE TEMP TABLE {stg} (LIKE {tgt} INCLUDING DEFAULTS) ON COMMIT DROP"
+    ).format(
+        stg=psycopg.sql.Identifier(staging),
+        tgt=psycopg.sql.Identifier(target),
+    )
+
+
+def _build_pg_merge_sql(
+    target: str, staging: str, columns: list[str], pk_columns: list[str]
+) -> Any:
+    """INSERT INTO target SELECT ... FROM staging ON CONFLICT (pk) DO UPDATE.
+
+    All-PK tables (no updatable columns) use DO NOTHING.
+    """
+    col_idents = psycopg.sql.SQL(", ").join(psycopg.sql.Identifier(c) for c in columns)
+    conflict_cols = psycopg.sql.SQL(", ").join(psycopg.sql.Identifier(c) for c in pk_columns)
+    update_cols = [c for c in columns if c not in pk_columns]
+    if update_cols:
+        sets = psycopg.sql.SQL(", ").join(
+            psycopg.sql.SQL("{c} = EXCLUDED.{c}").format(c=psycopg.sql.Identifier(c))
+            for c in update_cols
+        )
+        action = psycopg.sql.SQL("DO UPDATE SET {sets}").format(sets=sets)
+    else:
+        action = psycopg.sql.SQL("DO NOTHING")
+    return psycopg.sql.SQL(
+        "INSERT INTO {tgt} ({cols}) SELECT {cols} FROM {stg} ON CONFLICT ({conflict}) {action}"
+    ).format(
+        tgt=psycopg.sql.Identifier(target),
+        cols=col_idents,
+        stg=psycopg.sql.Identifier(staging),
+        conflict=conflict_cols,
+        action=action,
+    )
+
+
 __all__ = [
     "InsertResult",
     "PgCopyWriter",
@@ -110,15 +157,22 @@ class PgCopyWriter:
 
     format: str = "pg_copy"
 
-    def write(
+    def write(  # noqa: PLR0913
         self,
         tables_data: dict[str, list[dict[str, Any]]],
         schema: DatabaseSchema,
         insertion_order: list[str],
         db_url: str,
         batch_size: int = 10_000,
+        upsert: bool = False,
     ) -> InsertResult:
         """Insert data via COPY for each table in topological order.
+
+        When ``upsert`` is True and a table has a primary key, data is COPYed
+        into a session-scoped ``TEMP`` staging table (auto-dropped at commit),
+        then merged into the target via ``INSERT ... SELECT ... ON CONFLICT``.
+        Tables without a primary key fall back to a plain COPY into the target,
+        matching the SQL writer's ``build_upsert`` behaviour.
 
         Returns an InsertResult with counts and duration.
         """
@@ -165,17 +219,13 @@ class PgCopyWriter:
                         if table_schema
                         else list(rows[0].keys())
                     )
-
-                    copy_sql = psycopg.sql.SQL("COPY {} ({}) FROM STDIN").format(
-                        psycopg.sql.Identifier(table_name),
-                        psycopg.sql.SQL(", ").join(psycopg.sql.Identifier(c) for c in columns),
+                    pk_columns = (
+                        list(table_schema.primary_key)
+                        if upsert and table_schema and table_schema.primary_key
+                        else []
                     )
 
-                    for i in range(0, len(rows), batch_size):
-                        batch = rows[i : i + batch_size]
-                        data = build_copy_data(columns, batch)
-                        with cur.copy(copy_sql) as copy:
-                            copy.write(data.encode("utf-8"))
+                    _copy_into(cur, table_name, columns, rows, batch_size, pk_columns)
 
                     tables_inserted += 1
                     total_rows += len(rows)
@@ -197,6 +247,44 @@ class PgCopyWriter:
             total_rows=total_rows,
             duration_seconds=duration,
         )
+
+
+def _copy_batches(
+    cur: Any, dest: str, columns: list[str], rows: list[dict[str, Any]], batch_size: int
+) -> None:
+    """COPY all batches of ``rows`` into ``dest`` (target or staging table)."""
+    copy_sql = psycopg.sql.SQL("COPY {} ({}) FROM STDIN").format(
+        psycopg.sql.Identifier(dest),
+        psycopg.sql.SQL(", ").join(psycopg.sql.Identifier(c) for c in columns),
+    )
+    for i in range(0, len(rows), batch_size):
+        batch = rows[i : i + batch_size]
+        data = build_copy_data(columns, batch)
+        with cur.copy(copy_sql) as copy:
+            copy.write(data.encode("utf-8"))
+
+
+def _copy_into(  # noqa: PLR0913
+    cur: Any,
+    table_name: str,
+    columns: list[str],
+    rows: list[dict[str, Any]],
+    batch_size: int,
+    pk_columns: list[str],
+) -> None:
+    """COPY rows into ``table_name``.
+
+    With ``pk_columns`` (upsert), COPY into a TEMP staging table then merge via
+    ``ON CONFLICT``. Without a PK, COPY straight into the target.
+    """
+    if not pk_columns:
+        _copy_batches(cur, table_name, columns, rows, batch_size)
+        return
+
+    staging = _staging_name(table_name)
+    cur.execute(_build_create_staging(table_name, staging))
+    _copy_batches(cur, staging, columns, rows, batch_size)
+    cur.execute(_build_pg_merge_sql(table_name, staging, columns, pk_columns))
 
 
 def _reset_sequences(

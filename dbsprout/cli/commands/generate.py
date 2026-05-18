@@ -288,10 +288,10 @@ def _write_output(  # noqa: PLR0913
     insert_method: str = "auto",
 ) -> None:
     """Write generated data using the selected output writer."""
-    if upsert and output_format != "sql":
+    if upsert and output_format not in ("sql", "direct"):
         console.print(
             "[yellow]Warning:[/yellow] --upsert only applies to "
-            f"--output-format sql; it is ignored for {output_format!r}."
+            f"--output-format sql or direct; it is ignored for {output_format!r}."
         )
     if output_format == "sql":
         writer = _resolve_writer("sql")
@@ -322,7 +322,7 @@ def _write_output(  # noqa: PLR0913
         if not target_db:
             console.print("[red]Error:[/red] --db is required when using --output-format direct")
             raise typer.Exit(code=1)
-        _run_direct_insert(result, schema, insertion_order, target_db, insert_method)
+        _run_direct_insert(result, schema, insertion_order, target_db, insert_method, upsert)
     else:
         console.print(f"[red]Error:[/red] Unknown output format: {output_format}")
         raise typer.Exit(code=1)
@@ -361,12 +361,13 @@ def _detect_direct_dialect(url: str) -> str:
     return lower.split("://")[0].split("+")[0] if "://" in lower else "unknown"
 
 
-def _run_direct_insert(
+def _run_direct_insert(  # noqa: PLR0913
     result: GenerateResult,
     schema: DatabaseSchema,
     insertion_order: list[str],
     target_db: str,
     insert_method: str = "auto",
+    upsert: bool = False,
 ) -> None:
     """Dispatch direct insertion to the appropriate dialect writer.
 
@@ -383,6 +384,10 @@ def _run_direct_insert(
     insert_method:
         One of ``"auto"``, ``"copy"``, ``"load_data"``, ``"batch"``.
         ``"auto"`` selects the fastest available writer for the dialect.
+    upsert:
+        When True, the PG COPY and MySQL LOAD DATA writers perform an
+        UPSERT via a staging table. The SQLAlchemy batch fallback does not
+        support UPSERT; a one-time warning is printed in that case.
     """
     dialect = _detect_direct_dialect(target_db)
 
@@ -396,6 +401,13 @@ def _run_direct_insert(
 
     method_name: str
     insert_result: InsertResult
+
+    if upsert and (insert_method == "batch" or dialect in ("sqlite", "mssql")):
+        console.print(
+            "[yellow]Warning:[/yellow] --upsert is not supported by the "
+            "SQLAlchemy batch insert path; rows will be inserted without "
+            "UPSERT semantics."
+        )
 
     if insert_method == "batch":
         from dbsprout.output.sa_batch import SaBatchWriter  # noqa: PLC0415
@@ -417,12 +429,20 @@ def _run_direct_insert(
                 else "PostgreSQL COPY (user-selected)"
             )
             insert_result = PgCopyWriter().write(
-                result.tables_data, schema, insertion_order, target_db
+                result.tables_data,
+                schema,
+                insertion_order,
+                target_db,
+                upsert=upsert,
             )
         except ImportError:
             console.print(
                 "[yellow]Warning:[/yellow] psycopg not installed, falling back to batch INSERT."
             )
+            if upsert:
+                console.print(
+                    "[yellow]Warning:[/yellow] --upsert is ignored on the batch INSERT fallback."
+                )
             from dbsprout.output.sa_batch import SaBatchWriter  # noqa: PLC0415
 
             method_name = "SQLAlchemy batch INSERT (fallback)"
@@ -444,12 +464,20 @@ def _run_direct_insert(
                 else "MySQL LOAD DATA (user-selected)"
             )
             insert_result = MysqlLoadDataWriter().write(
-                result.tables_data, schema, insertion_order, target_db
+                result.tables_data,
+                schema,
+                insertion_order,
+                target_db,
+                upsert=upsert,
             )
         except ImportError:
             console.print(
                 "[yellow]Warning:[/yellow] pymysql not installed, falling back to batch INSERT."
             )
+            if upsert:
+                console.print(
+                    "[yellow]Warning:[/yellow] --upsert is ignored on the batch INSERT fallback."
+                )
             from dbsprout.output.sa_batch import SaBatchWriter  # noqa: PLC0415
 
             method_name = "SQLAlchemy batch INSERT (fallback)"
