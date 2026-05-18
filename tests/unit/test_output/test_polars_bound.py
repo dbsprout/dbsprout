@@ -5,7 +5,10 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-import tomllib
+try:
+    import tomllib  # type: ignore[import-not-found]
+except ModuleNotFoundError:  # Python < 3.11
+    import tomli as tomllib  # type: ignore[import-not-found]
 
 
 def _pyproject_path() -> Path:
