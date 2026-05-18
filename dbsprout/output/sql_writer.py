@@ -102,7 +102,14 @@ def _format_complex(value: Any, config: dict[str, str]) -> str:
 def _quote_string(value: str, config: dict[str, str]) -> str:
     """Quote a string value with dialect-appropriate escaping."""
     if config["escape"] == "backslash":
-        escaped = value.replace("\\", "\\\\").replace("'", "\\'")
+        escaped = (
+            value.replace("\\", "\\\\")
+            .replace("'", "\\'")
+            .replace("\x00", "\\0")
+            .replace("\n", "\\n")
+            .replace("\r", "\\r")
+            .replace("\x1a", "\\Z")
+        )
     else:
         escaped = value.replace("'", "''")
     return f"'{escaped}'"
