@@ -102,6 +102,35 @@ def _sanitize_rows(
     return {col: [_sanitize_value(row.get(col)) for row in rows] for col in schema}
 
 
+def _build_dataframe(
+    col_data: dict[str, list[Any]],
+    polars_schema: dict[str, Any],
+    table_name: str,
+) -> Any:
+    """Build a Polars DataFrame, scrubbing cell values from any error.
+
+    Polars surfaces offending cell values in type-mismatch ``TypeError`` /
+    ``OverflowError`` messages (e.g. a SMALLINT overflow echoes the raw
+    integer). Re-raise with only table / column / dtype so generated data
+    never leaks into logs or tracebacks.
+    """
+    try:
+        return pl.DataFrame(col_data, schema=polars_schema)
+    except (TypeError, OverflowError) as exc:
+        for name, dtype in polars_schema.items():
+            try:
+                pl.DataFrame({name: col_data[name]}, schema={name: dtype})
+            except (TypeError, OverflowError, ValueError):
+                msg = (
+                    f"Failed to build Parquet column {table_name!r}.{name!r} "
+                    f"as {dtype!r}: a value does not fit the column type "
+                    f"({type(exc).__name__})."
+                )
+                raise ValueError(msg) from None
+        msg = f"Failed to build Parquet table {table_name!r} ({type(exc).__name__})."
+        raise ValueError(msg) from None
+
+
 class ParquetWriter:
     """Write generated data as Parquet files via Polars."""
 
@@ -148,7 +177,7 @@ class ParquetWriter:
                 df = pl.DataFrame(schema=polars_schema)
             else:
                 col_data = _sanitize_rows(rows, polars_schema)
-                df = pl.DataFrame(col_data, schema=polars_schema)
+                df = _build_dataframe(col_data, polars_schema, table_name)
 
             df.write_parquet(filepath, compression=_COMPRESSION)
             restrict_file_permissions(filepath)
