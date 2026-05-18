@@ -12,6 +12,8 @@ import math
 from decimal import Decimal
 from typing import TYPE_CHECKING, Any
 
+from dbsprout.output._perms import restrict_file_permissions
+
 if TYPE_CHECKING:
     from pathlib import Path
 
@@ -80,6 +82,7 @@ class CSVWriter:
                 for row in rows:
                     writer.writerow(_format_csv_value(row.get(col)) for col in columns)
 
+            restrict_file_permissions(filepath)
             written.append(filepath)
 
         return written

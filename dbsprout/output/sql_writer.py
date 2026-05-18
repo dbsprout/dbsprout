@@ -13,6 +13,8 @@ from datetime import date, datetime, time
 from decimal import Decimal
 from typing import TYPE_CHECKING, Any
 
+from dbsprout.output._perms import restrict_file_permissions
+
 if TYPE_CHECKING:
     from pathlib import Path
 
@@ -298,6 +300,7 @@ class SQLWriter:
 
             content = _build_file(table_name, columns, rows, config, batch_size, pk_columns)
             filepath.write_text(content, encoding="utf-8")
+            restrict_file_permissions(filepath)
             written.append(filepath)
 
         return written
