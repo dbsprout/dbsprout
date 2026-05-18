@@ -411,3 +411,20 @@ class TestSnapshotPermissionHardening:
     def test_privacy_tier_defaults_to_local(self, tmp_path: Path) -> None:
         store = SnapshotStore(base_dir=tmp_path)
         assert store.privacy_tier == "local"
+
+    def test_idempotent_resave_rehardens_existing_file(
+        self, tmp_path: Path, minimal_schema: DatabaseSchema
+    ) -> None:
+        """A snapshot first written under ``local`` is hardened when the
+        same schema is re-saved under a stricter tier."""
+        snap_dir = tmp_path / "snaps"
+        local_store = SnapshotStore(base_dir=snap_dir)  # local
+        info = local_store.save(minimal_schema)
+        # World/group-readable under the default tier (umask-dependent).
+
+        cloud_store = SnapshotStore(base_dir=snap_dir, privacy_tier="cloud")
+        info2 = cloud_store.save(minimal_schema)  # idempotent hit
+
+        assert info2.path == info.path  # same file (idempotent)
+        assert stat.S_IMODE(info.path.stat().st_mode) == 0o600
+        assert stat.S_IMODE(snap_dir.stat().st_mode) == 0o700

@@ -101,6 +101,10 @@ class SnapshotStore:
         if existing is not None:
             info = self._load_snapshot_info(existing)
             if info is not None:
+                if self._hardened:
+                    # Re-assert hardening: a snapshot first written under
+                    # a looser tier must still become owner-only.
+                    os.chmod(existing, 0o600)
                 return info
 
         now = datetime.now(timezone.utc)
