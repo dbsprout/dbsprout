@@ -25,12 +25,20 @@ def test_quality_report_clamps_nan_and_inf_scores() -> None:
         seed=42,
         fidelity=fr,
     )
-    dumped = json.dumps(qr.model_dump())
+    dumped = qr.model_dump_json()
     assert "NaN" not in dumped
     assert "Infinity" not in dumped
+    parsed = json.loads(dumped)  # raises if invalid JSON (e.g. bare NaN)
+
+    # NaN score clamps to a finite 0.0 (not dropped to JSON null); +Inf
+    # overall clamps to 1.0. Without the clamp Pydantic emits null here,
+    # losing the numeric score downstream consumers expect.
+    assert parsed["fidelity"]["metrics"][0]["score"] == 0.0
+    assert parsed["fidelity"]["overall_score"] == 1.0
     assert qr.fidelity is not None
     assert math.isfinite(qr.fidelity.metrics[0].score)
-    assert math.isfinite(qr.fidelity.overall_score)
+    assert qr.fidelity.metrics[0].score == 0.0
+    assert qr.fidelity.overall_score == 1.0
 
 
 def test_fidelity_rich_escapes_markup(capsys) -> None:
