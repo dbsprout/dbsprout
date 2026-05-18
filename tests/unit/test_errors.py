@@ -52,7 +52,7 @@ def test_custom_exit_code() -> None:
 
 def test_missing_dependency_builds_extra_command() -> None:
     err = MissingDependencyError(package="polars", extra="data")
-    assert "pip install dbsprout[data]" in err.fix
+    assert 'pip install "dbsprout[data]"' in err.fix
     assert "polars" in err.what
     assert err.exit_code == 1
     assert isinstance(err, DBSproutError)
@@ -72,7 +72,7 @@ def test_require_dependency_passes_for_present_module() -> None:
 def test_require_dependency_raises_for_missing_module() -> None:
     with pytest.raises(MissingDependencyError) as exc_info:
         require_dependency("definitely_not_a_real_module_xyz", extra="stats")
-    assert "pip install dbsprout[stats]" in exc_info.value.fix
+    assert 'pip install "dbsprout[stats]"' in exc_info.value.fix
 
 
 _VALID_EXTRAS = {
