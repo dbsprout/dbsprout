@@ -283,7 +283,7 @@ class TestMysqlLoadDataWriterImportError:
     def test_raises_on_missing_pymysql(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr("dbsprout.output.mysql_load_data.pymysql", None)
 
-        with pytest.raises(ImportError, match="pip install dbsprout\\[db\\]"):
+        with pytest.raises(ImportError, match=r'pip install "dbsprout\[db\]"'):
             MysqlLoadDataWriter().write(
                 _simple_data(),
                 _simple_schema(),

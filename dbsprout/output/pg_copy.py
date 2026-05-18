@@ -122,7 +122,7 @@ class PgCopyWriter:
         if psycopg is None:
             msg = (
                 "psycopg3 is required for direct PostgreSQL insertion. "
-                "Install it with: pip install dbsprout[pg]"
+                'Install it with: pip install "dbsprout[pg]"'
             )
             raise ImportError(msg)
 

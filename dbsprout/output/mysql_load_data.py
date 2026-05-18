@@ -165,7 +165,7 @@ class MysqlLoadDataWriter:
         if pymysql is None:
             msg = (
                 "pymysql is required for direct MySQL insertion. "
-                "Install it with: pip install dbsprout[db]"
+                'Install it with: pip install "dbsprout[db]"'
             )
             raise ImportError(msg)
 

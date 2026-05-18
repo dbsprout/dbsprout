@@ -175,7 +175,9 @@ def validate_fidelity(
 ) -> FidelityReport:
     """Validate fidelity of synthetic data against reference distributions."""
     if ks_2samp is None:
-        msg = "scipy is required for fidelity metrics. Install it with: pip install dbsprout[stats]"
+        msg = (
+            'scipy is required for fidelity metrics. Install it with: pip install "dbsprout[stats]"'
+        )
         raise ImportError(msg)
 
     metrics: list[FidelityMetric] = []

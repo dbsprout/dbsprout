@@ -172,7 +172,8 @@ class ParquetWriter:
         """
         if pl is None:
             msg = (
-                "polars is required for Parquet output. Install it with: pip install dbsprout[data]"
+                "polars is required for Parquet output. "
+                'Install it with: pip install "dbsprout[data]"'
             )
             raise ImportError(msg)
 
