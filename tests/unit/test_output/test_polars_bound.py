@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import sys
 from pathlib import Path
 
 try:
@@ -22,7 +21,6 @@ def _pyproject_path() -> Path:
 
 
 def test_polars_has_upper_bound() -> None:
-    assert sys.version_info >= (3, 11)
     data = tomllib.loads(_pyproject_path().read_text(encoding="utf-8"))
     extras = data["project"]["optional-dependencies"]
     polars_pins = [
