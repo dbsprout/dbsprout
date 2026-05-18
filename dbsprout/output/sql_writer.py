@@ -185,7 +185,13 @@ def _build_on_conflict(
     config: dict[str, str],
     pk_columns: list[str],
 ) -> str:
-    """PostgreSQL / SQLite ON CONFLICT upsert."""
+    """PostgreSQL / SQLite ON CONFLICT upsert.
+
+    The order of ``pk_columns`` is significant for SQLite ``ON CONFLICT``:
+    it must match a UNIQUE / PRIMARY KEY index's column order on the target
+    table, otherwise SQLite raises "ON CONFLICT clause does not match any
+    PRIMARY KEY or UNIQUE constraint". PostgreSQL is order-insensitive here.
+    """
     quoted_table = quote_identifier(table_name, config)
     quoted_cols = ", ".join(quote_identifier(c, config) for c in columns)
     excluded = config.get("excluded_prefix", "EXCLUDED")

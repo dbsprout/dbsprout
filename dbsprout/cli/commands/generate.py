@@ -288,6 +288,11 @@ def _write_output(  # noqa: PLR0913
     insert_method: str = "auto",
 ) -> None:
     """Write generated data using the selected output writer."""
+    if upsert and output_format != "sql":
+        console.print(
+            "[yellow]Warning:[/yellow] --upsert only applies to "
+            f"--output-format sql; it is ignored for {output_format!r}."
+        )
     if output_format == "sql":
         writer = _resolve_writer("sql")
         writer.write(
