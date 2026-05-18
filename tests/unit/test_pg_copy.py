@@ -361,6 +361,89 @@ class TestPgCopyWriterErrorHandling:
             )
 
 
+class TestPgCopyWriterProgress:
+    def test_adds_one_task_per_nonempty_table(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        mock_conn = _make_mock_conn()
+        mock_connect = _make_mock_connect(mock_conn)
+        monkeypatch.setattr("dbsprout.output.pg_copy.psycopg", _mock_psycopg(mock_connect))
+
+        progress_instance = MagicMock()
+        progress_instance.__enter__ = Mock(return_value=progress_instance)
+        progress_instance.__exit__ = Mock(return_value=False)
+        progress_cls = MagicMock(return_value=progress_instance)
+        monkeypatch.setattr("dbsprout.output.pg_copy.Progress", progress_cls)
+
+        data: dict[str, list[dict[str, Any]]] = {
+            "users": [{"id": 1, "email": "a@b.com"}],
+            "orders": [],
+        }
+        PgCopyWriter().write(data, _simple_schema(), ["users", "orders"], "pg://localhost/test")
+
+        assert progress_instance.add_task.call_count == 1
+        kwargs = progress_instance.add_task.call_args.kwargs
+        desc = kwargs.get("description") or progress_instance.add_task.call_args.args[0]
+        assert "users" in desc
+        assert kwargs.get("rows") == 1
+
+    def test_updates_task_after_table_inserted(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        mock_conn = _make_mock_conn()
+        mock_connect = _make_mock_connect(mock_conn)
+        monkeypatch.setattr("dbsprout.output.pg_copy.psycopg", _mock_psycopg(mock_connect))
+
+        progress_instance = MagicMock()
+        progress_instance.__enter__ = Mock(return_value=progress_instance)
+        progress_instance.__exit__ = Mock(return_value=False)
+        progress_instance.add_task.return_value = 7
+        progress_cls = MagicMock(return_value=progress_instance)
+        monkeypatch.setattr("dbsprout.output.pg_copy.Progress", progress_cls)
+
+        PgCopyWriter().write(
+            _simple_data(), _simple_schema(), ["users", "orders"], "pg://localhost/test"
+        )
+
+        assert progress_instance.add_task.call_count == 2
+        assert progress_instance.update.call_count == 2
+        progress_instance.update.assert_any_call(7, completed=1)
+
+    def test_progress_disabled_when_not_terminal(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        mock_conn = _make_mock_conn()
+        mock_connect = _make_mock_connect(mock_conn)
+        monkeypatch.setattr("dbsprout.output.pg_copy.psycopg", _mock_psycopg(mock_connect))
+
+        fake_console = MagicMock()
+        fake_console.is_terminal = False
+        monkeypatch.setattr("dbsprout.output.pg_copy.Console", MagicMock(return_value=fake_console))
+        progress_cls = MagicMock()
+        progress_cls.return_value.__enter__ = Mock(return_value=progress_cls.return_value)
+        progress_cls.return_value.__exit__ = Mock(return_value=False)
+        monkeypatch.setattr("dbsprout.output.pg_copy.Progress", progress_cls)
+
+        PgCopyWriter().write(
+            _simple_data(), _simple_schema(), ["users", "orders"], "pg://localhost/test"
+        )
+
+        assert progress_cls.call_args.kwargs["disable"] is True
+
+    def test_progress_enabled_when_terminal(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        mock_conn = _make_mock_conn()
+        mock_connect = _make_mock_connect(mock_conn)
+        monkeypatch.setattr("dbsprout.output.pg_copy.psycopg", _mock_psycopg(mock_connect))
+
+        fake_console = MagicMock()
+        fake_console.is_terminal = True
+        monkeypatch.setattr("dbsprout.output.pg_copy.Console", MagicMock(return_value=fake_console))
+        progress_cls = MagicMock()
+        progress_cls.return_value.__enter__ = Mock(return_value=progress_cls.return_value)
+        progress_cls.return_value.__exit__ = Mock(return_value=False)
+        monkeypatch.setattr("dbsprout.output.pg_copy.Progress", progress_cls)
+
+        PgCopyWriter().write(
+            _simple_data(), _simple_schema(), ["users", "orders"], "pg://localhost/test"
+        )
+
+        assert progress_cls.call_args.kwargs["disable"] is False
+
+
 # ── Mock helpers ─────────────────────────────────────────────────────
 
 

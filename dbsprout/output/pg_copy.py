@@ -14,6 +14,9 @@ from datetime import date, datetime, time
 from decimal import Decimal
 from typing import TYPE_CHECKING, Any
 
+from rich.console import Console
+from rich.progress import Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
+
 from dbsprout.output.models import InsertResult
 
 if TYPE_CHECKING:
@@ -130,12 +133,31 @@ class PgCopyWriter:
         tables_inserted = 0
         total_rows = 0
 
+        console = Console()
         try:
-            with psycopg.connect(db_url) as conn, conn.transaction(), conn.cursor() as cur:
+            with (
+                psycopg.connect(db_url) as conn,
+                conn.transaction(),
+                conn.cursor() as cur,
+                Progress(
+                    SpinnerColumn(),
+                    TextColumn("[bold blue]{task.description}"),
+                    TextColumn("{task.fields[rows]} rows"),
+                    TimeElapsedColumn(),
+                    console=console,
+                    disable=not console.is_terminal,
+                ) as progress,
+            ):
                 for table_name in insertion_order:
                     rows = tables_data.get(table_name, [])
                     if not rows:
                         continue
+
+                    task_id = progress.add_task(
+                        description=f"Inserting {table_name}",
+                        total=1,
+                        rows=len(rows),
+                    )
 
                     table_schema = schema.get_table(table_name)
                     columns = (
@@ -157,6 +179,7 @@ class PgCopyWriter:
 
                     tables_inserted += 1
                     total_rows += len(rows)
+                    progress.update(task_id, completed=1)
 
                 _reset_sequences(cur, tables_data, schema, insertion_order)
         except ImportError:
