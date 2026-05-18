@@ -345,6 +345,150 @@ class TestMysqlLoadDataWriterErrorHandling:
         assert cleanup_called
 
 
+# ── MysqlLoadDataWriter UPSERT (S-094-F1) ────────────────────────────
+
+
+def _no_pk_schema() -> DatabaseSchema:
+    return DatabaseSchema(
+        tables=[
+            TableSchema(
+                name="logs",
+                columns=[
+                    ColumnSchema(name="msg", data_type=ColumnType.VARCHAR),
+                    ColumnSchema(name="level", data_type=ColumnType.VARCHAR),
+                ],
+                primary_key=[],
+            ),
+        ],
+    )
+
+
+def _all_pk_schema() -> DatabaseSchema:
+    return DatabaseSchema(
+        tables=[
+            TableSchema(
+                name="link",
+                columns=[
+                    ColumnSchema(name="a_id", data_type=ColumnType.INTEGER, primary_key=True),
+                    ColumnSchema(name="b_id", data_type=ColumnType.INTEGER, primary_key=True),
+                ],
+                primary_key=["a_id", "b_id"],
+            ),
+        ],
+    )
+
+
+def _sql_strings(cur: MagicMock) -> list[str]:
+    return [str(c.args[0]) for c in cur.execute.call_args_list if c.args]
+
+
+class TestMysqlLoadDataWriterUpsert:
+    def test_upsert_with_pk_uses_temp_staging_and_merge(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        mock_conn = _make_mock_conn()
+        mock_pymysql = _make_mock_pymysql(mock_conn)
+        monkeypatch.setattr("dbsprout.output.mysql_load_data.pymysql", mock_pymysql)
+
+        MysqlLoadDataWriter().write(
+            {"users": [{"id": 1, "email": "a@b.com"}]},
+            _simple_schema(),
+            ["users"],
+            "mysql://localhost/test",
+            upsert=True,
+        )
+        cur = mock_conn.cursor.return_value
+        joined = " ".join(_sql_strings(cur))
+        assert "CREATE TEMPORARY TABLE" in joined
+        assert "_dbsprout_stg_users" in joined
+        assert "LOAD DATA" in joined
+        assert "ON DUPLICATE KEY UPDATE" in joined
+        load = next(s for s in _sql_strings(cur) if "LOAD DATA" in s)
+        assert "_dbsprout_stg_users" in load
+        assert any("DROP TEMPORARY TABLE" in s for s in _sql_strings(cur))
+
+    def test_upsert_all_pk_uses_insert_ignore(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        mock_conn = _make_mock_conn()
+        mock_pymysql = _make_mock_pymysql(mock_conn)
+        monkeypatch.setattr("dbsprout.output.mysql_load_data.pymysql", mock_pymysql)
+
+        MysqlLoadDataWriter().write(
+            {"link": [{"a_id": 1, "b_id": 2}]},
+            _all_pk_schema(),
+            ["link"],
+            "mysql://localhost/test",
+            upsert=True,
+        )
+        cur = mock_conn.cursor.return_value
+        joined = " ".join(_sql_strings(cur))
+        assert "INSERT IGNORE INTO" in joined
+        assert "ON DUPLICATE KEY UPDATE" not in joined
+
+    def test_upsert_no_pk_falls_back_to_plain_load(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        mock_conn = _make_mock_conn()
+        mock_pymysql = _make_mock_pymysql(mock_conn)
+        monkeypatch.setattr("dbsprout.output.mysql_load_data.pymysql", mock_pymysql)
+
+        MysqlLoadDataWriter().write(
+            {"logs": [{"msg": "hi", "level": "INFO"}]},
+            _no_pk_schema(),
+            ["logs"],
+            "mysql://localhost/test",
+            upsert=True,
+        )
+        cur = mock_conn.cursor.return_value
+        joined = " ".join(_sql_strings(cur))
+        assert "CREATE TEMPORARY TABLE" not in joined
+        assert "ON DUPLICATE KEY UPDATE" not in joined
+        load = next(s for s in _sql_strings(cur) if "LOAD DATA" in s)
+        assert "`logs`" in load
+        assert "_dbsprout_stg" not in load
+
+    def test_non_upsert_path_unchanged(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Regression: default (upsert=False) does no staging, no merge."""
+        mock_conn = _make_mock_conn()
+        mock_pymysql = _make_mock_pymysql(mock_conn)
+        monkeypatch.setattr("dbsprout.output.mysql_load_data.pymysql", mock_pymysql)
+
+        MysqlLoadDataWriter().write(
+            _simple_data(),
+            _simple_schema(),
+            ["users", "orders"],
+            "mysql://localhost/test",
+        )
+        cur = mock_conn.cursor.return_value
+        joined = " ".join(_sql_strings(cur))
+        assert "CREATE TEMPORARY TABLE" not in joined
+        assert "ON DUPLICATE KEY UPDATE" not in joined
+        assert "_dbsprout_stg" not in joined
+
+    def test_upsert_drops_staging_on_merge_failure(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """No orphan staging table when the merge step raises."""
+        mock_pymysql = MagicMock()
+        mock_conn = _make_mock_conn()
+        mock_pymysql.connect.return_value = mock_conn
+        dropped: list[str] = []
+
+        def execute_side_effect(sql: str) -> None:
+            if "INSERT INTO" in sql and "SELECT" in sql:
+                raise Exception("merge boom")
+            if "DROP TEMPORARY TABLE" in sql:
+                dropped.append(sql)
+
+        mock_conn.cursor.return_value.execute = execute_side_effect
+        monkeypatch.setattr("dbsprout.output.mysql_load_data.pymysql", mock_pymysql)
+
+        with pytest.raises(RuntimeError):
+            MysqlLoadDataWriter().write(
+                {"users": [{"id": 1, "email": "a@b.com"}]},
+                _simple_schema(),
+                ["users"],
+                "mysql://localhost/test",
+                upsert=True,
+            )
+        assert dropped, "staging table must be dropped even on merge failure"
+
+
 # ── Mock helpers ─────────────────────────────────────────────────────
 
 

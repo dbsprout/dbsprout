@@ -146,6 +146,84 @@ class TestMysqlLoadDataLive:
 
 
 @pytest.mark.integration
+class TestMysqlLoadDataUpsertLive:
+    """S-094-F1: upsert via TEMPORARY staging — re-run updates, not duplicates."""
+
+    def test_rerun_updates_not_duplicates(
+        self,
+        mysql_url: str,
+        test_schema: DatabaseSchema,
+    ) -> None:
+        """Second run with upsert=True updates the row, count stays 1."""
+        create_mysql_tables(mysql_url, test_schema)
+        try:
+            import pymysql  # noqa: PLC0415
+
+            first = {"users": [{"id": 1, "email": "old@test.com"}], "posts": []}
+            MysqlLoadDataWriter().write(
+                first, test_schema, ["users", "posts"], mysql_url, upsert=True
+            )
+            second = {"users": [{"id": 1, "email": "new@test.com"}], "posts": []}
+            MysqlLoadDataWriter().write(
+                second, test_schema, ["users", "posts"], mysql_url, upsert=True
+            )
+
+            params = _parse_mysql_url(mysql_url)
+            conn = pymysql.connect(**params)
+            try:
+                with conn.cursor() as cur:
+                    cur.execute("SELECT COUNT(*) FROM `users`")
+                    assert cur.fetchone()[0] == 1
+                    cur.execute("SELECT `email` FROM `users` WHERE `id` = 1")
+                    assert cur.fetchone()[0] == "new@test.com"
+                    cur.execute(
+                        "SELECT COUNT(*) FROM information_schema.tables "
+                        "WHERE table_name LIKE '_dbsprout_stg_%'"
+                    )
+                    assert cur.fetchone()[0] == 0
+            finally:
+                conn.close()
+        finally:
+            drop_mysql_tables(mysql_url, test_schema)
+
+    def test_no_orphan_staging_after_success(
+        self,
+        mysql_url: str,
+        test_schema: DatabaseSchema,
+    ) -> None:
+        """Staging table is dropped after a successful upsert run.
+
+        The failure-path drop (``finally``) is covered deterministically by
+        the unit test ``test_upsert_drops_staging_on_merge_failure``; here we
+        assert the live success invariant (MySQL ``FOREIGN_KEY_CHECKS=0`` in
+        the writer means an FK violation does not raise, so a forced failure
+        is exercised only at the unit level).
+        """
+        create_mysql_tables(mysql_url, test_schema)
+        try:
+            import pymysql  # noqa: PLC0415
+
+            rows = {"users": [{"id": 1, "email": "u@test.com"}], "posts": []}
+            MysqlLoadDataWriter().write(
+                rows, test_schema, ["users", "posts"], mysql_url, upsert=True
+            )
+
+            params = _parse_mysql_url(mysql_url)
+            conn = pymysql.connect(**params)
+            try:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        "SELECT COUNT(*) FROM information_schema.tables "
+                        "WHERE table_name LIKE '_dbsprout_stg_%'"
+                    )
+                    assert cur.fetchone()[0] == 0
+            finally:
+                conn.close()
+        finally:
+            drop_mysql_tables(mysql_url, test_schema)
+
+
+@pytest.mark.integration
 @pytest.mark.slow
 def test_mysql_load_data_throughput_5k_rows_per_sec(mysql_url: str) -> None:
     """AC: MySQL LOAD DATA >=5K rows/sec (CI-safe; production target 80K+)."""
