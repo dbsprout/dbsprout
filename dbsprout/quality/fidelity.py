@@ -57,7 +57,10 @@ def ks_complement(real: list[float], synthetic: list[float]) -> float:
     if not real or not synthetic:
         return 1.0
     if ks_2samp is None:
-        return 0.0
+        msg = (
+            'scipy is required for fidelity metrics. Install it with: pip install "dbsprout[stats]"'
+        )
+        raise ImportError(msg)
     stat, _ = ks_2samp(real, synthetic)
     return 1.0 - float(stat)
 
@@ -97,10 +100,14 @@ def correlation_similarity(
 
     diff = real_clean - syn_clean
     n = len(col_names)
-    max_norm = 2.0 * n * n
+    # Off-diagonal correlation entries differ by at most 2.0 each, and there
+    # are n*(n-1) of them (the diagonal is always 1.0 → zero diff). The tight
+    # max Frobenius norm is therefore 2*sqrt(n*(n-1)); the previous
+    # sqrt(2*n*n) bound over-estimated, deflating similarity scores.
+    max_norm = 2.0 * math.sqrt(n * (n - 1))
     frobenius = float(np.sqrt(np.sum(diff**2)))
 
-    return max(0.0, 1.0 - frobenius / math.sqrt(max_norm))
+    return max(0.0, 1.0 - frobenius / max_norm)
 
 
 def cardinality_similarity(real: list[Any], synthetic: list[Any]) -> float:
