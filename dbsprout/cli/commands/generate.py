@@ -245,9 +245,9 @@ def _load_reference_for_engine(
         for table in schema.tables:
             csv_path = (reference_data / f"{table.name}.csv").resolve()
             if csv_path.is_relative_to(base) and csv_path.exists():
-                ref[table.name] = load_reference_csv(csv_path, table.name)
+                ref[table.name] = load_reference_csv(csv_path)
     else:
-        ref[reference_data.stem] = load_reference_csv(reference_data, reference_data.stem)
+        ref[reference_data.stem] = load_reference_csv(reference_data)
     return ref
 
 
@@ -288,6 +288,11 @@ def _write_output(  # noqa: PLR0913
     insert_method: str = "auto",
 ) -> None:
     """Write generated data using the selected output writer."""
+    if upsert and output_format != "sql":
+        console.print(
+            "[yellow]Warning:[/yellow] --upsert only applies to "
+            f"--output-format sql; it is ignored for {output_format!r}."
+        )
     if output_format == "sql":
         writer = _resolve_writer("sql")
         writer.write(

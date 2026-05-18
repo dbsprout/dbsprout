@@ -336,7 +336,7 @@ class TestPgCopyWriterImportError:
     def test_raises_on_missing_psycopg(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr("dbsprout.output.pg_copy.psycopg", None)
 
-        with pytest.raises(ImportError, match="pip install dbsprout\\[pg\\]"):
+        with pytest.raises(ImportError, match=r'pip install "dbsprout\[pg\]"'):
             PgCopyWriter().write(
                 _simple_data(),
                 _simple_schema(),

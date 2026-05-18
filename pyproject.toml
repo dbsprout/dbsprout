@@ -164,10 +164,10 @@ tui = [
     "textual>=1.0",
 ]
 data = [
-    "polars>=1.0",
+    "polars>=1.0,<2.0",
 ]
 train = [
-    "polars>=1.0",
+    "polars>=1.0,<2.0",
     "sqlalchemy>=2.0",
 ]
 # Excludes train-cuda/train-mlx/train-dp (platform-specific / heavy opt-in) and cloud (subset of llm)

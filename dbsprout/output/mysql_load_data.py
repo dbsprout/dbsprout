@@ -18,6 +18,8 @@ from decimal import Decimal
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urlparse
 
+from dbsprout.output._perms import restrict_file_permissions
+
 if TYPE_CHECKING:
     from types import ModuleType
 
@@ -113,7 +115,9 @@ def _write_temp_file(content: str) -> str:
         mode="w", suffix=".tsv", delete=False, encoding="utf-8"
     ) as tmp:
         tmp.write(content)
-        return tmp.name
+        path = tmp.name
+    restrict_file_permissions(path)
+    return path
 
 
 def _cleanup_temp_files(paths: list[str]) -> None:
@@ -161,7 +165,7 @@ class MysqlLoadDataWriter:
         if pymysql is None:
             msg = (
                 "pymysql is required for direct MySQL insertion. "
-                "Install it with: pip install dbsprout[db]"
+                'Install it with: pip install "dbsprout[db]"'
             )
             raise ImportError(msg)
 
