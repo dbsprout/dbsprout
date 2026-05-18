@@ -157,6 +157,11 @@ def build_upsert(
     if not pk_columns:
         return build_insert(table_name, columns, rows, config)
 
+    missing = [c for c in pk_columns if c not in columns]
+    if missing:
+        msg = f"pk_columns {missing} are not a subset of columns {columns}; cannot build an UPSERT."
+        raise ValueError(msg)
+
     style = config.get("upsert_style", "on_conflict")
 
     if style == "merge":
