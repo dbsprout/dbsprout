@@ -38,6 +38,7 @@ class GenerationConfig(BaseModel):
 
     default_rows: int = Field(default=100, ge=1)
     seed: int = Field(default=42, ge=0)
+    max_rows_per_table: int | None = Field(default=None, ge=1)
     engine: Literal["heuristic", "spec", "statistical", "finetuned"] = "heuristic"
     output_format: Literal["sql", "csv", "json", "jsonl", "parquet"] = "sql"
     output_dir: str = "./seeds"

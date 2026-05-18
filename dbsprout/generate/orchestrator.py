@@ -89,6 +89,7 @@ def orchestrate(  # noqa: PLR0913
             continue
 
         num_rows = _get_row_count(table_name, config, default_rows)
+        _guard_row_count(table_name, num_rows, config)
         mappings = all_mappings.get(table_name, {})
         table_start = time.perf_counter_ns()
         rows = _generate_rows(
@@ -239,6 +240,22 @@ def _get_row_count(
     if override and override.rows is not None:
         return override.rows
     return default_rows
+
+
+def _guard_row_count(table_name: str, num_rows: int, config: DBSproutConfig) -> None:
+    """Raise if *num_rows* exceeds the configured per-table cap.
+
+    A safety valve against runaway generation (typo'd ``--rows``, bad
+    config). Disabled when ``max_rows_per_table`` is unset.
+    """
+    max_rows = config.generation.max_rows_per_table
+    if max_rows is not None and num_rows > max_rows:
+        msg = (
+            f"Table {table_name!r} requests {num_rows} rows but "
+            f"max_rows_per_table is {max_rows}. Lower the row count or raise "
+            "[generation].max_rows_per_table."
+        )
+        raise ValueError(msg)
 
 
 def _is_excluded(table_name: str, config: DBSproutConfig) -> bool:
