@@ -123,14 +123,31 @@ def orchestrate(  # noqa: PLR0913
 
 @dataclass(frozen=True)
 class _EngineSelection:
-    """Resolved engines for a generation run."""
+    """Resolved engines for a generation run.
+
+    The heuristic engine is built lazily: the ``spec`` and ``statistical``
+    engines only fall back to it for tables that lack a usable spec, so for
+    a fully-specced schema it is never constructed (S-095 AC-2). It is
+    memoised in ``_heuristic_holder`` (a mutable list on this frozen
+    dataclass) so it is built at most once per run.
+    """
 
     engine: str
-    heuristic: Any
+    seed: int
+    heuristic: Any = None
     spec: Any = None
     statistical: Any = None
     table_specs: dict[str, Any] = field(default_factory=dict)
     spec_usage: SpecUsage | None = None
+    _heuristic_holder: list[Any] = field(default_factory=list)
+
+    def get_heuristic(self) -> Any:
+        """Return the heuristic engine, building it on first need."""
+        if self.heuristic is not None:
+            return self.heuristic
+        if not self._heuristic_holder:
+            self._heuristic_holder.append(resolve_engine("heuristic", seed=self.seed))
+        return self._heuristic_holder[0]
 
 
 def _select_engines(
@@ -154,7 +171,6 @@ def _select_engines(
     a ``lora_path`` the original S-025 ``heuristic_fallback`` path is used
     unchanged.
     """
-    heuristic = resolve_engine("heuristic", seed=seed)
     if engine == "spec":
         spec_usage: SpecUsage | None = None
         if lora_path is not None:
@@ -174,7 +190,7 @@ def _select_engines(
             dataspec = heuristic_fallback(schema)
         return _EngineSelection(
             engine="spec",
-            heuristic=heuristic,
+            seed=seed,
             spec=resolve_engine("spec_driven", seed=seed),
             table_specs={ts.table_name: ts for ts in dataspec.tables},
             spec_usage=spec_usage,
@@ -182,10 +198,12 @@ def _select_engines(
     if engine == "statistical":
         return _EngineSelection(
             engine="statistical",
-            heuristic=heuristic,
+            seed=seed,
             statistical=resolve_engine("statistical", seed=seed),
         )
-    return _EngineSelection(engine="heuristic", heuristic=heuristic)
+    return _EngineSelection(
+        engine="heuristic", seed=seed, heuristic=resolve_engine("heuristic", seed=seed)
+    )
 
 
 def _generate_rows(
@@ -207,7 +225,7 @@ def _generate_rows(
             table_schema, reference_rows, mappings, num_rows
         )
         return cast("list[dict[str, Any]]", rows)
-    rows = selection.heuristic.generate_table(table_schema, mappings, num_rows)
+    rows = selection.get_heuristic().generate_table(table_schema, mappings, num_rows)
     return cast("list[dict[str, Any]]", rows)
 
 

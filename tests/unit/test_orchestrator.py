@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from dbsprout.config.models import DBSproutConfig, TableOverride
 from dbsprout.generate.orchestrator import orchestrate
 from dbsprout.schema.models import (
@@ -11,6 +13,9 @@ from dbsprout.schema.models import (
     ForeignKeySchema,
     TableSchema,
 )
+
+if TYPE_CHECKING:
+    import pytest
 
 
 def _col(  # noqa: PLR0913
@@ -279,3 +284,53 @@ class TestSpecUsagePassthrough:
             )
 
         assert result.spec_usage == usage
+
+
+class TestLazyEngineInstantiation:
+    """AC-2 (S-095): the heuristic engine is built only when actually used."""
+
+    def test_spec_engine_does_not_build_heuristic_when_all_tables_have_specs(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """engine='spec' (no lora) gives every table a spec → heuristic unused.
+
+        ``resolve_engine`` must be called exactly once with ``"spec_driven"``
+        and never with ``"heuristic"``.
+        """
+        import dbsprout.generate.orchestrator as orch  # noqa: PLC0415
+
+        calls: list[str] = []
+        real_resolve = orch.resolve_engine
+
+        def spy(engine: str, *, seed: int) -> object:
+            calls.append(engine)
+            return real_resolve(engine, seed=seed)
+
+        monkeypatch.setattr(orch, "resolve_engine", spy)
+
+        schema = _users_orders_schema()
+        result = orchestrate(schema, DBSproutConfig(), seed=42, default_rows=3, engine="spec")
+
+        assert result.total_tables == 2
+        assert calls == ["spec_driven"]
+        assert "heuristic" not in calls
+
+    def test_heuristic_engine_resolved_for_heuristic_engine(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The default heuristic path still resolves the heuristic engine."""
+        import dbsprout.generate.orchestrator as orch  # noqa: PLC0415
+
+        calls: list[str] = []
+        real_resolve = orch.resolve_engine
+
+        def spy(engine: str, *, seed: int) -> object:
+            calls.append(engine)
+            return real_resolve(engine, seed=seed)
+
+        monkeypatch.setattr(orch, "resolve_engine", spy)
+
+        schema = _users_orders_schema()
+        orchestrate(schema, DBSproutConfig(), seed=42, default_rows=3)
+
+        assert calls == ["heuristic"]
