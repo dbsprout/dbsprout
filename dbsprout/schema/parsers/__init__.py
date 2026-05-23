@@ -36,6 +36,13 @@ def parse_schema_file(path: Path) -> DatabaseSchema:
     if not path.exists():
         msg = f"File not found: {path}"
         raise FileNotFoundError(msg)
+    # Resolve symlinks and require a regular file *before* reading: a symlink
+    # to a character device (e.g. ``/dev/zero``) reports ``st_size == 0`` yet
+    # streams unbounded data into ``read_text()`` → OOM. ``Path.is_file()``
+    # follows the link and is False for devices, FIFOs, and directories.
+    if not path.is_file():
+        msg = f"Path is not a regular file: {path}"
+        raise ValueError(msg)
     if path.stat().st_size > _MAX_SCHEMA_BYTES:
         msg = f"File too large (>10 MB): {path}"
         raise ValueError(msg)
