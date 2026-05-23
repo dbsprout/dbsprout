@@ -69,20 +69,20 @@ class HeuristicEngine:
         num_rows: int,
         col_seed: int = 42,
     ) -> list[Any]:
-        """Generate values for a single column."""
+        """Generate values for a single column.
+
+        A per-column ``random.Random`` instance is created from ``col_seed`` so
+        that builtin generators are fully isolated from the process-global RNG.
+        Mimesis providers own their own ``Random`` instance and are reseeded via
+        ``provider.reseed(col_seed)``.
+        """
         if mapping is None:
             return [None] * num_rows
 
-        # Reseed stdlib random + every Mimesis provider so a given
-        # (seed, table, column) triple yields identical output across runs.
-        # Mimesis providers hold their own Random instance reachable via reseed().
-        #
-        # NOTE: ``random.seed`` is called on the global module here because the
-        # builtin generators below (``_gen_random_string`` etc.) use the module
-        # directly. Determinism in the current single-threaded CLI is fine; if
-        # parallel batch generation is ever introduced, convert the builtins to
-        # accept a ``Random`` instance and plumb it through.
-        random.seed(col_seed)
+        # Create a per-column Random instance — never touches the global RNG.
+        rng = random.Random(col_seed)  # noqa: S311
+
+        # Reseed every Mimesis provider with the column seed.
         for provider in (
             self._person,
             self._address,
@@ -107,7 +107,7 @@ class HeuristicEngine:
                 vec_result = [v[:max_length] if isinstance(v, str) else v for v in vec_result]
             return vec_result
 
-        gen = self._resolve_generator(mapping)
+        gen = self._resolve_generator(mapping, rng)
         params = mapping.params
         max_length = params.get("max_length")
 
@@ -122,6 +122,7 @@ class HeuristicEngine:
     def _resolve_generator(
         self,
         mapping: GeneratorMapping,
+        rng: random.Random,
     ) -> Any:
         """Resolve a GeneratorMapping to a callable (params) -> value."""
         name = mapping.generator_name
@@ -131,13 +132,13 @@ class HeuristicEngine:
         if mimesis_gen is not None:
             return lambda _p, g=mimesis_gen: g()
 
-        # Builtin generators
+        # Builtin generators — bind the per-column rng instance
         builtin_gen = _BUILTIN_DISPATCH.get(name)
         if builtin_gen is not None:
-            return builtin_gen
+            return lambda p, g=builtin_gen, r=rng: g(p, r)
 
-        # Final fallback
-        return _gen_random_string
+        # Final fallback — also bound to the per-column rng
+        return lambda p, r=rng: _gen_random_string(p, r)
 
     def _mimesis_dispatch(self) -> dict[str, Any]:
         """Lazy dispatch table for Mimesis provider methods."""
@@ -181,79 +182,85 @@ class HeuristicEngine:
 # ── Builtin generators ──────────────────────────────────────────────────
 
 
-def _gen_random_int(params: dict[str, Any]) -> int:
+def _gen_random_int(params: dict[str, Any], rng: random.Random) -> int:
     lo = params.get("min", 0)
     hi = params.get("max", 10000)
     if lo > hi:
         lo, hi = hi, lo
-    return random.randint(lo, hi)  # noqa: S311
+    return rng.randint(lo, hi)
 
 
-def _gen_random_float(params: dict[str, Any]) -> float:
+def _gen_random_float(params: dict[str, Any], rng: random.Random) -> float:
     lo = params.get("min", 0.0)
     hi = params.get("max", 10000.0)
-    return round(random.uniform(lo, hi), 2)  # noqa: S311
+    return round(rng.uniform(lo, hi), 2)
 
 
-def _gen_random_decimal(params: dict[str, Any]) -> float:
+def _gen_random_decimal(params: dict[str, Any], rng: random.Random) -> float:
     precision = params.get("precision", 10)
     scale = params.get("scale", 2)
     max_val = max(10 ** (precision - scale) - 1, 1)
-    return float(round(random.uniform(0, max_val), scale))  # noqa: S311
+    return float(round(rng.uniform(0, max_val), scale))
 
 
-def _gen_random_bool(_params: dict[str, Any]) -> bool:
-    return random.choice([True, False])  # noqa: S311
+def _gen_random_bool(_params: dict[str, Any], rng: random.Random) -> bool:
+    return rng.choice([True, False])
 
 
-def _gen_random_string(params: dict[str, Any]) -> str:
+def _gen_random_string(params: dict[str, Any], rng: random.Random) -> str:
     length = min(params.get("max_length", 20), 100)
-    return "".join(random.choices(string.ascii_lowercase, k=length))  # noqa: S311
+    return "".join(rng.choices(string.ascii_lowercase, k=length))
 
 
-def _gen_random_text(_params: dict[str, Any]) -> str:
-    words = random.randint(5, 20)  # noqa: S311
+def _gen_random_text(_params: dict[str, Any], rng: random.Random) -> str:
+    words = rng.randint(5, 20)
     return " ".join(
-        "".join(random.choices(string.ascii_lowercase, k=random.randint(3, 10)))  # noqa: S311
-        for _ in range(words)
+        "".join(rng.choices(string.ascii_lowercase, k=rng.randint(3, 10))) for _ in range(words)
     )
 
 
-def _gen_random_datetime(_params: dict[str, Any]) -> datetime:
+def _gen_random_datetime(_params: dict[str, Any], rng: random.Random) -> datetime:
     base = datetime(2020, 1, 1, tzinfo=timezone.utc)
-    offset = random.randint(0, 365 * 5 * 24 * 3600)  # noqa: S311
+    offset = rng.randint(0, 365 * 5 * 24 * 3600)
     return base + timedelta(seconds=offset)
 
 
-def _gen_random_date(_params: dict[str, Any]) -> date:
-    return _gen_random_datetime(_params).date()
+def _gen_random_date(_params: dict[str, Any], rng: random.Random) -> date:
+    return _gen_random_datetime(_params, rng).date()
 
 
-def _gen_random_time(_params: dict[str, Any]) -> time:
-    return _gen_random_datetime(_params).time()
+def _gen_random_time(_params: dict[str, Any], rng: random.Random) -> time:
+    return _gen_random_datetime(_params, rng).time()
 
 
-def _gen_uuid4(_params: dict[str, Any]) -> str:
+def _gen_uuid4(_params: dict[str, Any], _rng: random.Random) -> str:
     return str(uuid.uuid4())
 
 
-def _gen_random_choice(params: dict[str, Any]) -> Any:
+def _gen_random_choice(params: dict[str, Any], rng: random.Random) -> Any:
     values = params.get("enum_values", ["a", "b", "c"])
     if not values:
         return None
-    return random.choice(values)  # noqa: S311
+    return rng.choice(values)
 
 
-def _gen_random_bytes(_params: dict[str, Any]) -> bytes:
-    return random.randbytes(16)  # noqa: S311
+def _gen_random_bytes(_params: dict[str, Any], rng: random.Random) -> bytes:
+    return bytes(rng.getrandbits(8) for _ in range(16))
 
 
-def _gen_random_json(_params: dict[str, Any]) -> dict[str, Any]:
-    return {"key": _gen_random_string({"max_length": 10}), "value": random.randint(0, 100)}  # noqa: S311
+def _gen_random_json(_params: dict[str, Any], rng: random.Random) -> dict[str, Any]:
+    return {"key": _gen_random_string({"max_length": 10}, rng), "value": rng.randint(0, 100)}
 
 
-def _gen_random_list(_params: dict[str, Any]) -> list[Any]:
-    return [random.randint(0, 100) for _ in range(random.randint(1, 5))]  # noqa: S311
+def _gen_random_list(_params: dict[str, Any], rng: random.Random) -> list[Any]:
+    return [rng.randint(0, 100) for _ in range(rng.randint(1, 5))]
+
+
+def _gen_ssn(rng: random.Random) -> str:
+    a = rng.randint(100, 999)
+    b = rng.randint(10, 99)
+    c = rng.randint(1000, 9999)
+    return f"{a:03d}-{b:02d}-{c:04d}"
 
 
 _BUILTIN_DISPATCH: dict[str, Any] = {
@@ -271,35 +278,28 @@ _BUILTIN_DISPATCH: dict[str, Any] = {
     "random_bytes": _gen_random_bytes,
     "random_json": _gen_random_json,
     "random_list": _gen_random_list,
-    "age": lambda _p: random.randint(18, 90),  # noqa: S311
-    "ssn": lambda _p: _gen_ssn(),
-    "version": lambda _p: f"{random.randint(0, 9)}.{random.randint(0, 99)}.{random.randint(0, 99)}",  # noqa: S311
-    "sku": lambda _p: f"SKU-{random.randint(10000, 99999)}",  # noqa: S311
-    "reference_code": lambda _p: f"REF-{uuid.uuid4().hex[:8].upper()}",
-    "token": lambda _p: uuid.uuid4().hex,
-    "hash": lambda _p: uuid.uuid4().hex + uuid.uuid4().hex[:32],
-    "cvv": lambda _p: f"{random.randint(100, 999)}",  # noqa: S311
-    "credit_card_expiry": lambda _p: f"{random.randint(1, 12):02d}/{random.randint(25, 30)}",  # noqa: S311
-    "filename": lambda _p: f"file_{random.randint(1, 9999)}.txt",  # noqa: S311
-    "status": lambda _p: random.choice(["active", "inactive", "pending", "archived"]),  # noqa: S311
-    "category": lambda _p: random.choice(["general", "premium", "basic", "enterprise"]),  # noqa: S311
-    "role": lambda _p: random.choice(["admin", "user", "editor", "viewer"]),  # noqa: S311
-    "priority": lambda _p: random.choice(["low", "medium", "high", "critical"]),  # noqa: S311
-    "locale": lambda _p: random.choice(["en_US", "en_GB", "de_DE", "fr_FR", "es_ES"]),  # noqa: S311
-    "timezone": lambda _p: random.choice(["UTC", "US/Eastern", "US/Pacific", "Europe/London"]),  # noqa: S311
-    "national_id": lambda _p: f"ID-{random.randint(100000, 999999)}",  # noqa: S311
-    "mime_type": lambda _p: random.choice(["text/plain", "application/json", "image/png"]),  # noqa: S311
+    "age": lambda _p, r: r.randint(18, 90),
+    "ssn": lambda _p, r: _gen_ssn(r),
+    "version": lambda _p, r: f"{r.randint(0, 9)}.{r.randint(0, 99)}.{r.randint(0, 99)}",
+    "sku": lambda _p, r: f"SKU-{r.randint(10000, 99999)}",
+    "reference_code": lambda _p, _r: f"REF-{uuid.uuid4().hex[:8].upper()}",
+    "token": lambda _p, _r: uuid.uuid4().hex,
+    "hash": lambda _p, _r: uuid.uuid4().hex + uuid.uuid4().hex[:32],
+    "cvv": lambda _p, r: f"{r.randint(100, 999)}",
+    "credit_card_expiry": lambda _p, r: f"{r.randint(1, 12):02d}/{r.randint(25, 30)}",
+    "filename": lambda _p, r: f"file_{r.randint(1, 9999)}.txt",
+    "status": lambda _p, r: r.choice(["active", "inactive", "pending", "archived"]),
+    "category": lambda _p, r: r.choice(["general", "premium", "basic", "enterprise"]),
+    "role": lambda _p, r: r.choice(["admin", "user", "editor", "viewer"]),
+    "priority": lambda _p, r: r.choice(["low", "medium", "high", "critical"]),
+    "locale": lambda _p, r: r.choice(["en_US", "en_GB", "de_DE", "fr_FR", "es_ES"]),
+    "timezone": lambda _p, r: r.choice(["UTC", "US/Eastern", "US/Pacific", "Europe/London"]),
+    "national_id": lambda _p, r: f"ID-{r.randint(100000, 999999)}",
+    "mime_type": lambda _p, r: r.choice(["text/plain", "application/json", "image/png"]),
 }
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────
-
-
-def _gen_ssn() -> str:
-    a = random.randint(100, 999)  # noqa: S311
-    b = random.randint(10, 99)  # noqa: S311
-    c = random.randint(1000, 9999)  # noqa: S311
-    return f"{a:03d}-{b:02d}-{c:04d}"
 
 
 def _fk_columns(table: TableSchema) -> set[str]:
