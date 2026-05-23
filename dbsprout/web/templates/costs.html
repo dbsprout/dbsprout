@@ -1,0 +1,75 @@
+{% extends "base.html" %}
+{% block title %}DBSprout Dashboard — LLM Costs{% endblock %}
+{% block head_extra %}
+  {% if summary.chart %}
+    <script src="https://cdn.jsdelivr.net/npm/plotly.js-dist-min@2.35.2/plotly.min.js"></script>
+  {% endif %}
+{% endblock %}
+{% block content %}
+  <div class="flex items-center justify-between mb-4">
+    <h1 class="text-2xl font-bold">LLM costs</h1>
+    <div class="flex gap-2">
+      <a href="/quality" class="btn btn-sm btn-ghost">Quality</a>
+      <a href="/preview" class="btn btn-sm btn-ghost">Preview</a>
+      <a href="/history" class="btn btn-sm btn-ghost">History</a>
+    </div>
+  </div>
+
+  <div class="stats stats-vertical lg:stats-horizontal shadow mb-6">
+    <div class="stat">
+      <div class="stat-title">Total cost</div>
+      <div class="stat-value text-2xl">${{ "%.2f"|format(summary.total_cost) }}</div>
+    </div>
+    <div class="stat">
+      <div class="stat-title">Total tokens</div>
+      <div class="stat-value text-2xl">{{ "{:,}".format(summary.total_tokens) }}</div>
+    </div>
+    <div class="stat">
+      <div class="stat-title">Avg cost / run</div>
+      <div class="stat-value text-2xl">${{ "%.4f"|format(summary.avg_cost_per_run) }}</div>
+    </div>
+    <div class="stat">
+      <div class="stat-title">LLM calls</div>
+      <div class="stat-value text-2xl">{{ "{:,}".format(summary.total_calls) }}</div>
+    </div>
+  </div>
+
+  {% if summary.chart %}
+    <div id="cost-chart" class="mb-6 bg-base-100 rounded-box p-2"></div>
+    <script id="cost-chart-spec" type="application/json">{{ summary.chart|tojson }}</script>
+    <script>
+      (function () {
+        var spec = JSON.parse(document.getElementById("cost-chart-spec").textContent);
+        Plotly.newPlot("cost-chart", spec.data, spec.layout, spec.config);
+      })();
+    </script>
+
+    <h2 class="text-xl font-semibold mb-2">Per-provider breakdown</h2>
+    <div class="overflow-x-auto">
+      <table class="table table-zebra">
+        <thead>
+          <tr>
+            <th>Provider</th>
+            <th>Cost (USD)</th>
+            <th>Tokens</th>
+            <th>Calls</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in summary.per_provider %}
+            <tr>
+              <td><span class="badge badge-primary">{{ row.provider }}</span></td>
+              <td>${{ "%.4f"|format(row.cost) }}</td>
+              <td>{{ "{:,}".format(row.tokens) }}</td>
+              <td>{{ row.calls }}</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  {% else %}
+    <div class="alert alert-info">
+      <span>$0.00 — No LLM calls recorded (offline/heuristic runs make no API calls).</span>
+    </div>
+  {% endif %}
+{% endblock %}

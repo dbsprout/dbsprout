@@ -1,0 +1,68 @@
+{% extends "base.html" %}
+{% block title %}DBSprout Dashboard — Run History{% endblock %}
+{% block content %}
+  <div class="flex items-center justify-between mb-4">
+    <h1 class="text-2xl font-bold">Run history</h1>
+    <div class="flex gap-2">
+      <a href="/quality" class="btn btn-sm btn-ghost">Quality</a>
+      <a href="/preview" class="btn btn-sm btn-ghost">Preview</a>
+      <a href="/costs" class="btn btn-sm btn-ghost">Costs</a>
+    </div>
+  </div>
+
+  {% if rows %}
+    <div class="overflow-x-auto">
+      <table class="table table-zebra">
+        <thead>
+          <tr>
+            <th>Run</th>
+            <th>Started</th>
+            <th>Engine</th>
+            <th>Provider</th>
+            <th>Tables</th>
+            <th>Rows</th>
+            <th>Duration (ms)</th>
+            <th>Cost (USD)</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in rows %}
+            <tr>
+              <td>#{{ row.id }}</td>
+              <td>{{ row.started_at }}</td>
+              <td><span class="badge badge-primary">{{ row.engine }}</span></td>
+              <td>{{ row.provider }}</td>
+              <td>{{ "{:,}".format(row.total_tables) }}</td>
+              <td>{{ "{:,}".format(row.total_rows) }}</td>
+              <td>{{ row.duration_ms if row.duration_ms is not none else "—" }}</td>
+              <td>${{ "%.4f"|format(row.cost) }}</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+
+    <div class="flex items-center justify-between mt-4">
+      <span class="text-sm opacity-70">
+        Page {{ pagination.page }} of {{ pagination.total_pages }}
+        ({{ "{:,}".format(pagination.total_runs) }} runs)
+      </span>
+      <div class="join">
+        {% if pagination.has_prev %}
+          <a class="join-item btn btn-sm" href="?page={{ pagination.page - 1 }}">Previous</a>
+        {% else %}
+          <button class="join-item btn btn-sm btn-disabled">Previous</button>
+        {% endif %}
+        {% if pagination.has_next %}
+          <a class="join-item btn btn-sm" href="?page={{ pagination.page + 1 }}">Next</a>
+        {% else %}
+          <button class="join-item btn btn-sm btn-disabled">Next</button>
+        {% endif %}
+      </div>
+    </div>
+  {% else %}
+    <div class="alert alert-info">
+      <span>No runs yet. Run <code>dbsprout generate</code> to populate the dashboard.</span>
+    </div>
+  {% endif %}
+{% endblock %}

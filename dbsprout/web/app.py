@@ -34,6 +34,7 @@ from fastapi.templating import Jinja2Templates
 
 from dbsprout.state.db import StateDB
 from dbsprout.web.routes import router
+from dbsprout.web.views.insights import insights_router
 
 _PACKAGE_DIR = Path(__file__).resolve().parent
 _TEMPLATES_DIR = _PACKAGE_DIR / "templates"
@@ -75,6 +76,12 @@ def create_app(state_db_path: Path | str | None = None) -> FastAPI:
     app.state.get_state_db = lambda: StateDB(resolved)
     app.mount("/static", StaticFiles(directory=str(_STATIC_DIR)), name="static")
     app.include_router(router)
+    # ─── S-093 views region ───
+    # Real /quality view (S-090's placeholder was removed from routes.py) plus
+    # /preview, /preview/{table}, /costs and /history — all read-only over the
+    # state DB.
+    app.include_router(insights_router)
+    # ─── end S-093 ───
     return app
 
 
