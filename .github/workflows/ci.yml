@@ -101,11 +101,6 @@ jobs:
   benchmark-gate:
     name: Benchmark Regression Gate
     runs-on: ubuntu-latest
-    # Advisory: short microbenchmarks are noisy on shared GitHub runners
-    # (run-to-run variance routinely exceeds the 20% threshold), so the gate
-    # reports regressions without blocking merges — mirrors the `benchmark`
-    # job above. Promote to a hard gate once it runs on a dedicated runner.
-    continue-on-error: true
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
@@ -128,6 +123,11 @@ jobs:
           --benchmark-json=benchmark-results.json
 
       - name: Check for >20% regression vs committed baseline
+        # Advisory: short microbenchmarks are noisy on shared GitHub runners
+        # (run-to-run variance routinely exceeds the 20% threshold), so a
+        # detected regression is surfaced in the log without blocking the
+        # merge. Promote to a hard gate once it runs on a dedicated runner.
+        continue-on-error: true
         run: >-
           uv run python benchmarks/check_regression.py
           --baseline benchmarks/baseline.json
