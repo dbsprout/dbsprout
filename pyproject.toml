@@ -288,6 +288,11 @@ omit = [
     "dbsprout/quality/fidelity.py",         # requires scipy  ([stats] extra)
     "dbsprout/quality/detection.py",        # requires sklearn ([stats] extra)
     "dbsprout/schema/parsers/mongodb.py",  # requires pymongo-schema ([mongo] extra)
+    # TUI modules — only active when the [tui] extra (textual) is installed.
+    # Textual is a heavy optional dependency that is not installed in the
+    # standard dev environment, so these files have 0% coverage without it.
+    "dbsprout/tui/*",
+    "dbsprout/tui/screens/*",
 ]
 
 [tool.coverage.report]
