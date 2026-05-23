@@ -285,6 +285,9 @@ omit = [
     "dbsprout/quality/fidelity.py",         # requires scipy  ([stats] extra)
     "dbsprout/quality/detection.py",        # requires sklearn ([stats] extra)
     "dbsprout/schema/parsers/mongodb.py",  # requires pymongo-schema ([mongo] extra)
+    "dbsprout/tui/*",                       # requires textual ([tui] extra)
+    "dbsprout/web/*",                       # requires fastapi ([web] extra)
+    "dbsprout/cli/serve.py",               # requires uvicorn ([web] extra)
 ]
 
 [tool.coverage.report]
