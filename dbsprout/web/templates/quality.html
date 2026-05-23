@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+{% block title %}DBSprout Dashboard — Quality{% endblock %}
+{% block content %}
+  <div class="flex items-center justify-between mb-4">
+    <h1 class="text-2xl font-bold">Quality metrics</h1>
+    <div class="flex gap-2">
+      <a href="/preview" class="btn btn-sm btn-ghost">Preview</a>
+      <a href="/costs" class="btn btn-sm btn-ghost">Costs</a>
+      <a href="/history" class="btn btn-sm btn-ghost">History</a>
+    </div>
+  </div>
+
+  {% if has_run and rows %}
+    <div class="overflow-x-auto">
+      <table class="table table-zebra">
+        <thead>
+          <tr>
+            <th>Type</th>
+            <th>Metric</th>
+            <th>Score</th>
+            <th>Status</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in rows %}
+            <tr>
+              <td><span class="badge badge-outline">{{ row.metric_type }}</span></td>
+              <td>{{ row.metric_name }}</td>
+              <td>{{ "%.4f"|format(row.score) }}</td>
+              <td>
+                {% if row.status == "pass" %}
+                  <span class="badge badge-success">pass</span>
+                {% elif row.status == "warn" %}
+                  <span class="badge badge-warning">warn</span>
+                {% else %}
+                  <span class="badge badge-error">fail</span>
+                {% endif %}
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  {% else %}
+    <div class="alert alert-info">
+      <span>No quality results yet. Run <code>dbsprout validate</code> to populate this view.</span>
+    </div>
+  {% endif %}
+{% endblock %}

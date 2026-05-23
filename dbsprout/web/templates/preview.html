@@ -1,0 +1,78 @@
+{% extends "base.html" %}
+{% block title %}DBSprout Dashboard — Data Preview{% endblock %}
+{% block content %}
+  <div class="flex items-center justify-between mb-4">
+    <h1 class="text-2xl font-bold">Data preview</h1>
+    <div class="flex gap-2">
+      <a href="/quality" class="btn btn-sm btn-ghost">Quality</a>
+      <a href="/costs" class="btn btn-sm btn-ghost">Costs</a>
+      <a href="/history" class="btn btn-sm btn-ghost">History</a>
+    </div>
+  </div>
+
+  {% if not has_run %}
+    <div class="alert alert-info">
+      <span>No run recorded yet. Run <code>dbsprout generate</code> to populate this view.</span>
+    </div>
+  {% elif not tables %}
+    <div class="alert alert-info">
+      <span>No tables recorded for the latest run.</span>
+    </div>
+  {% else %}
+    <form method="get" class="mb-4 flex items-end gap-2">
+      <div class="form-control">
+        <label class="label" for="table-select"><span class="label-text">Table</span></label>
+        <select
+          id="table-select"
+          name="table"
+          class="select select-bordered"
+          onchange="if (this.value) window.location.href = '/preview/' + encodeURIComponent(this.value);"
+        >
+          <option value="" {% if not selected_name %}selected{% endif %} disabled>Select a table…</option>
+          {% for t in tables %}
+            <option value="{{ t.name }}" {% if t.name == selected_name %}selected{% endif %}>
+              {{ t.name }} ({{ "{:,}".format(t.row_count) }} rows)
+            </option>
+          {% endfor %}
+        </select>
+      </div>
+    </form>
+
+    {% if selected_name and selected %}
+      <h2 class="text-xl font-semibold mb-2">{{ selected_name }}</h2>
+      <div class="stats stats-vertical lg:stats-horizontal shadow mb-4">
+        <div class="stat">
+          <div class="stat-title">Row count</div>
+          <div class="stat-value text-2xl">{{ "{:,}".format(selected.row_count) }}</div>
+        </div>
+        <div class="stat">
+          <div class="stat-title">Generation (ms)</div>
+          <div class="stat-value text-2xl">{{ selected.generation_ms }}</div>
+        </div>
+        <div class="stat">
+          <div class="stat-title">Rows/sec</div>
+          <div class="stat-value text-2xl">{{ "{:,.2f}".format(selected.rows_per_sec) }}</div>
+        </div>
+        <div class="stat">
+          <div class="stat-title">Errors</div>
+          <div class="stat-value text-2xl">{{ selected.errors }}</div>
+        </div>
+      </div>
+      <div class="alert">
+        <span>
+          Up to {{ preview_row_limit }} sample rows are produced at generation time and live in the
+          generated output (SQL/CSV/etc.), not in the read-only state DB — so they are not shown here.
+          The stats above come from the latest run's telemetry.
+        </span>
+      </div>
+    {% elif selected_name %}
+      <div class="alert alert-warning">
+        <span>Table <code>{{ selected_name }}</code> is not in the latest run. Pick one from the selector above.</span>
+      </div>
+    {% else %}
+      <div class="alert">
+        <span>Select a table from the dropdown to view its per-table stats.</span>
+      </div>
+    {% endif %}
+  {% endif %}
+{% endblock %}

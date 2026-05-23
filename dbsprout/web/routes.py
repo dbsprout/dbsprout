@@ -104,10 +104,9 @@ async def progress(request: Request) -> Response:
     return _placeholder(request, active="progress", title="Progress")
 
 
-@router.get("/quality", response_class=Response)
-async def quality(request: Request) -> Response:
-    """Quality metrics placeholder — replaced by S-093."""
-    return _placeholder(request, active="quality", title="Quality")
+# NOTE: the ``/quality`` placeholder was removed in S-093; the real view now
+# lives in ``dbsprout.web.views.insights`` (FastAPI matches the first registered
+# route for a path, so the placeholder had to go rather than be shadowed).
 
 
 # ── end sibling-view placeholders ─────────────────────────────────────
