@@ -90,12 +90,9 @@ def _placeholder(request: Request, *, active: str, title: str) -> Response:
 
 
 # ── sibling-view placeholders (extension seam — replace in S-091/092/093) ──
-
-
-@router.get("/schema", response_class=Response)
-async def schema(request: Request) -> Response:
-    """Schema ERD placeholder — replaced by S-091."""
-    return _placeholder(request, active="schema", title="Schema")
+# Note: the ``/schema`` view is provided by ``dbsprout.web.views.erd`` (S-091);
+# its placeholder has been removed. ``/progress`` and ``/quality`` remain until
+# S-092 / S-093 replace them.
 
 
 @router.get("/progress", response_class=Response)

@@ -108,10 +108,11 @@ def test_health_returns_ok_json(tmp_path: Path) -> None:
 # ── sibling-view placeholder tabs (extension seam) ────────────────────
 
 
-@pytest.mark.parametrize("path", ["/schema", "/progress"])
+# ``/schema`` (S-091 ERD) and ``/quality`` (S-093) are real views now, not
+# placeholders — see test_erd.py / test_insights_views.py. Only ``/progress``
+# remains a placeholder until S-092 lands.
+@pytest.mark.parametrize("path", ["/progress"])
 def test_placeholder_tabs_return_200(tmp_path: Path, path: str) -> None:
-    # /quality is no longer a placeholder — S-093 replaced it with a real view
-    # (see tests/test_web/test_insights_views.py).
     resp = _make_client(tmp_path / "state.db").get(path)
     assert resp.status_code == 200
     assert "Coming soon" in resp.text
