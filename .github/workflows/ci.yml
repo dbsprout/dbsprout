@@ -27,7 +27,7 @@ jobs:
           python-version: "3.12"
 
       - name: Install dependencies
-        run: uv sync --extra dev --extra data --extra stats
+        run: uv sync --extra dev --extra data --extra stats --extra tui
 
       - name: Ruff lint
         run: uv run ruff check .
@@ -62,7 +62,7 @@ jobs:
           python-version: ${{ matrix.python-version }}
 
       - name: Install dependencies
-        run: uv sync --extra dev --extra data --extra stats
+        run: uv sync --extra dev --extra data --extra stats --extra tui
 
       - name: Run tests with coverage
         run: uv run pytest --cov=dbsprout --cov-report=term-missing --cov-fail-under=95

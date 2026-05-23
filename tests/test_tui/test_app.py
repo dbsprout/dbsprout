@@ -15,6 +15,10 @@ import sys
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+import pytest
+
+pytest.importorskip("textual", reason="textual absent (pip install dbsprout[tui])")
+
 from textual.widgets import Footer, Header, TabbedContent, TabPane
 
 from dbsprout.tui.app import DBSproutApp
