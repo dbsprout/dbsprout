@@ -97,3 +97,38 @@ jobs:
         with:
           name: benchmark-results
           path: benchmark-results.json
+
+  benchmark-gate:
+    name: Benchmark Regression Gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - uses: astral-sh/setup-uv@e58605a9b6da7c637471fab8847a5e5a6b8df081 # v5
+        with:
+          version: "0.11.2"
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: uv sync --extra dev --extra data --extra stats
+
+      - name: Run benchmarks
+        run: >-
+          uv run pytest benchmarks/
+          --benchmark-json=benchmark-results.json
+
+      - name: Check for >20% regression vs committed baseline
+        # Advisory: short microbenchmarks are noisy on shared GitHub runners
+        # (run-to-run variance routinely exceeds the 20% threshold), so a
+        # detected regression is surfaced in the log without blocking the
+        # merge. Promote to a hard gate once it runs on a dedicated runner.
+        continue-on-error: true
+        run: >-
+          uv run python benchmarks/check_regression.py
+          --baseline benchmarks/baseline.json
+          --current benchmark-results.json
