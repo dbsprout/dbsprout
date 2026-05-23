@@ -1,0 +1,48 @@
+{
+  "version": "5.2.3",
+  "_comment": "Committed benchmark baseline for the S-096 regression gate. Only fullname + stats.mean are consumed by benchmarks/check_regression.py. Refresh on merge to dev/main: run pytest benchmarks/ --benchmark-json, then regenerate this slim file. Means are reference points; the gate tolerates normal CI variance via the 20%% threshold.",
+  "benchmarks": [
+    {
+      "name": "test_bench_cli_startup",
+      "fullname": "benchmarks/bench_cli.py::test_bench_cli_startup",
+      "stats": {
+        "mean": 0.2670509155956097
+      }
+    },
+    {
+      "name": "test_bench_heuristic_generation",
+      "fullname": "benchmarks/bench_generation.py::test_bench_heuristic_generation",
+      "stats": {
+        "mean": 0.035240481582150096
+      }
+    },
+    {
+      "name": "test_bench_numpy_vectorized",
+      "fullname": "benchmarks/bench_generation.py::test_bench_numpy_vectorized",
+      "stats": {
+        "mean": 0.12300469649926526
+      }
+    },
+    {
+      "name": "test_bench_fk_sampling",
+      "fullname": "benchmarks/bench_generation.py::test_bench_fk_sampling",
+      "stats": {
+        "mean": 0.002987402491078115
+      }
+    },
+    {
+      "name": "test_bench_introspection",
+      "fullname": "benchmarks/bench_generation.py::test_bench_introspection",
+      "stats": {
+        "mean": 0.005752255454925554
+      }
+    },
+    {
+      "name": "test_bench_sql_output",
+      "fullname": "benchmarks/bench_output.py::test_bench_sql_output",
+      "stats": {
+        "mean": 0.08459086925237595
+      }
+    }
+  ]
+}

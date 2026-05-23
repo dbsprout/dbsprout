@@ -220,9 +220,10 @@ ignore = [
 "dbsprout/cli/commands/*.py" = ["B008"]  # typer.Option() in function defaults is the standard pattern
 "dbsprout/schema/parsers/*.py" = ["PLR0912", "PLR0915"]  # parser functions are inherently branchy
 "dbsprout/spec/patterns.py" = ["E501"]  # pattern data declarations are naturally wide
+"benchmarks/check_regression.py" = ["T20"]  # CLI gate script reports to stdout/stderr by design
 
 [tool.ruff.lint.isort]
-known-first-party = ["dbsprout"]
+known-first-party = ["dbsprout", "benchmarks"]
 
 [tool.ruff.format]
 quote-style = "double"
