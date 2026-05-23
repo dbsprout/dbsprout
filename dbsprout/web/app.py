@@ -37,6 +37,7 @@ from dbsprout.state.db import StateDB
 from dbsprout.web.routes import router
 from dbsprout.web.views.erd import erd_router
 from dbsprout.web.views.insights import insights_router
+from dbsprout.web.views.progress import progress_router
 
 _PACKAGE_DIR = Path(__file__).resolve().parent
 _TEMPLATES_DIR = _PACKAGE_DIR / "templates"
@@ -106,6 +107,9 @@ def create_app(
     # ─── S-091 ERD region ───
     app.include_router(erd_router)
     # ─── end S-091 ───
+    # ─── S-092 progress region ───
+    app.include_router(progress_router)
+    # ─── end S-092 ───
     # ─── S-093 views region ───
     # Real /quality view (S-090's placeholder was removed from routes.py) plus
     # /preview, /preview/{table}, /costs and /history — all read-only over the

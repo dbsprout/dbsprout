@@ -105,17 +105,18 @@ def test_health_returns_ok_json(tmp_path: Path) -> None:
     assert resp.json() == {"status": "ok"}
 
 
-# ── sibling-view placeholder tabs (extension seam) ────────────────────
+# ── sibling-view tabs (all real now) ──────────────────────────────────
+# /schema (S-091 ERD), /progress (S-092 SSE) and /quality (S-093) are all
+# real views — exercised in test_erd.py / test_progress_view.py /
+# test_insights_views.py. No "Coming soon" placeholders remain.
 
 
-# ``/schema`` (S-091 ERD) and ``/quality`` (S-093) are real views now, not
-# placeholders — see test_erd.py / test_insights_views.py. Only ``/progress``
-# remains a placeholder until S-092 lands.
-@pytest.mark.parametrize("path", ["/progress"])
-def test_placeholder_tabs_return_200(tmp_path: Path, path: str) -> None:
-    resp = _make_client(tmp_path / "state.db").get(path)
+def test_progress_tab_is_real_view_not_placeholder(tmp_path: Path) -> None:
+    """S-092 replaced the ``/progress`` placeholder with the real SSE view."""
+    resp = _make_client(tmp_path / "state.db").get("/progress")
     assert resp.status_code == 200
-    assert "Coming soon" in resp.text
+    assert "Coming soon" not in resp.text
+    assert "/progress/stream" in resp.text
 
 
 # ── static assets ─────────────────────────────────────────────────────

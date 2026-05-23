@@ -16,9 +16,10 @@ Each handler renders a Jinja2 template via :func:`_templates` and reads telemetr
 through :func:`_state_db` — both pull typed objects off ``app.state`` (wired in
 ``app.py``), so handlers stay import-light and siblings reuse the same plumbing.
 
-The home dashboard is the only data-backed view in this skeleton; ``/schema``,
-``/progress`` and ``/quality`` are intentionally "Coming soon" placeholders that
-S-091, S-092 and S-093 replace with real views.
+The home dashboard is the data-backed view in this skeleton; ``/schema`` and
+``/quality`` remain "Coming soon" placeholders that S-091 and S-093 replace with
+real views. ``/progress`` is served by the real S-092 router
+(:mod:`dbsprout.web.views.progress`), registered separately in ``app.py``.
 """
 
 from __future__ import annotations
@@ -81,29 +82,9 @@ async def health() -> JSONResponse:
     return JSONResponse({"status": "ok"})
 
 
-def _placeholder(request: Request, *, active: str, title: str) -> Response:
-    return _templates(request).TemplateResponse(
-        request,
-        "placeholder.html",
-        {"active": active, "title": title},
-    )
-
-
-# ── sibling-view placeholders (extension seam — replace in S-091/092/093) ──
-# Note: the ``/schema`` view is provided by ``dbsprout.web.views.erd`` (S-091);
-# its placeholder has been removed. ``/progress`` and ``/quality`` remain until
-# S-092 / S-093 replace them.
-
-
-@router.get("/progress", response_class=Response)
-async def progress(request: Request) -> Response:
-    """Generation progress placeholder — replaced by S-092."""
-    return _placeholder(request, active="progress", title="Progress")
-
-
-# NOTE: the ``/quality`` placeholder was removed in S-093; the real view now
-# lives in ``dbsprout.web.views.insights`` (FastAPI matches the first registered
-# route for a path, so the placeholder had to go rather than be shadowed).
-
-
-# ── end sibling-view placeholders ─────────────────────────────────────
+# Sibling-view routes (/schema, /progress, /quality) are owned by their own
+# router modules under ``dbsprout.web.views`` (S-091/S-092/S-093), each
+# registered via a region-delimited ``include_router`` line in ``app.py``.
+# The original "Coming soon" placeholder mechanism has been fully retired now
+# that every sibling view is real (FastAPI matches the first registered route
+# for a path, so a placeholder would shadow the real view).
