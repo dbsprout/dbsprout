@@ -32,8 +32,10 @@ from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
+from dbsprout.migrate.snapshot import SnapshotStore
 from dbsprout.state.db import StateDB
 from dbsprout.web.routes import router
+from dbsprout.web.views.erd import erd_router
 from dbsprout.web.views.insights import insights_router
 
 _PACKAGE_DIR = Path(__file__).resolve().parent
@@ -47,6 +49,12 @@ STATE_DB_ENV = "DBSPROUT_STATE_DB"
 #: Default state-DB path, relative to the working directory.
 DEFAULT_STATE_DB = Path(".dbsprout/state.db")
 
+#: Environment variable overriding the schema-snapshot directory (S-091 ERD view).
+SNAPSHOT_DIR_ENV = "DBSPROUT_SNAPSHOT_DIR"
+
+#: Default snapshot directory, relative to the working directory.
+DEFAULT_SNAPSHOT_DIR = Path(".dbsprout/snapshots")
+
 
 def _resolve_state_db_path(state_db_path: Path | str | None) -> Path:
     """Pick the state-DB path: explicit arg > ``DBSPROUT_STATE_DB`` env > default."""
@@ -58,13 +66,31 @@ def _resolve_state_db_path(state_db_path: Path | str | None) -> Path:
     return DEFAULT_STATE_DB
 
 
-def create_app(state_db_path: Path | str | None = None) -> FastAPI:
+def _resolve_snapshot_dir(snapshot_dir: Path | str | None) -> Path:
+    """Pick the snapshot dir: explicit arg > ``DBSPROUT_SNAPSHOT_DIR`` env > default."""
+    if snapshot_dir is not None:
+        return Path(snapshot_dir)
+    env_value = os.environ.get(SNAPSHOT_DIR_ENV)
+    if env_value:
+        return Path(env_value)
+    return DEFAULT_SNAPSHOT_DIR
+
+
+def create_app(
+    state_db_path: Path | str | None = None,
+    snapshot_dir: Path | str | None = None,
+) -> FastAPI:
     """Build a configured FastAPI dashboard app.
 
     *state_db_path* overrides where run telemetry is read from; when ``None``
     the ``DBSPROUT_STATE_DB`` env var (then :data:`DEFAULT_STATE_DB`) is used.
+
+    *snapshot_dir* overrides where schema snapshots are read from (S-091 ERD
+    view); when ``None`` the ``DBSPROUT_SNAPSHOT_DIR`` env var (then
+    :data:`DEFAULT_SNAPSHOT_DIR`) is used.
     """
     resolved = _resolve_state_db_path(state_db_path)
+    resolved_snapshots = _resolve_snapshot_dir(snapshot_dir)
 
     app = FastAPI(
         title="DBSprout Dashboard",
@@ -74,8 +100,12 @@ def create_app(state_db_path: Path | str | None = None) -> FastAPI:
     )
     app.state.templates = Jinja2Templates(directory=str(_TEMPLATES_DIR))
     app.state.get_state_db = lambda: StateDB(resolved)
+    app.state.get_snapshot_store = lambda: SnapshotStore(base_dir=resolved_snapshots)
     app.mount("/static", StaticFiles(directory=str(_STATIC_DIR)), name="static")
     app.include_router(router)
+    # ─── S-091 ERD region ───
+    app.include_router(erd_router)
+    # ─── end S-091 ───
     # ─── S-093 views region ───
     # Real /quality view (S-090's placeholder was removed from routes.py) plus
     # /preview, /preview/{table}, /costs and /history — all read-only over the

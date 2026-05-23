@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% block title %}DBSprout Dashboard — Schema ERD{% endblock %}
+
+{% block head_extra %}
+  {# ── S-091: Mermaid.js client-side ERD rendering (CDN, no server-side image gen). ── #}
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+{% endblock %}
+
+{% block content %}
+  <h1 class="text-2xl font-bold mb-4">Schema ERD</h1>
+
+  {% if erd_mermaid %}
+    <div id="erd" class="card bg-base-100 shadow">
+      <div class="card-body overflow-x-auto">
+        <pre class="mermaid">{{ erd_mermaid }}</pre>
+      </div>
+    </div>
+    <p class="text-sm opacity-70 mt-2">
+      Entity-relationship diagram auto-generated from the latest schema snapshot
+      ({% raw %}<code>.dbsprout/snapshots/</code>{% endraw %}). Updates when the
+      snapshot changes.
+    </p>
+    <script>
+      (function () {
+        "use strict";
+        // Client-side render: Mermaid is loaded from the CDN <script> above.
+        if (window.mermaid && window.mermaid.initialize) {
+          window.mermaid.initialize({ startOnLoad: true, theme: "default" });
+        }
+      })();
+    </script>
+  {% else %}
+    <div class="alert alert-info">
+      <span>
+        No schema snapshot found yet. Run <code>dbsprout init</code> or
+        <code>dbsprout generate</code> to capture a schema, then refresh this view.
+      </span>
+    </div>
+  {% endif %}
+{% endblock %}
