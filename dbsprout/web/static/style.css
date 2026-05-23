@@ -1,0 +1,15 @@
+/* DBSprout dashboard tweaks (S-090).
+ *
+ * DaisyUI + Tailwind (loaded via CDN in base.html) do the heavy lifting; this
+ * file holds only first-party overrides so the total custom JS/CSS payload
+ * stays tiny and the dashboard needs no build step.
+ */
+
+#content {
+  max-width: 80rem;
+}
+
+.table td,
+.table th {
+  white-space: nowrap;
+}

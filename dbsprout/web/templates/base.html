@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dim">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{% block title %}DBSprout Dashboard{% endblock %}</title>
+
+    {# ── No build step: DaisyUI + Tailwind + HTMX all via CDN (AC). ── #}
+    <link
+      href="https://cdn.jsdelivr.net/npm/daisyui@4.12.10/dist/full.min.css"
+      rel="stylesheet"
+      type="text/css"
+    />
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/htmx.org@2.0.4"></script>
+    <link rel="stylesheet" href="/static/style.css" />
+
+    {# Sibling views (S-091 Mermaid, S-092 SSE helpers, ...) add head assets here. #}
+    {% block head_extra %}{% endblock %}
+  </head>
+  <body class="min-h-screen bg-base-200">
+    <header class="navbar bg-base-300 shadow">
+      <div class="flex-1">
+        <a id="nav-home" href="/" class="btn btn-ghost text-xl normal-case">🌱 DBSprout</a>
+      </div>
+      <nav class="flex-none">
+        <ul class="menu menu-horizontal px-1">
+          <li>
+            <a id="nav-schema" href="/schema"
+               class="{% if active == 'schema' %}active{% endif %}">Schema</a>
+          </li>
+          <li>
+            <a id="nav-progress" href="/progress"
+               class="{% if active == 'progress' %}active{% endif %}">Progress</a>
+          </li>
+          <li>
+            <a id="nav-quality" href="/quality"
+               class="{% if active == 'quality' %}active{% endif %}">Quality</a>
+          </li>
+        </ul>
+      </nav>
+    </header>
+
+    <main id="content" class="container mx-auto p-6">
+      {% block content %}{% endblock %}
+    </main>
+  </body>
+</html>
