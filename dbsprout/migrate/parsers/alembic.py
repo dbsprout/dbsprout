@@ -33,12 +33,19 @@ _UNSET: object = object()
 
 @dataclass(frozen=True)
 class AlembicParser:
-    """Parse Alembic migration histories into ``SchemaChange`` lists."""
+    """Parse Alembic migration histories into ``SchemaChange`` lists.
+
+    ``max_files`` caps the total number of revision files accepted per run.
+    Raise this value or narrow your versions directory if you hit the limit in
+    a legitimately large project.
+    """
+
+    max_files: int = 10_000
 
     def detect_changes(self, project_path: Path) -> list[SchemaChange]:
         """Return the full forward history (base → head) of schema changes."""
         versions_dir = _discover_versions_dir(project_path)
-        revisions = _collect_revisions(versions_dir)
+        revisions = _collect_revisions(versions_dir, max_files=self.max_files)
         ordered = _linearize_revisions(revisions)
         changes: list[SchemaChange] = []
         for rev in ordered:
@@ -109,12 +116,16 @@ def _discover_versions_dir(project_path: Path) -> Path:
     raise MigrationParseError("No Alembic versions/ directory found", file_path=project_path)
 
 
-def _collect_revisions(versions_dir: Path) -> list[_Revision]:
+def _collect_revisions(versions_dir: Path, *, max_files: int = 10_000) -> list[_Revision]:
     """Parse every ``.py`` file in *versions_dir* into ``_Revision`` records.
 
     Dunder files (``__init__.py`` etc.) and symlinks are skipped. Symlinks are
     skipped defensively so a malicious symlink to a huge or blocking device
     (e.g. ``/dev/zero``) cannot bypass the size cap or hang ``read_text``.
+
+    ``max_files`` caps the total number of revision files accepted; raise this
+    value or narrow the versions directory if you hit the limit in a legitimately
+    large project.
     """
     revs: list[_Revision] = []
     for f in sorted(versions_dir.glob("*.py")):
@@ -131,6 +142,11 @@ def _collect_revisions(versions_dir: Path) -> list[_Revision]:
         module = ast.parse(f.read_text(encoding="utf-8"), filename=str(f))
         rev, down = _extract_revision_ids(module, f)
         revs.append(_Revision(path=f, revision=rev, down_revision=down, module=module))
+        if len(revs) > max_files:
+            raise MigrationParseError(
+                f"discovered more than {max_files} Alembic revision files in "
+                f"{versions_dir}; raise max_files or narrow the versions directory to proceed",
+            )
     return revs
 
 
