@@ -1,9 +1,9 @@
 """DBSprout Textual TUI application skeleton (S-086).
 
 A tabbed terminal UI with Progress, Schema, Quality, and Settings tabs. The
-Progress tab hosts the live generation-progress screen (S-087) and the Schema
-tab hosts the live schema browser (S-088); the Quality and Settings tab bodies
-are placeholders that a later story (S-089) replaces with live content.
+Progress tab hosts the live generation-progress screen (S-087), the Schema tab
+hosts the live schema browser (S-088), and the Quality tab hosts the live
+quality-results table (S-089); the Settings tab body is a placeholder.
 
 Textual is a heavy optional dependency (the ``[tui]`` extra). It is imported at
 module top-level *here* because this module is itself only imported lazily by
@@ -19,17 +19,17 @@ from textual.binding import Binding, BindingType
 from textual.widgets import Footer, Header, Static, TabbedContent, TabPane
 
 from dbsprout.tui.screens.progress import ProgressScreen
+from dbsprout.tui.screens.quality import QualityScreen
 from dbsprout.tui.screens.schema import SchemaBrowser
 
 if TYPE_CHECKING:
     from dbsprout.schema.models import DatabaseSchema
 
 # (tab title, pane id, placeholder body) for the not-yet-built tabs. The
-# Progress (S-087) and Schema (S-088) tabs host live widgets and are composed
-# separately. The per-tab switch keys live in ``BINDINGS`` below (Textual
-# renders them into the help footer).
+# Progress (S-087), Schema (S-088) and Quality (S-089) tabs host live widgets
+# and are composed separately. The per-tab switch keys live in ``BINDINGS``
+# below (Textual renders them into the help footer).
 _PLACEHOLDER_TABS: tuple[tuple[str, str, str], ...] = (
-    ("Quality", "quality", "Quality metrics — coming soon (S-089)."),
     ("Settings", "settings", "Settings — coming soon."),
 )
 
@@ -80,6 +80,8 @@ class DBSproutApp(App[None]):
                 yield ProgressScreen()
             with TabPane("Schema", id="schema"):
                 yield SchemaBrowser(self._schema)
+            with TabPane("Quality", id="quality"):
+                yield QualityScreen()
             for title, pane_id, body in _PLACEHOLDER_TABS:
                 with TabPane(title, id=pane_id):
                     yield Static(body)
