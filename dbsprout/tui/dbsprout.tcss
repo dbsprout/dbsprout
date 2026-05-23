@@ -1,0 +1,28 @@
+/* DBSprout TUI styles (S-086).
+   Fractional (1fr) sizing makes the layout adapt to the terminal width/height. */
+
+Screen {
+    layout: vertical;
+}
+
+TabbedContent {
+    height: 1fr;
+    width: 1fr;
+}
+
+TabbedContent ContentSwitcher {
+    height: 1fr;
+}
+
+TabPane {
+    height: 1fr;
+    width: 1fr;
+    padding: 1 2;
+}
+
+TabPane Static {
+    height: auto;
+    width: 1fr;
+    content-align: center middle;
+    text-style: italic;
+}
