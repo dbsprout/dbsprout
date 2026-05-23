@@ -18,10 +18,13 @@ from textual.app import App, ComposeResult
 from textual.binding import Binding, BindingType
 from textual.widgets import Footer, Header, Static, TabbedContent, TabPane
 
-# (tab title, pane id, placeholder body). The per-tab switch keys live in
-# ``BINDINGS`` below (which Textual also renders into the help footer).
+from dbsprout.tui.screens.progress import ProgressScreen
+
+# (tab title, pane id, placeholder body) for the not-yet-built tabs. The
+# Progress tab is built (S-087) and hosts a live :class:`ProgressScreen`
+# instead of a placeholder. The per-tab switch keys live in ``BINDINGS``
+# below (which Textual also renders into the help footer).
 _TABS: tuple[tuple[str, str, str], ...] = (
-    ("Progress", "progress", "Generation progress — coming soon (S-087)."),
     ("Schema", "schema", "Schema browser — coming soon (S-088)."),
     ("Quality", "quality", "Quality metrics — coming soon (S-089)."),
     ("Settings", "settings", "Settings — coming soon."),
@@ -48,6 +51,8 @@ class DBSproutApp(App[None]):
         """Build the header, tabbed body, and help footer."""
         yield Header()
         with TabbedContent():
+            with TabPane("Progress", id="progress"):
+                yield ProgressScreen()
             for title, pane_id, body in _TABS:
                 with TabPane(title, id=pane_id):
                     yield Static(body)
