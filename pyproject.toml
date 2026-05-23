@@ -246,12 +246,8 @@ module = "tests.*"
 disallow_untyped_defs = false
 
 [[tool.mypy.overrides]]
-module = ["polars", "polars.*", "alembic", "alembic.*", "psycopg", "psycopg.*", "unsloth", "unsloth.*", "trl", "trl.*", "datasets", "datasets.*", "torch", "torch.*", "mlx", "mlx.*", "mlx_lm", "mlx_lm.*", "litellm", "litellm.*", "instructor", "instructor.*", "llama_cpp", "llama_cpp.*", "huggingface_hub", "huggingface_hub.*", "peft", "peft.*", "transformers", "transformers.*", "scipy", "scipy.*", "presidio_analyzer", "presidio_analyzer.*", "presidio_anonymizer", "presidio_anonymizer.*", "opacus", "opacus.*", "pymongo", "pymongo.*", "pymongo_schema", "pymongo_schema.*", "mongomock", "mongomock.*", "fastapi", "fastapi.*", "uvicorn", "uvicorn.*"]
+module = ["polars", "polars.*", "alembic", "alembic.*", "psycopg", "psycopg.*", "unsloth", "unsloth.*", "trl", "trl.*", "datasets", "datasets.*", "torch", "torch.*", "mlx", "mlx.*", "mlx_lm", "mlx_lm.*", "litellm", "litellm.*", "instructor", "instructor.*", "llama_cpp", "llama_cpp.*", "huggingface_hub", "huggingface_hub.*", "peft", "peft.*", "transformers", "transformers.*", "scipy", "scipy.*", "presidio_analyzer", "presidio_analyzer.*", "presidio_anonymizer", "presidio_anonymizer.*", "opacus", "opacus.*", "pymongo", "pymongo.*", "pymongo_schema", "pymongo_schema.*", "mongomock", "mongomock.*"]
 ignore_missing_imports = true
-
-[[tool.mypy.overrides]]
-module = ["dbsprout.tui.*", "dbsprout.web.*", "dbsprout.cli.serve"]
-ignore_errors = true
 
 # ─── Bandit ────────────────────────────────────────────────────────────
 [tool.bandit]
@@ -285,9 +281,6 @@ omit = [
     "dbsprout/quality/fidelity.py",         # requires scipy  ([stats] extra)
     "dbsprout/quality/detection.py",        # requires sklearn ([stats] extra)
     "dbsprout/schema/parsers/mongodb.py",  # requires pymongo-schema ([mongo] extra)
-    "dbsprout/tui/*",                       # requires textual ([tui] extra)
-    "dbsprout/web/*",                       # requires fastapi ([web] extra)
-    "dbsprout/cli/serve.py",               # requires uvicorn ([web] extra)
 ]
 
 [tool.coverage.report]
