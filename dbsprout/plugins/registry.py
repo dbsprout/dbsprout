@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-import functools
 import logging
+import threading
 from dataclasses import dataclass
 from typing import Any, Literal
 
@@ -119,13 +119,35 @@ class PluginRegistry:
         return info
 
 
-@functools.lru_cache(maxsize=1)
+_registry: PluginRegistry | None = None
+_registry_lock = threading.Lock()
+
+
 def get_registry() -> PluginRegistry:
     """Return the process-wide plugin registry (built on first call).
 
-    CPython CLI usage is single-threaded; concurrent first-call races
-    are not guarded against. Callers in multi-threaded contexts (future
-    web/TUI surfaces) should warm the cache from a single thread before
-    fan-out, or add their own lock.
+    Construction is guarded by a module-level lock with double-checked
+    locking, so concurrent first-callers (e.g. the multi-threaded web /
+    TUI surfaces) all observe a single :class:`PluginRegistry` instance
+    and the entry-point groups are walked exactly once.
     """
-    return PluginRegistry()
+    global _registry  # noqa: PLW0603 -- module-level singleton cache, guarded by _registry_lock
+    if _registry is None:
+        with _registry_lock:
+            if _registry is None:
+                _registry = PluginRegistry()
+    return _registry
+
+
+def _reset_registry() -> None:
+    """Drop the cached registry so the next call rebuilds it (thread-safe)."""
+    global _registry  # noqa: PLW0603 -- module-level singleton cache, guarded by _registry_lock
+    with _registry_lock:
+        _registry = None
+
+
+# Back-compat: existing tests call ``get_registry.cache_clear()`` (the old
+# ``functools.lru_cache`` API). Keep that surface working, and expose a
+# clearer ``_reset_for_tests`` alias.
+get_registry.cache_clear = _reset_registry  # type: ignore[attr-defined]
+_reset_for_tests = _reset_registry
