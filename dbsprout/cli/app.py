@@ -260,6 +260,14 @@ def audit_proxy(
     audit_command(last=last)
 
 
+@app.command(name="tui")
+def tui_proxy() -> None:
+    """Launch the interactive terminal UI (requires the 'tui' optional extra)."""
+    from dbsprout.cli.tui import tui_command  # noqa: PLC0415
+
+    tui_command()
+
+
 @app.command(name="doctor")
 def doctor_proxy(
     db: str | None = typer.Option(
