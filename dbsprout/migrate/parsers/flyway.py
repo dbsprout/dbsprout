@@ -92,11 +92,16 @@ class FlywayMigrationParser:
     responsible for ensuring placeholder values do not contain SQL
     metacharacters (``;``, ``'``, ``--``). Pass values from a trusted source
     (``flyway.conf``, CI secrets), not from end-user input.
+
+    ``max_files`` caps the total number of migration files accepted per run.
+    Raise this value or narrow ``locations`` if you hit the limit in a
+    legitimately large project.
     """
 
     dialect: str = "postgres"
     locations: tuple[str, ...] | None = None
     placeholders: tuple[tuple[str, str], ...] = ()
+    max_files: int = 10_000
 
     def detect_changes(self, project_path: Path) -> list[SchemaChange]:
         """Return the ordered forward history of schema changes under ``project_path``.
@@ -107,7 +112,7 @@ class FlywayMigrationParser:
         when no migrations are discovered, versions collide, placeholders are
         unresolved, or sqlglot fails to parse a file.
         """
-        files = _discover_migration_files(project_path, self.locations)
+        files = _discover_migration_files(project_path, self.locations, max_files=self.max_files)
         if not files:
             searched = ", ".join(self.locations or _DEFAULT_LOCATIONS)
             raise MigrationParseError(
@@ -179,6 +184,8 @@ def _resolve_locations(project_path: Path, locations: tuple[str, ...] | None) ->
 def _discover_migration_files(
     project_path: Path,
     locations: tuple[str, ...] | None,
+    *,
+    max_files: int = 10_000,
 ) -> list[Path]:
     resolved_root = project_path.resolve()
     dirs = _resolve_locations(project_path, locations)
@@ -219,6 +226,11 @@ def _discover_migration_files(
                     f"duplicate Flyway version {version}: {by_version[version]} vs {sql_file}",
                 )
             by_version[version] = sql_file
+            if len(by_version) > max_files:
+                raise MigrationParseError(
+                    f"discovered more than {max_files} Flyway migration files under "
+                    f"{project_path}; raise max_files or narrow locations to proceed",
+                )
     return [by_version[v] for v in sorted(by_version, key=_version_sort_key)]
 
 
