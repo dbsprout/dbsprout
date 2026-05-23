@@ -1,8 +1,12 @@
-"""TUI screens / panels mounted inside the tabbed :class:`DBSproutApp`.
+"""DBSprout TUI screen widgets (optional ``[tui]`` extra).
 
-Each screen is a self-contained Textual widget that reads from the shared
-state DB (``.dbsprout/state.db``) — never importing CLI/generation code, in
-keeping with DBSprout's read-only "visual surface" model.
+Each screen is a self-contained Textual widget that reads from the shared,
+read-only "visual surface" sources (``.dbsprout/state.db`` for progress, the
+latest schema snapshot for the schema browser) — never importing CLI or
+generation code.
+
+Intentionally does *not* import the screen modules at package import time: each
+imports Textual eagerly, and pulling them in here would defeat the lazy-import
+contract that keeps ``dbsprout`` CLI startup under 500 ms. Import the concrete
+widget (e.g. ``dbsprout.tui.screens.schema.SchemaBrowser``) directly when needed.
 """
-
-from __future__ import annotations

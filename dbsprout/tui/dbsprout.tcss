@@ -20,9 +20,41 @@ TabPane {
     padding: 1 2;
 }
 
-TabPane Static {
+TabPane > Static {
     height: auto;
     width: 1fr;
     content-align: center middle;
     text-style: italic;
+}
+
+/* ── Schema browser (S-088) ─────────────────────────────────────────── */
+
+SchemaBrowser {
+    height: 1fr;
+    width: 1fr;
+}
+
+#schema-filter {
+    width: 1fr;
+    height: auto;
+    margin-bottom: 1;
+}
+
+#schema-body {
+    height: 1fr;
+    width: 1fr;
+}
+
+#schema-tree {
+    width: 1fr;
+    height: 1fr;
+}
+
+#schema-detail {
+    width: 1fr;
+    height: 1fr;
+    padding: 1 2;
+    border-left: solid $accent;
+    text-style: none;
+    content-align: left top;
 }
