@@ -58,3 +58,21 @@ SchemaBrowser {
     text-style: none;
     content-align: left top;
 }
+
+/* ── Quality table (S-089) ──────────────────────────────────────────── */
+
+QualityScreen {
+    height: 1fr;
+    width: 1fr;
+}
+
+#quality-summary {
+    width: 1fr;
+    height: auto;
+    margin-bottom: 1;
+}
+
+#quality-table {
+    width: 1fr;
+    height: 1fr;
+}
