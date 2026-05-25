@@ -14,12 +14,9 @@ The replacement ``_dtype_raw_type()`` builds the same string cheaply from
 the DataType enum value (``dtype.this.value``) and its literal parameters,
 avoiding both the deepcopy and the generator dispatch.
 
-Additional micro-optimisations applied in the same pass:
+Additional micro-optimisation applied in the same pass:
 - Single-pass statement scan: CREATE TABLE, CREATE INDEX, and ALTER TABLE
   are all collected in one loop instead of two.
-- ``_detect_dialect`` only scans the first 2 KB of input; dialect markers
-  (SERIAL, AUTO_INCREMENT, backticks, AUTOINCREMENT) always appear near the
-  top and scanning the entire file for large DDLs was wasteful.
 """
 
 from __future__ import annotations
@@ -182,26 +179,21 @@ def parse_ddl(
 
 # ── Dialect detection ────────────────────────────────────────────────────
 
-# Number of bytes to scan for dialect markers.  Dialect hints (SERIAL,
-# AUTO_INCREMENT, backtick identifiers, AUTOINCREMENT) always appear in the
-# first few CREATE TABLE statements, so scanning the full text for a 9 MB
-# file is wasteful.
-_DIALECT_SCAN_BYTES = 2048
-
 
 def _detect_dialect(sql_text: str) -> str | None:
     """Auto-detect SQL dialect from DDL content.
 
-    Only the first ``_DIALECT_SCAN_BYTES`` bytes are scanned — dialect markers
-    always appear near the start of the file.
+    Scans the full text: dialect markers are not guaranteed to appear near
+    the top (e.g. ``SERIAL`` on a table defined after a large licence/comment
+    header), and this runs once per parse — negligible next to the per-column
+    cost.
     """
-    head = sql_text[:_DIALECT_SCAN_BYTES]
-    upper = head.upper()
+    upper = sql_text.upper()
     if re.search(r"\bSERIAL\b", upper) or re.search(r"\bBIGSERIAL\b", upper):
         return "postgres"
     if re.search(r"\bAUTO_INCREMENT\b", upper):
         return "mysql"
-    if re.search(r"`\w+`", head):
+    if re.search(r"`\w+`", sql_text):
         return "mysql"
     if re.search(r"\bAUTOINCREMENT\b", upper):
         return "sqlite"
@@ -523,7 +515,9 @@ def _dtype_raw_type(dtype: exp.DataType) -> str:
     for p in params:
         inner = p.this if isinstance(p, exp.DataTypeParam) else p
         if isinstance(inner, exp.Literal):
-            parts.append(inner.this)
+            # Re-quote string literals to match ``dtype.sql()`` exactly
+            # (e.g. ENUM('active', 'inactive')); numeric literals stay bare.
+            parts.append(f"'{inner.this}'" if inner.is_string else inner.this)
         else:
             # Fallback: non-literal param (e.g. type name inside ARRAY(TEXT))
             parts.append(inner.this.value if isinstance(inner, exp.DataType) else str(inner))

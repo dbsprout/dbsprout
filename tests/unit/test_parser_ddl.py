@@ -6,9 +6,10 @@ import time
 from pathlib import Path
 
 import pytest
+from sqlglot import exp
 
 from dbsprout.schema.models import ColumnType, DatabaseSchema
-from dbsprout.schema.parsers.ddl import parse_ddl
+from dbsprout.schema.parsers.ddl import _dtype_raw_type, parse_ddl
 
 _FIXTURES_DIR = Path(__file__).parent.parent / "fixtures" / "schemas"
 
@@ -645,10 +646,69 @@ class TestGoldenSchemaEquality:
             assert tbl.columns[2].precision == 10
             assert tbl.columns[2].scale == 2
 
+    @pytest.mark.parametrize(
+        ("type_sql", "dialect"),
+        [
+            ("VARCHAR(100)", None),
+            ("CHAR(10)", None),
+            ("DECIMAL(10, 2)", None),
+            ("NUMERIC(12, 4)", None),
+            ("INTEGER", None),
+            ("BIGINT", None),
+            ("TIMESTAMPTZ", None),
+            ("TEXT", None),
+            ("ENUM('active', 'inactive')", "mysql"),
+            ("ENUM('a', 'b', 'c')", "mysql"),
+        ],
+    )
+    def test_dtype_raw_type_matches_sqlglot_generator(
+        self, type_sql: str, dialect: str | None
+    ) -> None:
+        """``_dtype_raw_type`` must equal sqlglot's ``dtype.sql()`` byte-for-byte.
+
+        This is the real AC-2 guard: the optimisation replaced ``dtype.sql()``
+        (the old behaviour) with ``_dtype_raw_type``, so equality proves no
+        output change. Includes ENUM string-literal params — the one case a
+        naive fast path drops the surrounding quotes.
+        """
+        dtype = (
+            exp.DataType.build(type_sql, dialect=dialect)
+            if dialect
+            else exp.DataType.build(type_sql)
+        )
+        expected = dtype.sql(dialect=dialect) if dialect else dtype.sql()
+        assert _dtype_raw_type(dtype) == expected
+
+    def test_enum_raw_type_preserves_quotes(self) -> None:
+        """ENUM column raw_type keeps quoted string members (regression guard)."""
+        ddl = "CREATE TABLE t (status ENUM('active', 'inactive'));"
+        schema = parse_ddl(ddl, dialect="mysql")
+        t = schema.get_table("t")
+        assert t is not None
+        assert t.columns[0].raw_type == "ENUM('active', 'inactive')"
+
+    def test_dialect_detected_after_large_comment_header(self) -> None:
+        """A >2 KB comment header must not hide dialect markers (regression guard).
+
+        Dialect detection scans the full text; a SERIAL column defined after a
+        large licence/comment block must still resolve to postgres so it maps
+        to INTEGER + autoincrement rather than UNKNOWN.
+        """
+        header = "-- " + ("licence boilerplate " * 200) + "\n"
+        assert len(header) > 2048
+        ddl = header + "CREATE TABLE t (id SERIAL PRIMARY KEY, name VARCHAR(50));"
+        schema = parse_ddl(ddl)
+        t = schema.get_table("t")
+        assert t is not None
+        id_col = t.columns[0]
+        assert id_col.data_type == ColumnType.INTEGER
+        assert id_col.autoincrement is True
+
 
 # ── Performance regression guard ─────────────────────────────────────────
 
 
+@pytest.mark.slow
 class TestParsePerformance:
     """Guard against performance regressions in parse_ddl.
 
