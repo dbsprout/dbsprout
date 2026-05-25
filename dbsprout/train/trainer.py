@@ -221,6 +221,173 @@ class QLoRATrainer:
             dp_delta=config.privacy.dp_target_delta if achieved_epsilon is not None else None,
         )
 
+    # ------------------------------------------------------------------
+    # Private helpers extracted from _run_unsloth (S-099)
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _import_train_deps() -> tuple[object, object, object, object]:
+        """Import and return ``(FastLanguageModel, SFTConfig, SFTTrainer, load_dataset)``.
+
+        All four live in the ``dbsprout[train-cuda]`` extra.  One guarded block
+        means a partial install (e.g. ``unsloth`` present but ``datasets``/``trl``
+        absent) still surfaces the friendly install hint rather than a bare
+        ``ImportError``.
+
+        Raises
+        ------
+        RuntimeError
+            Any of the four symbols cannot be imported, with the install hint.
+        """
+        try:
+            from datasets import load_dataset  # noqa: PLC0415
+            from trl import SFTConfig, SFTTrainer  # noqa: PLC0415
+            from unsloth import FastLanguageModel  # noqa: PLC0415
+        except ImportError as exc:
+            raise RuntimeError(_INSTALL_HINT) from exc
+        return FastLanguageModel, SFTConfig, SFTTrainer, load_dataset
+
+    def _load_model_and_tokenizer(
+        self,
+        *,
+        fast_lm: object,
+        config: TrainConfig,
+    ) -> tuple[object, object]:
+        """Load the base model and build a PEFT/LoRA adapter shell.
+
+        Calls :meth:`FastLanguageModel.from_pretrained` then
+        :meth:`FastLanguageModel.get_peft_model` with the LoRA hyper-parameters
+        from *config*.  Returns the ``(model, tokenizer)`` pair.
+        """
+        model, tokenizer = fast_lm.from_pretrained(  # type: ignore[attr-defined]
+            model_name=config.base_model,
+            max_seq_length=_MAX_SEQ_LENGTH,
+            load_in_4bit=_LOAD_IN_4BIT,
+        )
+        model = fast_lm.get_peft_model(  # type: ignore[attr-defined]
+            model,
+            r=config.lora_rank,
+            lora_alpha=config.lora_alpha,
+            lora_dropout=config.lora_dropout,
+        )
+        return model, tokenizer
+
+    def _load_corpus(
+        self,
+        *,
+        load_dataset: object,
+        corpus_path: Path,
+    ) -> object:
+        """Load the GReaT JSONL corpus into a HuggingFace Dataset.
+
+        Uses the ``"json"`` builtin loader against the local *corpus_path*;
+        no Hugging Face Hub download occurs.
+        """
+        # nosec B615 - "json" is the builtin local-file loader reading our
+        # own offline corpus_path; no Hugging Face Hub download happens, so
+        # revision pinning is not applicable.
+        return load_dataset(  # type: ignore[operator] # nosec B615
+            "json", data_files=str(corpus_path), split="train"
+        )
+
+    def _build_sft_trainer(  # noqa: PLR0913 — explicit deps keep the seam testable
+        self,
+        *,
+        sft_config_cls: object,
+        sft_trainer_cls: object,
+        model: object,
+        tokenizer: object,
+        dataset: object,
+        config: TrainConfig,
+        adapter_dir: Path,
+    ) -> object:
+        """Construct the :class:`trl.SFTTrainer` with a forced privacy safeguard.
+
+        ``completion_only_loss`` is forced ``True`` regardless of
+        ``config.completion_only_loss``.  For the GReaT corpus (S-063) this is
+        a no-op — every row is a single ``text`` field with no prompt/completion
+        split, so there is nothing to memorize by construction.  The flag is
+        kept only to future-proof any later prompt/completion corpus.
+        """
+        sft_config = sft_config_cls(  # type: ignore[operator]
+            output_dir=str(adapter_dir),
+            num_train_epochs=config.epochs,
+            learning_rate=config.learning_rate,
+            per_device_train_batch_size=config.batch_size,
+            dataset_text_field="text",
+            # Privacy: forced True regardless of ``config.completion_only_loss``.
+            # NOTE: for the GReaT corpus (S-063) this is a *no-op by
+            # construction* — every row is a single ``text`` field with NO
+            # prompt/completion split, so there is no prompt to memorize.
+            # The real structural safeguard is the corpus format itself;
+            # this flag is kept only to future-proof any later
+            # prompt/completion corpus and is not load-bearing today.
+            completion_only_loss=True,
+        )
+        return sft_trainer_cls(  # type: ignore[operator]
+            model=model,
+            tokenizer=tokenizer,
+            train_dataset=dataset,
+            args=sft_config,
+        )
+
+    def _apply_dp_if_needed(
+        self,
+        *,
+        trainer: object,
+        config: TrainConfig,
+    ) -> float | None:
+        """Wrap the trainer's optimizer/dataloader with Opacus if DP-SGD is on.
+
+        Privatization order (S-097): optimizer + dataloader are wrapped
+        **before** the train loop so ``trainer.train()`` steps the
+        noised/clipped optimizer over the Poisson-sampled loader.  Returns the
+        achieved epsilon, or ``None`` when DP-SGD is disabled.
+        """
+        if not config.privacy.dp_sgd:
+            return None
+        priv_model, priv_opt, priv_loader, achieved_epsilon = _make_private(
+            privacy=config.privacy,
+            model=trainer.model,  # type: ignore[attr-defined]
+            optimizer=trainer.optimizer,  # type: ignore[attr-defined]
+            data_loader=trainer.get_train_dataloader(),  # type: ignore[attr-defined]
+            epochs=config.epochs,
+        )
+        # Reassign the Opacus-privatized objects onto the SFTTrainer so
+        # trainer.train() consumes them.  Attribute names on the real trl/HF
+        # Trainer are runtime-validation-pending (CI cannot install CUDA).
+        trainer.model = priv_model  # type: ignore[attr-defined]
+        trainer.optimizer = priv_opt  # type: ignore[attr-defined]
+        trainer.train_dataloader = priv_loader  # type: ignore[attr-defined]
+        logger.info(
+            "DP-SGD enabled (Opacus): achieved (epsilon=%s, delta=%s)",
+            achieved_epsilon,
+            config.privacy.dp_target_delta,
+        )
+        return achieved_epsilon
+
+    def _run_train_loop(
+        self,
+        *,
+        trainer: object,
+        adapter_dir: Path,
+    ) -> float | None:
+        """Execute ``trainer.train()``, save the adapter, and return the loss.
+
+        A non-numeric ``training_loss`` from the backend degrades to ``None``
+        rather than crashing a completed run.
+        """
+        stats = trainer.train()  # type: ignore[attr-defined]
+        trainer.save_model(str(adapter_dir))  # type: ignore[attr-defined]
+        loss = getattr(stats, "training_loss", None)
+        if loss is None:
+            return None
+        try:
+            return float(loss)
+        except (TypeError, ValueError):
+            logger.warning("non-numeric training_loss %r; reporting final_loss=None", loss)
+            return None
+
     def _run_unsloth(
         self,
         *,
@@ -229,30 +396,13 @@ class QLoRATrainer:
         adapter_dir: Path,
         quiet: bool,
     ) -> tuple[float | None, float | None]:
-        """Run the Unsloth QLoRA training loop.
+        """Orchestrate the Unsloth QLoRA training loop.
 
-        Returns the ``(final training loss, achieved epsilon)`` pair. The
-        achieved epsilon is ``None`` unless DP-SGD ran
-        (``config.privacy.dp_sgd``), in which case the optimizer + dataloader
-        are wrapped with Opacus :func:`_make_private` before training.
-
-        Heavy deps are imported here so module import stays light. The
-        completion-only-loss flag is forced ``True`` independently of
-        ``config.completion_only_loss`` — but note it is a no-op for the GReaT
-        single-text corpus (no prompt exists to memorize *by construction*);
-        the corpus format is the real privacy safeguard. A non-numeric backend
-        loss degrades to ``None`` rather than raising.
+        Returns ``(final_loss, achieved_epsilon)``.  Heavy deps are imported
+        lazily via :meth:`_import_train_deps` so module import stays light.
+        The achieved epsilon is ``None`` unless DP-SGD ran.
         """
-        try:
-            # All three live in the same ``dbsprout[train-cuda]`` extra. Folding
-            # them into one guarded block means a *partial* install (e.g.
-            # unsloth present but ``datasets``/``trl`` missing) still surfaces
-            # the friendly install hint instead of a bare ImportError.
-            from datasets import load_dataset  # noqa: PLC0415
-            from trl import SFTConfig, SFTTrainer  # noqa: PLC0415
-            from unsloth import FastLanguageModel  # noqa: PLC0415
-        except ImportError as exc:
-            raise RuntimeError(_INSTALL_HINT) from exc
+        fast_lm, sft_config_cls, sft_trainer_cls, load_ds = self._import_train_deps()
 
         with Progress(
             SpinnerColumn(),
@@ -262,89 +412,27 @@ class QLoRATrainer:
             disable=quiet,
         ) as progress:
             task = progress.add_task("Loading base model", total=None)
-            model, tokenizer = FastLanguageModel.from_pretrained(
-                model_name=config.base_model,
-                max_seq_length=_MAX_SEQ_LENGTH,
-                load_in_4bit=_LOAD_IN_4BIT,
-            )
-            model = FastLanguageModel.get_peft_model(
-                model,
-                r=config.lora_rank,
-                lora_alpha=config.lora_alpha,
-                lora_dropout=config.lora_dropout,
-            )
 
+            model, tokenizer = self._load_model_and_tokenizer(fast_lm=fast_lm, config=config)
             progress.update(task, description="Loading corpus")
-            # nosec B615 - "json" is the builtin local-file loader reading our
-            # own offline corpus_path; no Hugging Face Hub download happens, so
-            # revision pinning is not applicable.
-            dataset = load_dataset(  # nosec B615
-                "json", data_files=str(corpus_path), split="train"
-            )
+            dataset = self._load_corpus(load_dataset=load_ds, corpus_path=corpus_path)
 
             progress.update(task, description="Building trainer")
-            sft_config = SFTConfig(
-                output_dir=str(adapter_dir),
-                num_train_epochs=config.epochs,
-                learning_rate=config.learning_rate,
-                per_device_train_batch_size=config.batch_size,
-                dataset_text_field="text",
-                # Privacy: forced True regardless of ``config.completion_only_loss``.
-                # NOTE: for the GReaT corpus (S-063) this is a *no-op by
-                # construction* — every row is a single ``text`` field with NO
-                # prompt/completion split, so there is no prompt to memorize.
-                # The real structural safeguard is the corpus format itself;
-                # this flag is kept only to future-proof any later
-                # prompt/completion corpus and is not load-bearing today.
-                completion_only_loss=True,
-            )
-            trainer = SFTTrainer(
+            trainer = self._build_sft_trainer(
+                sft_config_cls=sft_config_cls,
+                sft_trainer_cls=sft_trainer_cls,
                 model=model,
                 tokenizer=tokenizer,
-                train_dataset=dataset,
-                args=sft_config,
+                dataset=dataset,
+                config=config,
+                adapter_dir=adapter_dir,
             )
-
-            achieved_epsilon: float | None = None
             if config.privacy.dp_sgd:
                 progress.update(task, description="Wrapping with Opacus DP-SGD")
-                priv_model, priv_opt, priv_loader, achieved_epsilon = _make_private(
-                    privacy=config.privacy,
-                    model=trainer.model,
-                    optimizer=trainer.optimizer,
-                    data_loader=trainer.get_train_dataloader(),
-                    epochs=config.epochs,
-                )
-                # Reassign the Opacus-privatized objects onto the SFTTrainer
-                # so trainer.train() steps the noised/clipped optimizer over
-                # the Poisson-sampled loader. The exact attribute names on the
-                # real trl/HF Trainer (and Unsloth's patched optimizer) are
-                # runtime-validation-pending: CI cannot install
-                # CUDA/Unsloth/Opacus, so this wiring is asserted structurally
-                # in tests (same precedent as the mlx-lm
-                # hardware-validation-pending integration test). A CUDA-enabled
-                # run must confirm trainer.train() consumes these.
-                trainer.model = priv_model
-                trainer.optimizer = priv_opt
-                trainer.train_dataloader = priv_loader
-                logger.info(
-                    "DP-SGD enabled (Opacus): achieved (epsilon=%s, delta=%s)",
-                    achieved_epsilon,
-                    config.privacy.dp_target_delta,
-                )
+            achieved_epsilon = self._apply_dp_if_needed(trainer=trainer, config=config)
 
             progress.update(task, description="Training")
-            stats = trainer.train()
-            trainer.save_model(str(adapter_dir))
+            final_loss = self._run_train_loop(trainer=trainer, adapter_dir=adapter_dir)
             progress.update(task, description="Done", completed=1, total=1)
 
-        loss = getattr(stats, "training_loss", None)
-        if loss is None:
-            return None, achieved_epsilon
-        try:
-            return float(loss), achieved_epsilon
-        except (TypeError, ValueError):
-            # A backend reporting a non-numeric loss must not crash a
-            # completed run; degrade to "no loss history" instead.
-            logger.warning("non-numeric training_loss %r; reporting final_loss=None", loss)
-            return None, achieved_epsilon
+        return final_loss, achieved_epsilon
