@@ -12,13 +12,13 @@ from rich.markup import escape
 from rich.table import Table
 
 from dbsprout.config.models import DBSproutConfig
-from dbsprout.generate.orchestrator import orchestrate
-from dbsprout.quality.integrity import IntegrityReport, validate_integrity
+from dbsprout.core import service
 from dbsprout.schema.models import DatabaseSchema
 
 if TYPE_CHECKING:
     from dbsprout.quality.detection import DetectionReport
     from dbsprout.quality.fidelity import FidelityReport
+    from dbsprout.quality.integrity import IntegrityReport
 
 console = Console()
 
@@ -55,33 +55,77 @@ def validate_command(  # noqa: PLR0913
     cfg_path = config_path or Path("dbsprout.toml")
     config = DBSproutConfig.from_toml(cfg_path if cfg_path.exists() else None)
 
-    # Generate data
-    result = orchestrate(schema, config, seed=seed, default_rows=rows, engine=engine)
+    # --detection requires --reference-data (checked before any generation).
+    if detection and reference_data is None:
+        console.print("[red]Error:[/red] --detection requires --reference-data.")
+        raise typer.Exit(code=1)
 
-    # Validate integrity
-    integrity_report = validate_integrity(result.tables_data, schema)
-
-    # Validate fidelity (optional — requires --reference-data and [stats] extra)
-    fidelity_report: FidelityReport | None = None
+    # Load reference rows (CLI owns file IO + the not-found message); the core
+    # service computes fidelity/detection from the already-loaded dict.
+    ref_rows: dict[str, list[dict[str, Any]]] | None = None
     if reference_data is not None:
-        fidelity_report = _run_fidelity(result.tables_data, reference_data, schema)
+        ref_rows = _load_reference_data(reference_data, schema)
 
-    # Validate detection (optional — requires --reference-data and [stats] extra)
-    detection_report: DetectionReport | None = None
-    if detection:
-        if reference_data is None:
-            console.print("[red]Error:[/red] --detection requires --reference-data.")
-            raise typer.Exit(code=1)
-        detection_report = _run_detection(result.tables_data, reference_data, schema, seed)
+    # Generate + validate through the core service facade (single seam).
+    outcome = service.run_validation(
+        schema,
+        config,
+        seed=seed,
+        default_rows=rows,
+        engine=engine,
+        reference_data=ref_rows,
+        detection=detection,
+    )
+    integrity_report = outcome.integrity
+    fidelity_report: FidelityReport | None = outcome.fidelity
+    detection_report: DetectionReport | None = outcome.detection
 
-    # Output
+    # Parity: when --reference-data was requested but the path was missing,
+    # the pre-S-106 CLI still emitted an *empty* (passed) report rather than
+    # omitting it. Reconstruct that so the JSON/Rich output is unchanged.
+    if reference_data is not None and ref_rows is None:
+        fidelity_report = _empty_fidelity()
+        if detection:
+            detection_report = _empty_detection()
+
+    _emit_reports(
+        integrity_report,
+        fidelity_report,
+        detection_report,
+        schema=schema,
+        tables_data=outcome.tables_data,
+        output_format=output_format,
+        engine=engine,
+        seed=seed,
+        output=output,
+        compact=compact,
+    )
+
+
+def _emit_reports(  # noqa: PLR0913
+    integrity_report: IntegrityReport,
+    fidelity_report: FidelityReport | None,
+    detection_report: DetectionReport | None,
+    *,
+    schema: DatabaseSchema,
+    tables_data: dict[str, list[dict[str, Any]]],
+    output_format: str,
+    engine: str,
+    seed: int,
+    output: Path | None,
+    compact: bool,
+) -> None:
+    """Render the reports (JSON or Rich) and raise the appropriate exit code.
+
+    Exit code 1 if any computed report failed; otherwise returns normally.
+    """
     if output_format == "json":
         _print_json(
             integrity_report,
             fidelity_report,
             detection_report,
             schema=schema,
-            tables_data=result.tables_data,
+            tables_data=tables_data,
             engine=engine,
             seed=seed,
             output=output,
@@ -94,11 +138,8 @@ def validate_command(  # noqa: PLR0913
         if detection_report is not None:
             _print_detection_rich(detection_report)
 
-    if not integrity_report.passed:
-        raise typer.Exit(code=1)
-    if fidelity_report is not None and not fidelity_report.passed:
-        raise typer.Exit(code=1)
-    if detection_report is not None and not detection_report.passed:
+    reports = (integrity_report, fidelity_report, detection_report)
+    if any(r is not None and not r.passed for r in reports):
         raise typer.Exit(code=1)
 
 
@@ -171,41 +212,18 @@ def _load_reference_data(
     return ref_data
 
 
-def _run_fidelity(
-    tables_data: dict[str, list[dict[str, Any]]],
-    reference_path: Path,
-    schema: DatabaseSchema,
-) -> FidelityReport:
-    """Load reference data and compute fidelity metrics."""
-    from dbsprout.quality.fidelity import (  # noqa: PLC0415
-        FidelityReport,
-        validate_fidelity,
-    )
+def _empty_fidelity() -> FidelityReport:
+    """An empty (passed) fidelity report — emitted when reference data is missing."""
+    from dbsprout.quality.fidelity import FidelityReport  # noqa: PLC0415
 
-    ref_data = _load_reference_data(reference_path, schema)
-    if ref_data is None:
-        return FidelityReport()
-
-    return validate_fidelity(tables_data, ref_data, schema)
+    return FidelityReport()
 
 
-def _run_detection(
-    tables_data: dict[str, list[dict[str, Any]]],
-    reference_path: Path,
-    schema: DatabaseSchema,
-    seed: int = 42,
-) -> DetectionReport:
-    """Load reference data and compute detection (C2ST) metrics."""
-    from dbsprout.quality.detection import (  # noqa: PLC0415
-        DetectionReport,
-        validate_detection,
-    )
+def _empty_detection() -> DetectionReport:
+    """An empty (passed) detection report — emitted when reference data is missing."""
+    from dbsprout.quality.detection import DetectionReport  # noqa: PLC0415
 
-    ref_data = _load_reference_data(reference_path, schema)
-    if ref_data is None:
-        return DetectionReport()
-
-    return validate_detection(tables_data, ref_data, schema, seed=seed)
+    return DetectionReport()
 
 
 def _print_detection_rich(report: DetectionReport) -> None:
