@@ -150,3 +150,88 @@ async def test_generate_job_runs_and_sets_last_result(tmp_path: Path) -> None:
     result = app.state.workspace.get_last_result()
     assert result is not None
     assert set(result.tables_data.keys()) == {"users", "posts"}
+
+
+# ── credential redaction on job failure (DBS-139 forward note) ──────────
+
+
+@pytest.mark.anyio
+async def test_generate_failure_redacts_credentials(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A pipeline error that embeds the workspace target must never leak the
+    password into JobRecord.error (nor, by extension, any API response)."""
+    import httpx  # noqa: PLC0415
+    from httpx import ASGITransport  # noqa: PLC0415
+
+    from dbsprout.core import service  # noqa: PLC0415
+    from dbsprout.web.jobs import JobStatus  # noqa: PLC0415
+
+    app = _make_app(tmp_path / "state.db")
+    _load_schema(app, tmp_path)
+    # Give the workspace a credentialed raw target (the closure scrubs against it).
+    raw = "postgresql://alice:s3cretpw@db.invalid:5432/app"
+    app.state.workspace.set_target_url(raw)
+
+    def boom(*_args: object, **_kwargs: object) -> object:
+        raise RuntimeError(f"pipeline blew up while reaching {raw}")
+
+    monkeypatch.setattr(service, "generate", boom)
+
+    transport = ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        resp = await client.post("/api/generate", json={})
+        assert resp.status_code == 200, resp.text  # submit still succeeds (async)
+        job_id = resp.json()["job_id"]
+
+    await app.state.job_manager.wait(job_id)
+    record = app.state.job_manager.get(job_id)
+    assert record.status is JobStatus.FAILED
+    assert record.error is not None
+    assert "s3cretpw" not in record.error  # password scrubbed
+    assert "alice:***" in record.error or "***" in record.error  # redacted form present
+
+
+# ── single active job: a second concurrent submit → 409 ─────────────────
+
+
+@pytest.mark.anyio
+async def test_generate_second_submit_while_active_is_409(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import threading  # noqa: PLC0415
+
+    import anyio  # noqa: PLC0415
+    import httpx  # noqa: PLC0415
+    from httpx import ASGITransport  # noqa: PLC0415
+
+    from dbsprout.core import service  # noqa: PLC0415
+
+    app = _make_app(tmp_path / "state.db")
+    _load_schema(app, tmp_path)
+
+    release = threading.Event()
+    started = threading.Event()
+    real_generate = service.generate
+
+    def blocking_generate(*args: object, **kwargs: object) -> object:
+        started.set()
+        release.wait(timeout=5)  # hold the single active job open
+        return real_generate(*args, **kwargs)
+
+    monkeypatch.setattr(service, "generate", blocking_generate)
+
+    transport = ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        first = await client.post("/api/generate", json={})
+        assert first.status_code == 200, first.text
+        first_id = first.json()["job_id"]
+
+        await anyio.to_thread.run_sync(started.wait)  # ensure job #1 is in-flight
+
+        second = await client.post("/api/generate", json={})
+        assert second.status_code == 409, second.text  # single-active rejection
+        assert "running" in second.json()["detail"].lower()
+
+    release.set()
+    await app.state.job_manager.wait(first_id)
