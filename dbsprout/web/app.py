@@ -35,6 +35,7 @@ from fastapi.templating import Jinja2Templates
 from dbsprout.migrate.snapshot import SnapshotStore
 from dbsprout.state.db import StateDB
 from dbsprout.web.jobs import JobManager
+from dbsprout.web.routers.connect import connect_router
 from dbsprout.web.routes import router
 from dbsprout.web.views.erd import erd_router
 from dbsprout.web.views.insights import insights_router
@@ -128,6 +129,13 @@ def create_app(
     # state DB.
     app.include_router(insights_router)
     # ─── end S-093 ───
+    # ── S-112 connect router ──
+    # First read-WRITE JSON API: POST /api/connect introspects a live DB via the
+    # core-service facade and stores the schema + redacted target on the
+    # workspace. Lives under dbsprout/web/routers/ (write APIs), distinct from
+    # the read-only views/ above.
+    app.include_router(connect_router)
+    # ── end S-112 ──
     return app
 
 
