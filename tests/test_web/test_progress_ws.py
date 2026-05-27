@@ -17,8 +17,11 @@ relies on the replay path (reading collected events, never a cross-loop queue).
 
 from __future__ import annotations
 
+import asyncio
 import subprocess
 import sys
+from datetime import datetime, timezone
+from typing import Any
 
 import pytest
 
@@ -26,10 +29,11 @@ pytest.importorskip("fastapi", reason="fastapi absent (pip install dbsprout[web]
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from starlette.websockets import WebSocketDisconnect
 
 from dbsprout.generate.progress import ProgressEvent
-from dbsprout.web.jobs import JobManager
-from dbsprout.web.progress import ProgressHub, progress_ws_router
+from dbsprout.web.jobs import JobManager, JobRecord, JobStatus
+from dbsprout.web.progress import ProgressHub, _tail_live, job_progress_ws, progress_ws_router
 
 # ── hub unit: open/publish/close round-trip on the test's own loop ────
 
@@ -58,6 +62,104 @@ async def test_hub_publish_unknown_job_is_noop() -> None:
 @pytest.mark.anyio
 async def test_hub_close_unknown_job_is_noop() -> None:
     ProgressHub().close("nope")
+
+
+# ── direct coroutine tests for the live-tail + disconnect paths ───────
+#
+# TestClient.websocket_connect runs each request on a fresh loop, so a finished
+# job always takes the *replay* branch there. To exercise the *live-tail* path
+# (and the mid-stream disconnect), drive the handler coroutines directly on the
+# test's own loop with a fake WebSocket + a real asyncio.Queue.
+
+
+class _FakeWebSocket:
+    """Minimal WebSocket double: records accept/close + sent JSON frames.
+
+    ``send_json`` can be told to raise ``WebSocketDisconnect`` after *n* frames
+    to model a client hanging up mid-stream.
+    """
+
+    def __init__(self, *, app: Any = None, disconnect_after: int | None = None) -> None:
+        self.app = app
+        self.sent: list[dict[str, Any]] = []
+        self.accepted = False
+        self.closed_code: int | None = -1  # -1 = "not closed yet"
+        self._disconnect_after = disconnect_after
+
+    async def accept(self) -> None:
+        self.accepted = True
+
+    async def send_json(self, data: dict[str, Any]) -> None:
+        if self._disconnect_after is not None and len(self.sent) >= self._disconnect_after:
+            raise WebSocketDisconnect(code=1006)
+        self.sent.append(data)
+
+    async def close(self, code: int = 1000) -> None:
+        self.closed_code = code
+
+
+def _running_record(job_id: str = "live") -> JobRecord:
+    return JobRecord(id=job_id, kind="generate", started_at=datetime.now(tz=timezone.utc))
+
+
+@pytest.mark.anyio
+async def test_tail_live_forwards_queued_events_then_terminal() -> None:
+    record = _running_record()
+    record.status = JobStatus.SUCCEEDED  # terminal status read for the final frame
+    queue: asyncio.Queue[Any] = asyncio.Queue()
+    sentinel = ProgressHub.SENTINEL
+    for i in range(3):
+        queue.put_nowait(ProgressEvent(phase="table_done", table=f"t{i}", tables_done=i + 1))
+    queue.put_nowait(sentinel)
+
+    ws = _FakeWebSocket()
+    await _tail_live(ws, record, queue, sentinel)  # type: ignore[arg-type]
+
+    phases = [f["phase"] for f in ws.sent]
+    assert phases == ["table_done", "table_done", "table_done", "terminal"]
+    assert [f.get("table") for f in ws.sent[:3]] == ["t0", "t1", "t2"]
+    assert ws.sent[-1]["status"] == "succeeded"
+
+
+@pytest.mark.anyio
+async def test_tail_live_with_no_queue_falls_back_to_replay() -> None:
+    record = _running_record()
+    record.status = JobStatus.SUCCEEDED
+    record.events.append(ProgressEvent(phase="table_done", table="only", tables_done=1))
+
+    ws = _FakeWebSocket()
+    await _tail_live(ws, record, None, ProgressHub.SENTINEL)  # type: ignore[arg-type]
+
+    assert [f["phase"] for f in ws.sent] == ["table_done", "terminal"]
+    assert ws.sent[0]["table"] == "only"
+
+
+@pytest.mark.anyio
+async def test_ws_handler_swallows_client_disconnect_midstream() -> None:
+    # A running job → live-tail branch; the fake client disconnects after the
+    # first frame. job_progress_ws must catch WebSocketDisconnect and return
+    # without re-raising or trying to close again.
+    hub = ProgressHub()
+    manager = JobManager(progress_hub=hub)
+    job_id = "live-job"
+    record = _running_record(job_id)
+    manager._records[job_id] = record
+    hub.open(job_id)
+    queue = hub.queue(job_id)
+    assert queue is not None
+    queue.put_nowait(ProgressEvent(phase="table_start", table="a"))
+    queue.put_nowait(ProgressEvent(phase="table_done", table="a", tables_done=1))
+
+    app = FastAPI()
+    app.state.progress_hub = hub
+    app.state.job_manager = manager
+    ws = _FakeWebSocket(app=app, disconnect_after=1)
+
+    await job_progress_ws(ws, job_id)  # type: ignore[arg-type]
+
+    assert ws.accepted is True
+    assert len(ws.sent) == 1  # only the first frame got through before disconnect
+    assert ws.closed_code == -1  # returned early on disconnect; no close() call
 
 
 # ── WS integration via TestClient (replay path) ──────────────────────
@@ -148,7 +250,6 @@ def test_ws_unknown_job_closes_without_frames() -> None:
     app.state.job_manager = JobManager(progress_hub=hub)
     app.include_router(progress_ws_router)
     client = TestClient(app)
-    from starlette.websockets import WebSocketDisconnect  # noqa: PLC0415
 
     with client.websocket_connect("/ws/jobs/does-not-exist") as ws:  # noqa: SIM117
         with pytest.raises(WebSocketDisconnect):
@@ -164,7 +265,7 @@ def test_create_app_wires_progress_hub_shared_with_manager() -> None:
     app = create_app()
     assert isinstance(app.state.progress_hub, ProgressHub)
     # the wired manager must publish to the same hub instance
-    assert app.state.job_manager._hub is app.state.progress_hub  # type: ignore[attr-defined]
+    assert app.state.job_manager._hub is app.state.progress_hub
 
 
 def test_create_app_registers_ws_route() -> None:
