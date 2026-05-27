@@ -21,6 +21,7 @@ from __future__ import annotations
 import subprocess
 import sys
 import threading
+import time
 from datetime import datetime, timezone
 
 import pytest
@@ -167,8 +168,11 @@ async def test_cancel_marks_record_cancelled() -> None:
 
     def fn(_cb: object, tok: CancelToken) -> None:
         started.set()  # signal the worker is in-flight
+        deadline = time.monotonic() + 5  # bounded: a cancel regression fails fast
         while not tok.is_cancelled():
-            pass  # busy-wait until the event loop arms cancel
+            if time.monotonic() > deadline:
+                raise AssertionError("cancel token never armed within 5s")
+            time.sleep(0.001)
         raise GenerationCancelled(tables_done=1, tables_total=2)
 
     mgr = JobManager()
