@@ -34,6 +34,7 @@ from fastapi.templating import Jinja2Templates
 
 from dbsprout.migrate.snapshot import SnapshotStore
 from dbsprout.state.db import StateDB
+from dbsprout.web.jobs import JobManager
 from dbsprout.web.routes import router
 from dbsprout.web.views.erd import erd_router
 from dbsprout.web.views.insights import insights_router
@@ -108,6 +109,11 @@ def create_app(
     # across stateless requests. No write routes yet (later stories).
     app.state.workspace = Workspace()
     # ─── end S-111 ───
+    # ─── S-108 job manager ───
+    # Single active background job (generate) for the single-user localhost
+    # dashboard. No routes/WS here — S-109 adds the WS, S-124 the generate route.
+    app.state.job_manager = JobManager()
+    # ─── end S-108 ───
     app.mount("/static", StaticFiles(directory=str(_STATIC_DIR)), name="static")
     app.include_router(router)
     # ─── S-091 ERD region ───
