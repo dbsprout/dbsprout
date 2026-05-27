@@ -1,0 +1,154 @@
+{# ── S-115: workspace ERD review fragment (HTMX-swappable; no base.html). ──
+   Renders the loaded workspace schema as a client-side Mermaid erDiagram,
+   reusing the same class hooks / click handler as the snapshot view's
+   schema.html (build_erd_mermaid + views/erd.py helpers supply the source).
+   S-117 (Studio) hx-gets this into a panel — it must stay a fragment. #}
+{% if erd_mermaid %}
+  {# Mermaid.js client-side rendering (CDN, no server-side image gen). #}
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+  {# SVG pan/zoom (loaded only when an ERD is present). #}
+  <script src="https://cdn.jsdelivr.net/npm/svg-pan-zoom@3/dist/svg-pan-zoom.min.js"></script>
+
+  {# Table-detail JSON blob (enables click-to-detail, no network round-trip). #}
+  <script id="erd-table-data" type="application/json">{{ table_details_json | safe }}</script>
+
+  {# ERD diagram container #}
+  <div id="erd" class="card bg-base-100 shadow">
+    <div class="card-body overflow-x-auto">
+      <pre class="mermaid">{{ erd_mermaid }}</pre>
+    </div>
+  </div>
+  <p class="text-sm opacity-70 mt-2">
+    Entity-relationship diagram of the schema loaded in this session
+    (via connect or upload). Click a table node to see its column details.
+  </p>
+
+  {# Click-to-detail panel (hidden until a table is clicked). #}
+  <div
+    id="erd-detail-panel"
+    class="card bg-base-100 shadow mt-4 hidden"
+    role="region"
+    aria-label="Table column details"
+  >
+    <div class="card-body">
+      <div class="flex items-center justify-between mb-2">
+        <h2 id="erd-detail-title" class="card-title text-lg"></h2>
+        <button
+          id="erd-detail-close"
+          class="btn btn-sm btn-ghost"
+          aria-label="Close detail panel"
+        >&#x2715;</button>
+      </div>
+      <div id="erd-detail-content" class="overflow-x-auto"></div>
+    </div>
+  </div>
+
+  {# Client-side interactivity script (mirrors schema.html). #}
+  <script>
+    (function () {
+      "use strict";
+
+      if (window.mermaid && window.mermaid.initialize) {
+        window.mermaid.initialize({ startOnLoad: false, theme: "default" });
+      }
+
+      var tableData = {};
+      var dataEl = document.getElementById("erd-table-data");
+      if (dataEl) {
+        try { tableData = JSON.parse(dataEl.textContent); } catch (_) {}
+      }
+
+      window.erdTableClick = function (tableName) {
+        var panel = document.getElementById("erd-detail-panel");
+        var title = document.getElementById("erd-detail-title");
+        var content = document.getElementById("erd-detail-content");
+        if (!panel || !title || !content) return;
+
+        var info = tableData[tableName];
+        if (!info) return;
+
+        title.textContent = tableName;
+
+        var rows = (info.columns || []).map(function (col) {
+          var badges = [];
+          if (col.primary_key) badges.push('<span class="badge badge-primary badge-xs">PK</span>');
+          if (col.unique) badges.push('<span class="badge badge-secondary badge-xs">UQ</span>');
+          if (!col.nullable) badges.push('<span class="badge badge-warning badge-xs">NOT NULL</span>');
+          return (
+            "<tr>" +
+            "<td class=\"font-mono text-sm\">" + escHtml(col.name) + "</td>" +
+            "<td class=\"font-mono text-sm opacity-70\">" + escHtml(col.data_type) + "</td>" +
+            "<td>" + badges.join(" ") + "</td>" +
+            "</tr>"
+          );
+        }).join("");
+
+        var fkRows = (info.foreign_keys || []).map(function (fk) {
+          return (
+            "<tr>" +
+            "<td class=\"font-mono text-sm\">" + escHtml(fk.columns.join(", ")) + "</td>" +
+            "<td class=\"font-mono text-sm opacity-70\">→ " + escHtml(fk.ref_table) + "(" + escHtml(fk.ref_columns.join(", ")) + ")</td>" +
+            "</tr>"
+          );
+        }).join("");
+
+        content.innerHTML =
+          "<table class=\"table table-compact w-full\">" +
+          "<thead><tr><th>Column</th><th>Type</th><th>Constraints</th></tr></thead>" +
+          "<tbody>" + rows + "</tbody>" +
+          "</table>" +
+          (fkRows
+            ? "<div class=\"mt-3\"><p class=\"text-xs font-semibold uppercase opacity-60 mb-1\">Foreign Keys</p>" +
+              "<table class=\"table table-compact w-full\"><thead><tr><th>Column(s)</th><th>References</th></tr></thead>" +
+              "<tbody>" + fkRows + "</tbody></table></div>"
+            : "");
+
+        panel.classList.remove("hidden");
+        panel.scrollIntoView({ behavior: "smooth", block: "nearest" });
+      };
+
+      function escHtml(str) {
+        return String(str)
+          .replace(/&/g, "&amp;")
+          .replace(/</g, "&lt;")
+          .replace(/>/g, "&gt;")
+          .replace(/"/g, "&quot;");
+      }
+
+      var closeBtn = document.getElementById("erd-detail-close");
+      if (closeBtn) {
+        closeBtn.addEventListener("click", function () {
+          var panel = document.getElementById("erd-detail-panel");
+          if (panel) panel.classList.add("hidden");
+        });
+      }
+
+      // Render Mermaid + init SVG pan/zoom. The fragment may be injected after
+      // DOMContentLoaded (HTMX swap), so run immediately rather than waiting.
+      if (window.mermaid && window.mermaid.run) {
+        window.mermaid.run().then(function () {
+          var svg = document.querySelector("#erd svg");
+          if (svg && window.svgPanZoom) {
+            svg.removeAttribute("width");
+            svg.removeAttribute("height");
+            svg.style.width = "100%";
+            svg.style.height = "600px";
+            window.svgPanZoom(svg, {
+              zoomEnabled: true,
+              controlIconsEnabled: true,
+              fit: true,
+              center: true,
+            });
+          }
+        });
+      }
+    })();
+  </script>
+{% else %}
+  <div class="alert alert-info">
+    <span>
+      No schema loaded yet. Connect to a database or upload a schema file,
+      then review it here as an ERD.
+    </span>
+  </div>
+{% endif %}
