@@ -36,6 +36,7 @@ from dbsprout.migrate.snapshot import SnapshotStore
 from dbsprout.state.db import StateDB
 from dbsprout.web.jobs import JobManager
 from dbsprout.web.routers.connect import connect_router
+from dbsprout.web.routers.schema_load import schema_load_router
 from dbsprout.web.routes import router
 from dbsprout.web.views.erd import erd_router
 from dbsprout.web.views.insights import insights_router
@@ -136,6 +137,11 @@ def create_app(
     # the read-only views/ above.
     app.include_router(connect_router)
     # ── end S-112 ──
+    # ── S-113 schema-load router ──
+    # POST /api/schema/load — multipart upload parsed via the existing parsers,
+    # result stored on app.state.workspace (S-111).
+    app.include_router(schema_load_router)
+    # ── end S-113 ──
     return app
 
 
