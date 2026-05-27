@@ -117,3 +117,36 @@ def test_generate_negative_seed_is_422(tmp_path: Path) -> None:
     _load_schema(app, tmp_path)
     resp = TestClient(app).post("/api/generate", json={"seed": -1})
     assert resp.status_code == 422
+
+
+# ── job actually runs; workspace.last_result is populated (async join) ──
+
+
+@pytest.mark.anyio
+async def test_generate_job_runs_and_sets_last_result(tmp_path: Path) -> None:
+    """Drive the route through an async client so the fire-and-forget background
+    task shares this event loop, then join it via the manager and assert the run
+    succeeded, forwarded S-107 progress events, and stored the result."""
+    import httpx  # noqa: PLC0415
+    from httpx import ASGITransport  # noqa: PLC0415
+
+    from dbsprout.web.jobs import JobStatus  # noqa: PLC0415
+
+    app = _make_app(tmp_path / "state.db")
+    _load_schema(app, tmp_path)
+
+    transport = ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        resp = await client.post("/api/generate", json={"seed": 7})
+        assert resp.status_code == 200, resp.text
+        job_id = resp.json()["job_id"]
+
+    # The fire-and-forget task shares this event loop → join it deterministically.
+    await app.state.job_manager.wait(job_id)
+
+    record = app.state.job_manager.get(job_id)
+    assert record.status is JobStatus.SUCCEEDED, record.error
+    assert record.events  # S-107 progress events forwarded → S-109 streams these
+    result = app.state.workspace.get_last_result()
+    assert result is not None
+    assert set(result.tables_data.keys()) == {"users", "posts"}
