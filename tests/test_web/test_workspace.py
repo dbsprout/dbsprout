@@ -224,3 +224,14 @@ def test_workspace_wiring_adds_no_routes() -> None:
     app = create_app()
     paths = [getattr(r, "path", "") for r in app.routes]
     assert not any("workspace" in p for p in paths)
+
+
+def test_peek_target_url_returns_raw_then_redacted_property_masks() -> None:
+    """``peek_target_url`` exposes the raw URL (for internal credential scrubbing)
+    while the public ``redacted_target`` property still masks the password."""
+    ws = Workspace()
+    assert ws.peek_target_url() is None
+    raw = "postgresql://alice:s3cretpw@h:5432/db"
+    ws.set_target_url(raw)
+    assert ws.peek_target_url() == raw  # raw, for internal scrubbing only
+    assert "s3cretpw" not in (ws.redacted_target or "")  # public accessor still masks
