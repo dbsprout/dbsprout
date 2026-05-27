@@ -59,3 +59,24 @@ def test_generate_router_is_importable() -> None:
     from dbsprout.web.routers.generate import generate_router  # noqa: PLC0415
 
     assert isinstance(generate_router, APIRouter)
+
+
+# ── happy path: submit returns a job_id ────────────────────────────────
+
+
+def test_generate_returns_job_id(tmp_path: Path) -> None:
+    app = _make_app(tmp_path / "state.db")
+    _load_schema(app, tmp_path)
+    resp = TestClient(app).post("/api/generate", json={"seed": 7})
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert isinstance(body["job_id"], str)
+    assert body["job_id"]
+
+
+def test_generate_defaults_when_body_empty(tmp_path: Path) -> None:
+    app = _make_app(tmp_path / "state.db")
+    _load_schema(app, tmp_path)
+    resp = TestClient(app).post("/api/generate", json={})
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["job_id"]

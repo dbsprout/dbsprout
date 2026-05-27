@@ -36,6 +36,7 @@ from dbsprout.migrate.snapshot import SnapshotStore
 from dbsprout.state.db import StateDB
 from dbsprout.web.jobs import JobManager
 from dbsprout.web.routers.connect import connect_router
+from dbsprout.web.routers.generate import generate_router
 from dbsprout.web.routers.schema_load import schema_load_router
 from dbsprout.web.routes import router
 from dbsprout.web.views.erd import erd_router
@@ -142,6 +143,12 @@ def create_app(
     # result stored on app.state.workspace (S-111).
     app.include_router(schema_load_router)
     # ── end S-113 ──
+    # ── S-124 generate route ──
+    # POST /api/generate — submits the generation pipeline as a background job
+    # via app.state.job_manager (S-108), running core.service.generate (S-106)
+    # over the schema in app.state.workspace (S-111); returns {job_id} at once.
+    app.include_router(generate_router)
+    # ── end S-124 ──
     return app
 
 
