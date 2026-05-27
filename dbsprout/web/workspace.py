@@ -133,6 +133,15 @@ class Workspace:
     def clear_target_url(self) -> None:
         self._target_url = None
 
+    def peek_target_url(self) -> str | None:
+        """Return the *raw* target URL for internal use (e.g. credential scrubbing).
+
+        WARNING: this is the unmasked connection string — callers MUST redact it
+        (see :func:`_redact_url`) before logging or returning it anywhere a user
+        can see it. The public, always-safe accessor is :attr:`redacted_target`.
+        """
+        return self._target_url
+
     @property
     def redacted_target(self) -> str | None:
         """The target URL with credentials masked, or ``None`` if unset."""
