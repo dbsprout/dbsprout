@@ -45,6 +45,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
     from dbsprout.generate.progress import ProgressEvent
+    from dbsprout.web.progress import ProgressHub
 
 __all__ = ["JobError", "JobManager", "JobRecord", "JobStatus"]
 
@@ -134,11 +135,12 @@ class JobManager:
     tests and any caller that wants to join).
     """
 
-    def __init__(self) -> None:
+    def __init__(self, progress_hub: ProgressHub | None = None) -> None:
         self._records: dict[str, JobRecord] = {}
         self._tokens: dict[str, _CancelToken] = {}
         self._tasks: dict[str, asyncio.Task[None]] = {}
         self._active_id: str | None = None
+        self._hub = progress_hub
 
     # ── queries ────────────────────────────────────────────────────────
     def get(self, job_id: str) -> JobRecord:
@@ -165,6 +167,8 @@ class JobManager:
         self._records[job_id] = record
         self._tokens[job_id] = token
         self._active_id = job_id
+        if self._hub is not None:
+            self._hub.open(job_id)
         self._tasks[job_id] = asyncio.create_task(self._run(record, token, fn))
         return job_id
 
@@ -204,9 +208,13 @@ class JobManager:
         def _on_progress(event: ProgressEvent) -> None:
             # Single writer thread (the worker) at a time; CPython list.append
             # and the attribute reassignment are GIL-atomic — no lock needed for
-            # the single-active model.
+            # the single-active model. Also forward to the S-109 hub (if wired)
+            # so a subscribed WebSocket sees the event live; publish marshals
+            # onto the event loop via call_soon_threadsafe.
             record.events.append(event)
             record.latest_event = event
+            if self._hub is not None:
+                self._hub.publish(record.id, event)
 
         try:
             record.result = await run_in_threadpool(fn, _on_progress, token)
@@ -219,3 +227,8 @@ class JobManager:
         finally:
             record.finished_at = _now()
             self._active_id = None
+            # Terminal sentinel: lets a tailing WebSocket (S-109) stop and send
+            # its final frame. Status is already set above, so the WS reads the
+            # correct terminal status off the record.
+            if self._hub is not None:
+                self._hub.close(record.id)
