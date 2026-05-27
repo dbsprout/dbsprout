@@ -35,6 +35,7 @@ from fastapi.templating import Jinja2Templates
 from dbsprout.migrate.snapshot import SnapshotStore
 from dbsprout.state.db import StateDB
 from dbsprout.web.jobs import JobManager
+from dbsprout.web.progress import ProgressHub, progress_ws_router
 from dbsprout.web.routers.connect import connect_router
 from dbsprout.web.routers.schema_load import schema_load_router
 from dbsprout.web.routes import router
@@ -113,9 +114,18 @@ def create_app(
     # ─── end S-111 ───
     # ─── S-108 job manager ───
     # Single active background job (generate) for the single-user localhost
-    # dashboard. No routes/WS here — S-109 adds the WS, S-124 the generate route.
-    app.state.job_manager = JobManager()
+    # dashboard. The job manager publishes progress to the S-109 hub (below).
     # ─── end S-108 ───
+    # ── S-109 progress ws ──
+    # Live per-table progress over a WebSocket. One ProgressHub bridges the
+    # JobManager's worker-thread ProgressEvents to subscribed WS clients; the
+    # manager and hub share one instance so events published on the worker
+    # thread reach GET /ws/jobs/{job_id}.
+    progress_hub = ProgressHub()
+    app.state.progress_hub = progress_hub
+    app.state.job_manager = JobManager(progress_hub=progress_hub)
+    app.include_router(progress_ws_router)
+    # ── end S-109 ──
     app.mount("/static", StaticFiles(directory=str(_STATIC_DIR)), name="static")
     app.include_router(router)
     # ─── S-091 ERD region ───
