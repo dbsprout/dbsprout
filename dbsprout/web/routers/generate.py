@@ -169,7 +169,7 @@ async def generate_endpoint(request: Request, body: GenerateRequest) -> dict[str
     if not body.engine_is_known:
         allowed = ", ".join(sorted(_KNOWN_ENGINES))
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=f"Unknown engine {body.engine!r}. Supported engines: {allowed}.",
         )
 

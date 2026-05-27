@@ -80,3 +80,40 @@ def test_generate_defaults_when_body_empty(tmp_path: Path) -> None:
     resp = TestClient(app).post("/api/generate", json={})
     assert resp.status_code == 200, resp.text
     assert resp.json()["job_id"]
+
+
+# ── no-schema guard + input validation ─────────────────────────────────
+
+
+def test_generate_without_schema_is_4xx(tmp_path: Path) -> None:
+    app = _make_app(tmp_path / "state.db")  # no schema loaded
+    resp = TestClient(app).post("/api/generate", json={})
+    assert 400 <= resp.status_code < 500, resp.text
+    assert resp.status_code == 400
+    detail = resp.json()["detail"]
+    assert isinstance(detail, str)
+    assert "schema" in detail.lower()
+    assert "Traceback" not in resp.text
+
+
+def test_generate_unknown_engine_is_422(tmp_path: Path) -> None:
+    app = _make_app(tmp_path / "state.db")
+    _load_schema(app, tmp_path)
+    resp = TestClient(app).post("/api/generate", json={"engine": "bogus"})
+    assert resp.status_code == 422, resp.text
+    detail = resp.json()["detail"]
+    assert "bogus" in detail.lower() or "engine" in detail.lower()
+
+
+def test_generate_extra_field_is_422(tmp_path: Path) -> None:
+    app = _make_app(tmp_path / "state.db")
+    _load_schema(app, tmp_path)
+    resp = TestClient(app).post("/api/generate", json={"rows": 10})
+    assert resp.status_code == 422
+
+
+def test_generate_negative_seed_is_422(tmp_path: Path) -> None:
+    app = _make_app(tmp_path / "state.db")
+    _load_schema(app, tmp_path)
+    resp = TestClient(app).post("/api/generate", json={"seed": -1})
+    assert resp.status_code == 422
