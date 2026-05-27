@@ -140,8 +140,13 @@ def _parse_upload(content: bytes, suffix: str) -> DatabaseSchema:
     """Parse uploaded bytes by writing a temp file and reusing ``parse_schema_file``.
 
     The temp file lives only for the duration of the parse (``with`` block) and is
-    always removed, even on parse failure. Any parser exception is translated to a
-    friendly ``HTTPException(400)`` — no traceback reaches the client.
+    always removed, even on parse failure. The parsers raise ``ValueError`` on
+    malformed content (DBML wraps any underlying parse error; ``OSError`` covers
+    the file IO; Pydantic ``ValidationError`` is a ``ValueError`` subclass) —
+    these become a *detailed* friendly ``HTTPException(400)``. A final guard
+    catches any *unexpected* exception and returns a *generic* 400 with no
+    exception text, so a malfunctioning parser can never leak a traceback to the
+    client (AC: "no raw traceback").
     """
     import tempfile  # noqa: PLC0415 — stdlib, lazy for startup
     from pathlib import Path  # noqa: PLC0415
@@ -151,12 +156,18 @@ def _parse_upload(content: bytes, suffix: str) -> DatabaseSchema:
     with tempfile.NamedTemporaryFile(suffix=suffix, delete=True) as handle:
         handle.write(content)
         handle.flush()
+        path = Path(handle.name)
         try:
-            return parse_schema_file(Path(handle.name))
-        except (ValueError, OSError, FileNotFoundError) as exc:
+            return parse_schema_file(path)
+        except (ValueError, OSError) as exc:
             raise HTTPException(
                 status_code=400,
                 detail=f"Could not parse the uploaded schema: {exc}",
+            ) from exc
+        except Exception as exc:  # defensive: never leak a traceback to the client
+            raise HTTPException(
+                status_code=400,
+                detail="Could not parse the uploaded schema (unsupported or invalid format).",
             ) from exc
 
 

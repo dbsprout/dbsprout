@@ -205,6 +205,27 @@ def test_unparseable_content_rejected_400_no_traceback(tmp_path: Path) -> None:
     assert "Traceback" not in resp.text
 
 
+def test_unexpected_parser_exception_returns_generic_400(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A parser raising an *unexpected* type → generic 400, no detail/traceback leak."""
+    import dbsprout.schema.parsers as parsers_mod  # noqa: PLC0415
+
+    leak_marker = "INTERNAL-DETAIL-SHOULD-NOT-LEAK"
+
+    def _boom(*_args: object, **_kwargs: object) -> object:
+        raise RuntimeError(leak_marker)
+
+    # Patch the symbol the router imports inside _parse_upload.
+    monkeypatch.setattr(parsers_mod, "parse_schema_file", _boom)
+    client = _make_client(tmp_path / "state.db")
+    resp = _post_file(client, filename="schema.sql", content=_SAMPLE_DDL.encode())
+    assert resp.status_code == 400, resp.text
+    assert "detail" in resp.json()
+    assert leak_marker not in resp.text
+    assert "Traceback" not in resp.text
+
+
 # ── router registration contract ────────────────────────────────────────
 
 
