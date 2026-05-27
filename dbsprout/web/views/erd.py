@@ -91,30 +91,16 @@ def _build_table_details(schema: DatabaseSchema) -> dict[str, Any]:
     return result
 
 
-def _build_erd_with_clicks(schema: DatabaseSchema) -> str:
-    """Build the Mermaid erDiagram source augmented with click directives.
-
-    Calls :func:`dbsprout.report.erd.build_erd_mermaid` (S-082) for the base
-    diagram and appends one ``click <table> call erdTableClick`` directive per
-    table so Mermaid wires the table SVG node to the JS click handler.
-
-    ``report.erd`` is not modified — this module adds the directives in the
-    web layer only.
-    """
-    base = build_erd_mermaid(schema)
-    click_lines = [f"  click {table.name} call erdTableClick()" for table in schema.tables]
-    return base + "\n" + "\n".join(click_lines)
-
-
 @erd_router.get("/schema", response_class=Response)
 async def schema_erd(request: Request) -> Response:
     """Render the schema ERD from the latest snapshot.
 
     Reads the most recent ``DatabaseSchema`` snapshot, converts it to a Mermaid
-    ``erDiagram`` source string with click directives (S-091-F1), builds a
-    per-table detail JSON blob, and hands everything to ``schema.html`` for
-    client-side rendering.  Returns HTTP 200 with an empty-state message when no
-    snapshot exists.
+    ``erDiagram`` source string, builds a per-table detail JSON blob, and hands
+    everything to ``schema.html`` for client-side rendering. Click-to-detail is
+    bound in JS post-render (Mermaid 10.9.x erDiagram rejects ``click``
+    directives). Returns HTTP 200 with an empty-state message when no snapshot
+    exists.
     """
     import json  # noqa: PLC0415 — stdlib, lazy for startup speed
 
@@ -123,7 +109,10 @@ async def schema_erd(request: Request) -> Response:
     table_details_json: str | None = None
 
     if schema is not None:
-        erd_mermaid = _build_erd_with_clicks(schema)
+        # Plain erDiagram source — no Mermaid ``click`` directives: erDiagram in
+        # Mermaid 10.9.x rejects them ("Syntax error in text"). Click-to-detail
+        # is bound in JS post-render (schema.html) against the embedded JSON.
+        erd_mermaid = build_erd_mermaid(schema)
         table_details_json = json.dumps(_build_table_details(schema), separators=(",", ":"))
 
     return _templates(request).TemplateResponse(
