@@ -410,7 +410,7 @@ class TestUpsertDirectNoIgnoreWarning:
         with (
             patch("dbsprout.cli.commands.generate.console", test_console),
             patch(
-                "dbsprout.cli.commands.generate._resolve_writer",
+                "dbsprout.core.service.resolve_writer",
                 return_value=MagicMock(),
             ),
         ):
