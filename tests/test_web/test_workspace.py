@@ -18,7 +18,7 @@ from dbsprout.generate.orchestrator import GenerateResult
 from dbsprout.schema.models import ColumnSchema, ColumnType, DatabaseSchema, TableSchema
 from dbsprout.spec.models import DataSpec, GeneratorConfig, TableSpec
 from dbsprout.web.app import create_app
-from dbsprout.web.workspace import Workspace
+from dbsprout.web.workspace import Workspace, _mask_userinfo, _redact_url
 
 
 def _schema() -> DatabaseSchema:
@@ -111,13 +111,14 @@ def test_redacted_target_masks_password() -> None:
     assert "app" in redacted
 
 
-def test_redacted_target_fallback_masks_non_sqlalchemy_url() -> None:
+def test_redacted_target_masks_password_for_arbitrary_driver() -> None:
+    """SQLAlchemy's ``make_url`` is lenient and still masks unusual schemes."""
     ws = Workspace()
-    ws.set_target_url("weird://bob:hunter2@example.com/x")
+    ws.set_target_url("mongodb+srv://bob:hunter2@cluster.example.com/x")
     redacted = ws.redacted_target
     assert redacted is not None
     assert "hunter2" not in redacted
-    assert "example.com" in redacted
+    assert "cluster.example.com" in redacted
 
 
 def test_redacted_target_no_password_unchanged() -> None:
@@ -131,6 +132,29 @@ def test_clear_target_url() -> None:
     ws.set_target_url("postgresql://u:p@h/db")
     ws.clear_target_url()
     assert ws.redacted_target is None
+
+
+# ── redaction helpers (direct, incl. the stdlib fallback) ─────────────
+
+
+def test_redact_url_falls_back_when_sqlalchemy_cannot_parse() -> None:
+    """A string SQLAlchemy rejects routes through the stdlib mask (never raises)."""
+    # ``foo bar://`` has a space in the scheme → SQLAlchemy ``ArgumentError``;
+    # urlsplit also can't extract userinfo from it, so it returns unchanged —
+    # the point is the ``except`` branch is exercised and nothing leaks/raises.
+    assert _redact_url("foo bar://u:pw@h/x") == "foo bar://u:pw@h/x"
+
+
+def test_mask_userinfo_masks_password_with_port() -> None:
+    assert _mask_userinfo("redis://user:secret@host:6379/0") == "redis://user:***@host:6379/0"
+
+
+def test_mask_userinfo_masks_password_without_username() -> None:
+    assert _mask_userinfo("redis://:secret@host/0") == "redis://***@host/0"
+
+
+def test_mask_userinfo_passes_through_when_no_password() -> None:
+    assert _mask_userinfo("redis://host/0") == "redis://host/0"
 
 
 # ── reset ─────────────────────────────────────────────────────────────
