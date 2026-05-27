@@ -38,6 +38,7 @@ from dbsprout.web.routes import router
 from dbsprout.web.views.erd import erd_router
 from dbsprout.web.views.insights import insights_router
 from dbsprout.web.views.progress import progress_router
+from dbsprout.web.workspace import Workspace
 
 _PACKAGE_DIR = Path(__file__).resolve().parent
 _TEMPLATES_DIR = _PACKAGE_DIR / "templates"
@@ -102,6 +103,11 @@ def create_app(
     app.state.templates = Jinja2Templates(directory=str(_TEMPLATES_DIR))
     app.state.get_state_db = lambda: StateDB(resolved)
     app.state.get_snapshot_store = lambda: SnapshotStore(base_dir=resolved_snapshots)
+    # ─── S-111 in-memory session ───
+    # Single-user localhost → exactly one Workspace instance per app, shared
+    # across stateless requests. No write routes yet (later stories).
+    app.state.workspace = Workspace()
+    # ─── end S-111 ───
     app.mount("/static", StaticFiles(directory=str(_STATIC_DIR)), name="static")
     app.include_router(router)
     # ─── S-091 ERD region ───
