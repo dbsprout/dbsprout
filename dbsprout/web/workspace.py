@@ -99,6 +99,11 @@ class Workspace:
 
         Returns the new :class:`~dbsprout.spec.models.DataSpec` and stores it.
         Raises :class:`ValueError` if no spec is loaded.
+
+        ``model_copy(update=...)`` does **not** re-run Pydantic validation — it
+        is a low-level structural copy. Callers (the future spec-edit route) are
+        responsible for validating ``changes`` at their input boundary before
+        calling this; this setter intentionally trusts already-validated input.
         """
         if self.spec is None:
             msg = "no spec loaded; call set_spec() first"
@@ -143,3 +148,16 @@ class Workspace:
         self.last_result = None
         self.source = None
         self._target_url = None
+
+    def __repr__(self) -> str:
+        """Safe repr — the target URL appears redacted, never in clear.
+
+        Defends against accidental ``log.info(workspace)`` ever leaking the raw
+        connection string (the AC requires it is never logged in clear).
+        """
+        return (
+            f"Workspace(schema={'set' if self.schema else None}, "
+            f"spec={'set' if self.spec else None}, "
+            f"last_result={'set' if self.last_result else None}, "
+            f"source={self.source!r}, target={self.redacted_target!r})"
+        )

@@ -177,6 +177,26 @@ def test_reset_clears_all_state() -> None:
     assert ws.redacted_target is None
 
 
+# ── repr never leaks credentials ──────────────────────────────────────
+
+
+def test_repr_redacts_target_url() -> None:
+    ws = Workspace()
+    ws.set_target_url("postgresql://admin:SUPERSECRET@db:5432/prod")
+    text = repr(ws)
+    assert "SUPERSECRET" not in text
+    assert "***" in text
+    assert "db:5432/prod" in text
+
+
+def test_repr_does_not_dump_schema_contents() -> None:
+    ws = Workspace()
+    ws.set_schema(_schema())
+    assert repr(ws) == (
+        "Workspace(schema=set, spec=None, last_result=None, source=None, target=None)"
+    )
+
+
 # ── app.state wiring ──────────────────────────────────────────────────
 
 
