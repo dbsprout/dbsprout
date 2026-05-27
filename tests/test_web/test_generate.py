@@ -237,6 +237,44 @@ async def test_generate_second_submit_while_active_is_409(
     await app.state.job_manager.wait(first_id)
 
 
+# ── _scrub credential helper (direct unit tests) ───────────────────────
+
+
+def test_scrub_no_target_returns_message_unchanged() -> None:
+    """With no workspace target, the message passes through untouched."""
+    from dbsprout.web.routers.generate import _scrub  # noqa: PLC0415
+
+    assert _scrub("boom: something failed", None) == "boom: something failed"
+
+
+def test_scrub_masks_url_and_password() -> None:
+    from dbsprout.web.routers.generate import _scrub  # noqa: PLC0415
+
+    raw = "postgresql://bob:hunter2@h:5432/db"
+    out = _scrub(f"failed reaching {raw} (pw hunter2)", raw)
+    assert "hunter2" not in out  # bare password also scrubbed
+    assert "bob:***" in out
+
+
+def test_scrub_url_without_password_is_left_intact() -> None:
+    """A passwordless URL has nothing to mask; the message is returned unchanged."""
+    from dbsprout.web.routers.generate import _scrub  # noqa: PLC0415
+
+    raw = "sqlite:///tmp/x.db"
+    msg = f"failed reaching {raw}"
+    assert _scrub(msg, raw) == msg
+
+
+def test_scrub_malformed_url_does_not_raise() -> None:
+    """A target SQLAlchemy cannot parse falls back to a no-op password scrub
+    (the redactor masks what it can) without raising."""
+    from dbsprout.web.routers.generate import _scrub  # noqa: PLC0415
+
+    raw = "not a url at all"
+    out = _scrub("some error text", raw)
+    assert isinstance(out, str)  # never raises
+
+
 # ── router registration on the app ──────────────────────────────────────
 
 
