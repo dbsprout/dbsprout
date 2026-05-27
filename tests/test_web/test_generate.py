@@ -235,3 +235,44 @@ async def test_generate_second_submit_while_active_is_409(
 
     release.set()
     await app.state.job_manager.wait(first_id)
+
+
+# ── router registration on the app ──────────────────────────────────────
+
+
+def test_generate_route_registered_on_app(tmp_path: Path) -> None:
+    app = _make_app(tmp_path / "state.db")
+    paths = {getattr(r, "path", "") for r in app.routes}
+    assert "/api/generate" in paths
+
+
+# ── lazy-import contract: importing the router pulls no heavy modules ────
+
+
+def test_generate_router_has_no_eager_heavy_imports() -> None:
+    """Importing the router must not pull the generation pipeline / config model
+    into the CLI startup path (heavy imports are lazy inside the handler/closure),
+    preserving the ``dbsprout serve`` lazy-import contract (mirrors S-108's probe)."""
+    import subprocess  # noqa: PLC0415
+    import sys  # noqa: PLC0415
+
+    probe = (
+        "import sys\n"
+        "import dbsprout.web.routers.generate  # noqa: F401\n"
+        "bad = [m for m in ("
+        "    'dbsprout.generate.orchestrator',"
+        "    'dbsprout.core.service',"
+        "    'dbsprout.config.models',"
+        ") if m in sys.modules]\n"
+        "print(bad)\n"
+    )
+    result = subprocess.run(  # noqa: S603 - fixed argv, trusted interpreter
+        [sys.executable, "-c", probe],
+        capture_output=True,
+        text=True,
+        check=True,
+        timeout=60,
+    )
+    assert result.stdout.strip() == "[]", (
+        f"generate router eagerly imported heavy modules: {result.stdout.strip()}"
+    )
