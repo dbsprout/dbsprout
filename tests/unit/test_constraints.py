@@ -59,6 +59,39 @@ class TestSingleColumnUnique:
         assert len(emails) == len(set(emails)), f"Duplicates found: {emails}"
 
 
+class TestSingleColumnPrimaryKeyDedup:
+    def test_pk_deduped_from_table_primary_key_when_column_flag_unset(self) -> None:
+        """A single-column PK must be deduplicated based on ``table.primary_key``,
+        even when the per-column ``primary_key`` flag is False.
+
+        Regression: a stale/non-introspected schema can carry
+        ``table.primary_key=['id']`` while the column's ``primary_key`` flag is
+        ``False`` (e.g. an older snapshot). The integrity validator keys off
+        ``table.primary_key`` and would flag duplicates, so the enforcer must
+        use the same source — otherwise it silently emits duplicate PKs.
+        """
+        table = TableSchema(
+            name="users",
+            columns=[
+                # Inconsistent on purpose: column flag is False, but the table
+                # declares ``id`` as its primary key (matches the stale snapshot).
+                _col("id", nullable=False, pk=False, autoincrement=False),
+                _col("email", nullable=False, data_type=ColumnType.VARCHAR),
+            ],
+            primary_key=["id"],
+        )
+        rows = [
+            {"id": 1, "email": "a@example.com"},
+            {"id": 1, "email": "b@example.com"},  # duplicate PK value
+            {"id": 2, "email": "c@example.com"},
+        ]
+
+        result = enforce_constraints(table, rows, seed=42)
+
+        ids = [r["id"] for r in result]
+        assert len(ids) == len(set(ids)), f"Duplicate PKs remain: {ids}"
+
+
 class TestCompositeUnique:
     def test_composite_unique_index_enforced(self) -> None:
         """Composite UNIQUE index must have no duplicate tuples."""
