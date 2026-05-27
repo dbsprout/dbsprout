@@ -34,6 +34,7 @@ from fastapi.templating import Jinja2Templates
 
 from dbsprout.migrate.snapshot import SnapshotStore
 from dbsprout.state.db import StateDB
+from dbsprout.web.routers.schema_load import schema_load_router
 from dbsprout.web.routes import router
 from dbsprout.web.views.erd import erd_router
 from dbsprout.web.views.insights import insights_router
@@ -122,6 +123,11 @@ def create_app(
     # state DB.
     app.include_router(insights_router)
     # ─── end S-093 ───
+    # ── S-113 schema-load router ──
+    # POST /api/schema/load — multipart upload parsed via the existing parsers,
+    # result stored on app.state.workspace (S-111).
+    app.include_router(schema_load_router)
+    # ── end S-113 ──
     return app
 
 
