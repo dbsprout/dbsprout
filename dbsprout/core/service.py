@@ -13,8 +13,9 @@ raise plain exceptions (``ValueError`` and the domain ``dbsprout.errors.*``).
 This module imports NO ``typer``, ``rich``, or ``fastapi``. Where the CLI used
 to interleave a ``console.print`` warning with a pipeline step, the relevant
 facade function returns the warning *string* in its result object and the
-caller decides how to surface it. (Live progress callbacks / cancellation are
-deliberately out of scope — that is S-107.)
+caller decides how to surface it. (Live progress callbacks / cooperative
+cancellation are now wired in via S-107: ``generate`` forwards an optional
+``progress_callback`` and ``cancel_token`` to ``orchestrate``.)
 
 Stage layering (``schema/ <- spec/ <- generate/ -> output/``) is unchanged: the
 facade sits ABOVE the stages, exactly where the CLI sits.
@@ -31,8 +32,11 @@ from dbsprout.plugins.dispatch import resolve_writer
 from dbsprout.quality.integrity import IntegrityReport, validate_integrity
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from dbsprout.cli.sources import SchemaSource
     from dbsprout.config.models import DBSproutConfig
+    from dbsprout.generate.progress import CancelToken, ProgressEvent
     from dbsprout.quality.detection import DetectionReport
     from dbsprout.quality.fidelity import FidelityReport
     from dbsprout.schema.models import DatabaseSchema
@@ -110,11 +114,18 @@ def generate(  # noqa: PLR0913
     engine: str = "heuristic",
     reference_data: dict[str, list[dict[str, Any]]] | None = None,
     lora_path: Path | None = None,
+    progress_callback: Callable[[ProgressEvent], None] | None = None,
+    cancel_token: CancelToken | Callable[[], bool] | None = None,
 ) -> GenerateResult:
     """Run the full generation pipeline (the single seam over ``orchestrate``).
 
     A thin pass-through so every surface shares one generation entry point.
     Semantics are byte-identical to calling ``orchestrate`` directly.
+
+    ``progress_callback`` and ``cancel_token`` (S-107) are optional live-progress
+    / cooperative-cancel hooks forwarded verbatim to ``orchestrate`` so a caller
+    (the web UI) can stream progress and cancel a running job. Both default to
+    ``None``; when unset, output is byte-identical (parity).
     """
     return orchestrate(
         schema,
@@ -124,6 +135,8 @@ def generate(  # noqa: PLR0913
         engine=engine,
         reference_data=reference_data,
         lora_path=lora_path,
+        progress_callback=progress_callback,
+        cancel_token=cancel_token,
     )
 
 

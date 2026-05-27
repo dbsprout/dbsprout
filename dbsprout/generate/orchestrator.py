@@ -12,14 +12,17 @@ from graphlib import CycleError
 from typing import TYPE_CHECKING, Any, cast
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
     from pathlib import Path
 
     from dbsprout.config.models import DBSproutConfig
+    from dbsprout.generate.progress import CancelToken
     from dbsprout.schema.models import DatabaseSchema
     from dbsprout.spec.providers.base import SpecUsage
 
 from dbsprout.generate.constraints import enforce_constraints
 from dbsprout.generate.fk_sampling import sample_fk_values
+from dbsprout.generate.progress import GenerationCancelled, ProgressEvent, _is_cancelled
 from dbsprout.plugins.dispatch import resolve_engine
 from dbsprout.schema.graph import FKGraph, resolve_cycles
 from dbsprout.spec.heuristics import map_columns
@@ -58,12 +61,25 @@ def orchestrate(  # noqa: PLR0913
     engine: str = "heuristic",
     reference_data: dict[str, list[dict[str, Any]]] | None = None,
     lora_path: Path | None = None,
+    progress_callback: Callable[[ProgressEvent], None] | None = None,
+    cancel_token: CancelToken | Callable[[], bool] | None = None,
 ) -> GenerateResult:
     """Run the full generation pipeline.
 
     ``reference_data`` is consumed only by the ``statistical`` engine
     (per-table sample rows used to fit the Gaussian copula). Returns a
     ``GenerateResult`` with generated data and stats.
+
+    ``progress_callback`` (S-107), when given, is called with a
+    :class:`~dbsprout.generate.progress.ProgressEvent` per table — once before
+    a table is generated (``table_start``) and once after
+    (``table_done``) — so a caller (e.g. the web UI) can stream live progress.
+    ``cancel_token`` is a cooperative cancel checked at the top of the per-table
+    loop; it may be an object with ``is_cancelled() -> bool`` or a zero-arg
+    callable returning ``True`` to cancel. On cancel,
+    :class:`~dbsprout.generate.progress.GenerationCancelled` is raised. When both
+    are ``None`` (the default) generation takes the original code path and output
+    is byte-identical (parity).
     """
     start = time.monotonic()
 
@@ -79,8 +95,17 @@ def orchestrate(  # noqa: PLR0913
     selection = _select_engines(engine, schema, seed, lora_path)
     parent_data: dict[str, list[dict[str, Any]]] = {}
     timings: list[tuple[str, int, int]] = []
+    tables_total = sum(
+        1
+        for t in insertion_order
+        if not _is_excluded(t, config) and schema.get_table(t) is not None
+    )
+    tables_done = 0
+    running_rows = 0
 
     for table_name in insertion_order:
+        if _is_cancelled(cancel_token):
+            raise GenerationCancelled(tables_done=tables_done, tables_total=tables_total)
         if _is_excluded(table_name, config):
             continue
 
@@ -88,14 +113,22 @@ def orchestrate(  # noqa: PLR0913
         if table_schema is None:
             continue
 
+        _emit(
+            progress_callback,
+            phase="table_start",
+            table=table_name,
+            tables_done=tables_done,
+            tables_total=tables_total,
+            rows_in_table=0,
+            total_rows=running_rows,
+        )
         num_rows = _get_row_count(table_name, config, default_rows)
         _guard_row_count(table_name, num_rows, config)
-        mappings = all_mappings.get(table_name, {})
         table_start = time.perf_counter_ns()
         rows = _generate_rows(
             selection,
             table_schema,
-            mappings,
+            all_mappings.get(table_name, {}),
             num_rows,
             (reference_data or {}).get(table_name, []),
         )
@@ -105,6 +138,17 @@ def orchestrate(  # noqa: PLR0913
 
         parent_data[table_name] = rows
         timings.append((table_name, len(rows), table_ms))
+        tables_done += 1
+        running_rows += len(rows)
+        _emit(
+            progress_callback,
+            phase="table_done",
+            table=table_name,
+            tables_done=tables_done,
+            tables_total=tables_total,
+            rows_in_table=len(rows),
+            total_rows=running_rows,
+        )
 
     duration = time.monotonic() - start
     total_rows = sum(len(rows) for rows in parent_data.values())
@@ -118,6 +162,35 @@ def orchestrate(  # noqa: PLR0913
         duration_seconds=round(duration, 3),
         table_timings=tuple(timings),
         spec_usage=selection.spec_usage,
+    )
+
+
+def _emit(  # noqa: PLR0913 — flat keyword args mirror the ProgressEvent fields 1:1
+    callback: Callable[[ProgressEvent], None] | None,
+    *,
+    phase: str,
+    table: str,
+    tables_done: int,
+    tables_total: int,
+    rows_in_table: int,
+    total_rows: int,
+) -> None:
+    """Build and dispatch a :class:`ProgressEvent`; a no-op when *callback* is None.
+
+    Guarding on ``callback is None`` is what preserves byte-parity: with no
+    callback no event object is ever constructed and the loop is unchanged.
+    """
+    if callback is None:
+        return
+    callback(
+        ProgressEvent(
+            phase=phase,
+            table=table,
+            tables_done=tables_done,
+            tables_total=tables_total,
+            rows_in_table=rows_in_table,
+            total_rows=total_rows,
+        )
     )
 
 
