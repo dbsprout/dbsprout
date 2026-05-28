@@ -564,6 +564,45 @@ class TestColumnUpdateWriter:
         assert isinstance(result, ColumnUpdateResult)
         assert result.rows_updated == 1
 
+    def test_refuses_positional_args(self) -> None:
+        with pytest.raises(TypeError, match="keyword arguments"):
+            ColumnUpdateWriter().write("engine_placeholder")  # type: ignore[call-overload]
+
+
+class TestUnsafeIdentifierDirect:
+    """Exercise the identifier-guard branch directly via crafted schemas.
+
+    The public API runs ``schema.get_table`` first, so an unsafe *table*
+    name normally hits the ``unknown_table`` guard. To prove the identifier
+    guard itself fires, we register a schema whose PK column name is
+    structurally unsafe — that bypasses the column/PK guards and routes
+    straight to ``_safe_ident``.
+
+    We can't actually build such a ``DatabaseSchema`` because Pydantic's
+    identifier validator rejects path-traversal characters; instead we call
+    the private ``_safe_ident`` helper directly to lock the contract.
+    """
+
+    def test_safe_ident_rejects_injection_payload(self) -> None:
+        from dbsprout.output.column_update import _safe_ident  # noqa: PLC0415
+
+        with pytest.raises(ColumnUpdateError) as exc:
+            _safe_ident("users; DROP TABLE users--")
+        assert exc.value.code == "unsafe_identifier"
+
+    def test_safe_ident_rejects_whitespace(self) -> None:
+        from dbsprout.output.column_update import _safe_ident  # noqa: PLC0415
+
+        with pytest.raises(ColumnUpdateError) as exc:
+            _safe_ident("good name")
+        assert exc.value.code == "unsafe_identifier"
+
+    def test_safe_ident_accepts_valid(self) -> None:
+        from dbsprout.output.column_update import _safe_ident  # noqa: PLC0415
+
+        assert _safe_ident("users") == '"users"'
+        assert _safe_ident("my_table_2") == '"my_table_2"'
+
 
 class TestPluginRegistration:
     def test_registered_under_outputs_group(self) -> None:

@@ -244,7 +244,7 @@ def update_column(
                 )
     except ColumnUpdateError:
         raise
-    except Exception as exc:  # pragma: no cover — exact branch covered by mock
+    except Exception as exc:
         raise ColumnUpdateError("update_failed", table=table, detail=type(exc).__name__) from exc
 
     duration = time.perf_counter() - start
