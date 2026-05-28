@@ -1,13 +1,69 @@
-{# ── S-117 console panel placeholder ──
-   The run / log console is owned by S-125 (console progress over the S-109
-   WebSocket). This placeholder reserves the slot + ids so future content can
-   stream into ``#studio-console-body`` via either a Jinja block override or
-   the existing ``/ws/jobs/{job_id}`` channel. #}
-<div class="flex flex-col h-full">
+{# ── S-117 / S-125 / S-126 console panel ──
+   Run / log console. The full live-tail is owned by S-125 (console progress
+   over the S-109 WebSocket). S-126 adds the **Cancel button slot** here so the
+   user can abort the active generate job: an Alpine component holds the
+   currently-active ``jobId`` (populated by S-125's live tail via a
+   ``studio:job-started`` CustomEvent), reveals the button while a job is
+   running, and POSTs ``/api/jobs/{job_id}/cancel`` on click.
+
+   The button disables itself immediately after the request fires (``cancelling``
+   flag) so a double-click cannot issue two cancels. A 4xx response surfaces a
+   short error and re-enables the button so the user can retry; a 2xx leaves
+   it disabled until the WS stream's terminal frame clears ``jobId``.
+
+   S-125's wave-merge can replace ``#studio-console-body`` content (the live
+   tail) without disturbing this control — the Alpine root + the cancel
+   button's stable id (``studio-cancel-button``) are the integration seam. #}
+<div
+  class="flex flex-col h-full"
+  x-data="{
+    jobId: null,
+    cancelling: false,
+    error: null,
+    async cancel() {
+      if (!this.jobId || this.cancelling) return;
+      this.cancelling = true;
+      this.error = null;
+      try {
+        const resp = await fetch(`/api/jobs/${this.jobId}/cancel`, { method: 'POST' });
+        if (!resp.ok) {
+          const body = await resp.json().catch(() => ({ detail: resp.statusText }));
+          this.error = body.detail || `Cancel failed (${resp.status})`;
+          this.cancelling = false;
+        }
+      } catch (e) {
+        this.error = String(e);
+        this.cancelling = false;
+      }
+    }
+  }"
+  x-on:studio:job-started.window="jobId = $event.detail?.job_id ?? null; cancelling = false; error = null;"
+  x-on:studio:job-ended.window="jobId = null; cancelling = false;"
+>
   <div class="flex items-center justify-between mb-2">
     <h2 class="text-sm font-semibold uppercase opacity-70">Run console</h2>
-    <span class="badge badge-ghost badge-sm" id="studio-console-status">idle</span>
+    <div class="flex items-center gap-2">
+      <span class="badge badge-ghost badge-sm" id="studio-console-status">idle</span>
+      <button
+        id="studio-cancel-button"
+        data-testid="studio-cancel-button"
+        type="button"
+        class="btn btn-xs btn-error"
+        x-show="jobId"
+        x-bind:disabled="cancelling"
+        x-on:click="cancel()"
+      >
+        <span x-show="!cancelling">Cancel</span>
+        <span x-show="cancelling">Cancelling…</span>
+      </button>
+    </div>
   </div>
+  <p
+    class="text-xs text-error mb-2"
+    role="alert"
+    x-show="error"
+    x-text="error"
+  ></p>
   <div
     id="studio-console-body"
     class="font-mono text-xs bg-base-300 rounded p-2 overflow-y-auto flex-1 min-h-[6rem]"
