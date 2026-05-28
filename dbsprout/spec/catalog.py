@@ -193,9 +193,96 @@ _METHOD_PARAMS: dict[str, frozenset[str]] = {
 
 # ── per-method human description ──────────────────────────────────────────
 
+#: Curated one-liners surfaced on the Studio picker tooltip + method pill
+#: ``title=``. Keyed by **method name only** because the description is
+#: provider-agnostic in practice (``mimesis.email`` and any plugin's
+#: ``email`` mean the same thing to the user). When a method is missing
+#: from this map we fall back to a topical default below.
+_METHOD_DESCRIPTIONS: dict[str, str] = {
+    # Numeric.
+    "random_int": "Random integer drawn uniformly between min and max.",
+    "random_float": "Random float drawn uniformly between min and max.",
+    "random_decimal": "Random fixed-point decimal with given precision and scale.",
+    "age": "Realistic human age as an integer (0 to 120).",
+    "latitude": "Random latitude in degrees (-90 to 90).",
+    "longitude": "Random longitude in degrees (-180 to 180).",
+    "price": "Random monetary amount as a float.",
+    "version": "Semantic version string (e.g. '1.4.2').",
+    # Bool.
+    "random_bool": "Random boolean (True or False with equal probability).",
+    # Strings.
+    "random_string": "Random alphanumeric string up to max_length.",
+    "random_text": "Multi-word random text, suitable for descriptions.",
+    "text": "Lorem-ipsum style sentence or paragraph.",
+    "title": "Short title-cased phrase suitable for headings.",
+    "slug": "URL-safe slug derived from words (lowercase, hyphenated).",
+    "word": "Single lowercase word from the locale dictionary.",
+    "username": "Plausible username (letters, digits, dots/underscores).",
+    "password": "Random password (mixed case + digits + symbols).",
+    "first_name": "Person's first / given name.",
+    "last_name": "Person's last / family name.",
+    "full_name": "Person's full name (first + last).",
+    "email": "Valid-looking email address (e.g. 'user@example.com').",
+    "phone": "Phone number in a locale-aware format.",
+    "url": "Random HTTPS URL with realistic host and path.",
+    "address": "Multi-line postal address.",
+    "street_address": "Street number + street name.",
+    "city": "City name from the configured locale.",
+    "state": "State / province / region name.",
+    "zip_code": "Postal / ZIP code in a locale-aware format.",
+    "country": "Country name in English.",
+    "country_code": "ISO 3166-1 alpha-2 country code (e.g. 'US').",
+    "currency_code": "ISO 4217 currency code (e.g. 'USD').",
+    "credit_card": "Plausible (but invalid) credit-card number.",
+    "credit_card_expiry": "Card expiry month / year string.",
+    "cvv": "3- or 4-digit card verification value.",
+    "ssn": "US Social Security Number-shaped string.",
+    "national_id": "Locale-aware national identifier string.",
+    "avatar_url": "Random avatar image URL.",
+    "image_url": "Random image URL pointing at a placeholder service.",
+    "filename": "Plausible filename with extension.",
+    "mime_type": "MIME content-type (e.g. 'application/json').",
+    "ip_address": "Random IPv4 / IPv6 address.",
+    "mac_address": "Random hardware MAC address.",
+    "user_agent": "Browser User-Agent header value.",
+    "hex_color": "Random hex colour code (e.g. '#1aff4d').",
+    "locale": "BCP 47 locale tag (e.g. 'en_US').",
+    "timezone": "IANA timezone name (e.g. 'Europe/London').",
+    "gender": "Gender label (locale-aware vocabulary).",
+    "category": "Random category label from the vocabulary list.",
+    "role": "Application role label (e.g. 'admin', 'user').",
+    "status": "Status label (e.g. 'active', 'pending').",
+    "priority": "Priority label (e.g. 'low', 'high').",
+    "sku": "Stock Keeping Unit identifier.",
+    "reference_code": "Generic reference / tracking code.",
+    "token": "Opaque random token (URL-safe).",
+    "hash": "Random hex hash digest.",
+    # Temporal.
+    "random_date": "Random calendar date.",
+    "random_datetime": "Random datetime (date + time).",
+    "random_time": "Random time of day.",
+    "datetime": "Locale-aware random datetime.",
+    "date_of_birth": "Plausible date of birth (date column).",
+    # Special.
+    "uuid4": "Random UUID v4 identifier (RFC 4122).",
+    "random_choice": "Pick uniformly from the enum_values list.",
+    # Structured fallbacks.
+    "random_json": "Random JSON document.",
+    "random_bytes": "Random binary blob (BLOB-style column).",
+    "random_list": "Random list / array value.",
+}
+
 
 def _describe(provider: str, method: str) -> str:
-    """Return a short, user-facing description for ``provider.method``."""
+    """Return a short, user-facing description for ``provider.method``.
+
+    Looks up :data:`_METHOD_DESCRIPTIONS` first (curated copy), and falls
+    back to ``"<Provider> <method spaced>"`` so plugin-supplied methods
+    that haven't been classified still surface *something* on the UI.
+    """
+    curated = _METHOD_DESCRIPTIONS.get(method)
+    if curated:
+        return curated
     return f"{provider.capitalize()} {method.replace('_', ' ')}"
 
 

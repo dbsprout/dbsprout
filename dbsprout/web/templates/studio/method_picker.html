@@ -80,9 +80,23 @@
                 :data-provider="entry.provider"
                 :data-method="entry.method"
                 :title="entry.description"
+                :aria-describedby="'method-desc-' + entry.provider + '-' + entry.method"
+                @focus="hoveredDescription = entry.description"
+                @mouseenter="hoveredDescription = entry.description"
                 @click="apply(entry)"
               >
                 <span x-text="entry.method"></span>
+                {#
+                  Off-screen description used by ``aria-describedby``. The
+                  same text is duplicated into the ``title=`` attribute for
+                  hover-based UAs; this span keeps assistive tech happy
+                  without pushing the visual layout (sr-only).
+                #}
+                <span
+                  class="sr-only"
+                  :id="'method-desc-' + entry.provider + '-' + entry.method"
+                  x-text="entry.description"
+                ></span>
               </button>
             </template>
           </div>
@@ -92,6 +106,30 @@
       <p x-show="!loading && !error && allEntries.length === 0" class="text-xs opacity-70 py-4">
         No methods available for this column's dtype.
       </p>
+
+      {#
+        S-123 footer:
+          * ``hoveredDescription`` mirrors the focus / hover description for
+            sighted users who can't see the native ``title`` tooltip yet —
+            it's a quiet visual reinforcement, not a replacement.
+          * ``field-descriptions`` is a JSON island carrying the Pydantic
+            ``GeneratorConfig`` field tooltips. The Alpine component reads
+            this on init so it can render a tooltip next to each config
+            field when the picker eventually grows a params editor. The
+            element is referenced by id, so the JSON-island contract is
+            stable for downstream stories.
+      #}
+      <p
+        x-show="hoveredDescription"
+        x-cloak
+        class="text-xs opacity-70 mt-3 border-t border-base-300 pt-2"
+        aria-live="polite"
+        x-text="hoveredDescription"
+      ></p>
+      <script
+        id="field-descriptions"
+        type="application/json"
+      >{{ field_descriptions() | tojson }}</script>
     </div>
   </div>
 </div>
@@ -109,10 +147,25 @@
       error: '',
       target: null, // {table, column, method, provider, dtype}
       allEntries: [],
+      // S-123: mirrors the focused / hovered entry's description so the
+      // footer can show it as a quiet visual reinforcement of the native
+      // ``title`` tooltip. Reset on open/close.
+      hoveredDescription: '',
+      // S-123: parsed map of ``GeneratorConfig`` field tooltips, loaded
+      // once from the ``#field-descriptions`` JSON island.
+      fieldDescriptions: {},
 
       init() {
-        // Nothing to do on mount; data fetch is deferred to open() so we
-        // re-fetch with the column dtype each time.
+        // Parse the field-description JSON island once. Failures are
+        // non-fatal — the picker stays usable without the tooltip footer.
+        try {
+          const el = document.getElementById('field-descriptions');
+          if (el && el.textContent) {
+            this.fieldDescriptions = JSON.parse(el.textContent);
+          }
+        } catch (_e) {
+          this.fieldDescriptions = {};
+        }
       },
 
       open(detail) {
@@ -125,12 +178,14 @@
         };
         this.visible = true;
         this.error = '';
+        this.hoveredDescription = '';
         this.fetchCatalogue();
       },
 
       close() {
         this.visible = false;
         this.target = null;
+        this.hoveredDescription = '';
       },
 
       title() {

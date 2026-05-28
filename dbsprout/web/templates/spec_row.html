@@ -1,5 +1,5 @@
 {#
-  Per-column row fragment (S-119 + S-120).
+  Per-column row fragment (S-119 + S-120 + S-123).
 
   Shared partial used by:
     * ``spec_grid.html`` (S-118) — full grid render via ``{% include %}``.
@@ -21,7 +21,17 @@
       ``data-provider=`` / ``data-dtype=`` on the inner pill button.
       ``data-dtype`` was added by S-120 so the method-picker can filter
       its catalogue to methods that apply to this column's type.
+
+  S-123 additions:
+    * ``title="<human description>"`` on the pill button — hover tooltip.
+    * ``aria-describedby="<unique span id>"`` + a sibling hidden span
+      carrying the same text — keyboard / screen-reader path.
+    * Description text is computed via the ``describe_method`` Jinja
+      global registered in ``dbsprout.web.app.create_app``; the catalogue
+      in ``dbsprout.spec.catalog`` is the single source of truth.
 #}
+{% set _pill_id = 'desc-' ~ table_name ~ '-' ~ col_name %}
+{% set _method_desc = describe_method(col_cfg.provider, col_cfg.method) if col_cfg.method else (col_cfg.provider ~ ' (no method set yet)') %}
 <div
   class="grid grid-cols-12 gap-2 items-center py-1"
   data-column="{{ table_name }}.{{ col_name }}"
@@ -38,6 +48,8 @@
     data-method="{{ col_cfg.method or '' }}"
     data-provider="{{ col_cfg.provider }}"
     data-dtype="{{ col_dtype or '' }}"
+    title="{{ _method_desc }}"
+    aria-describedby="{{ _pill_id }}"
     @click="window.dispatchEvent(new CustomEvent('studio:open-method-picker', { detail: { table: '{{ table_name }}', column: '{{ col_name }}', method: '{{ col_cfg.method or '' }}', provider: '{{ col_cfg.provider }}', dtype: '{{ col_dtype or '' }}' } }))"
     aria-label="Edit generator for {{ table_name }}.{{ col_name }}"
   >
@@ -45,4 +57,10 @@
       {{ col_cfg.provider }}{% if col_cfg.method %} · {{ col_cfg.method }}{% endif %}
     </span>
   </button>
+  {#
+    Off-screen description for ``aria-describedby``. ``sr-only`` keeps the
+    text out of the visual layout (long descriptions can't push columns) but
+    leaves it readable by assistive tech and focus-based UA tooltips.
+  #}
+  <span id="{{ _pill_id }}" class="sr-only">{{ _method_desc }}</span>
 </div>

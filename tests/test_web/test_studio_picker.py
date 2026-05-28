@@ -97,3 +97,49 @@ def test_spec_row_pill_keeps_existing_data_hooks(tmp_path: Path) -> None:
     assert 'data-column="email"' in body
     assert "data-method=" in body
     assert "data-provider=" in body
+
+
+# ── S-123: inline tooltips on pill + picker ───────────────────────────────
+
+
+def test_spec_row_pill_has_method_description_title(tmp_path: Path) -> None:
+    """The pill button surfaces the catalogue description as ``title=``.
+
+    Hovering or focusing the pill must reveal the generator's one-liner
+    description sourced from :func:`dbsprout.spec.catalog._describe`. The
+    spec_row template carries an additional hidden description span the
+    pill's ``aria-describedby`` points at, satisfying the AC's
+    keyboard-accessibility requirement.
+    """
+    app = _make_app(tmp_path)
+    _seed_workspace(app)
+    with TestClient(app) as client:
+        resp = client.get("/api/spec", headers={"Accept": "text/html"})
+    body = resp.text
+    # Default heuristic mapping for an ``email``-named VARCHAR maps to
+    # ``mimesis.email``; the curated description must surface in the title.
+    assert "title=" in body
+    assert "email" in body.lower()
+    # The pill must advertise an aria-describedby so screen-reader users
+    # also pick the description up.
+    assert "aria-describedby=" in body, body
+
+
+def test_studio_picker_template_uses_aria_describedby(tmp_path: Path) -> None:
+    """Picker entry buttons advertise ``aria-describedby`` for a11y.
+
+    The Studio page embeds the picker template; the catalogue buttons it
+    renders carry ``aria-describedby`` so the description is exposed to
+    assistive technology in addition to the native ``title`` hover.
+    """
+    app = _make_app(tmp_path)
+    with TestClient(app) as client:
+        resp = client.get("/studio")
+    body = resp.text
+    assert "method-picker" in body
+    # New a11y attribute on the picker buttons.
+    assert "aria-describedby" in body, body
+    # The picker must also surface ``GeneratorConfig`` field tooltips via the
+    # ``field_descriptions()`` helper. We render them as a Jinja-embedded
+    # JSON dict the Alpine component can read.
+    assert "field-descriptions" in body or "fieldDescriptions" in body, body

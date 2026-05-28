@@ -160,3 +160,28 @@ def test_get_generators_empty_dtype_returns_full_catalogue(tmp_path: Path) -> No
     keys = {(m["provider"], m["method"]) for m in resp.json()["methods"]}
     assert ("mimesis", "email") in keys
     assert ("builtin", "random_int") in keys
+
+
+# ── S-123: human-readable descriptions for the picker tooltip ─────────────
+
+
+def test_known_methods_have_human_descriptions(tmp_path: Path) -> None:
+    """The API echoes the curated descriptions added in S-123.
+
+    The Studio picker uses ``entry.description`` as the ``title=`` tooltip
+    on each method button. Make sure at least the high-traffic methods
+    return descriptions richer than the legacy ``"Mimesis email"`` placeholder.
+    """
+    app = _make_app(tmp_path)
+    with TestClient(app) as client:
+        resp = client.get("/api/generators")
+    assert resp.status_code == 200
+    by_key = {(m["provider"], m["method"]): m["description"] for m in resp.json()["methods"]}
+    # ``email`` description should mention "email" and be longer than the
+    # legacy provider-cap placeholder.
+    email_desc = by_key[("mimesis", "email")]
+    assert "email" in email_desc.lower()
+    assert len(email_desc) > len("Mimesis email"), email_desc
+    # ``random_int`` should reference integers.
+    int_desc = by_key[("builtin", "random_int")]
+    assert "integer" in int_desc.lower(), int_desc
