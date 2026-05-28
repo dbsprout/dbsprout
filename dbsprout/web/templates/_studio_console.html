@@ -1,0 +1,19 @@
+{# ── S-117 console panel placeholder ──
+   The run / log console is owned by S-125 (console progress over the S-109
+   WebSocket). This placeholder reserves the slot + ids so future content can
+   stream into ``#studio-console-body`` via either a Jinja block override or
+   the existing ``/ws/jobs/{job_id}`` channel. #}
+<div class="flex flex-col h-full">
+  <div class="flex items-center justify-between mb-2">
+    <h2 class="text-sm font-semibold uppercase opacity-70">Run console</h2>
+    <span class="badge badge-ghost badge-sm" id="studio-console-status">idle</span>
+  </div>
+  <div
+    id="studio-console-body"
+    class="font-mono text-xs bg-base-300 rounded p-2 overflow-y-auto flex-1 min-h-[6rem]"
+    role="log"
+    aria-live="polite"
+  >
+    <p class="opacity-50">No active run. Slot reserved for S-125 (console progress).</p>
+  </div>
+</div>
