@@ -42,6 +42,7 @@ from typing import TYPE_CHECKING, Any, cast
 from fastapi import APIRouter, HTTPException, Request, status
 
 if TYPE_CHECKING:
+    from fastapi import FastAPI
     from fastapi.responses import Response
     from fastapi.templating import Jinja2Templates
 
@@ -152,3 +153,159 @@ async def get_spec(request: Request) -> Response | dict[str, Any]:
             {"spec": spec, "empty_message": None},
         )
     return spec.model_dump(mode="json")
+
+
+# region: PUT table row_count (S-121)
+#
+# ``PUT /api/spec/tables/{table_name}`` — set the row count for a single
+# table on the workspace spec. The route lives in its own region block so the
+# sibling S-119 (column PUT) can be union-merged without conflicts: it touches
+# only this region + the matching ``Workspace.update_table_row_count`` helper.
+#
+# Validation:
+#   * body must be JSON ``{"row_count": <int>}``,
+#   * ``row_count`` ∈ [1, upper_bound] — anything else → 422 with
+#     ``{"code": "INVALID_ROW_COUNT", "message": …}``.
+#
+# Upper bound resolution: ``app.state.config.generation.max_rows_per_table``
+# when present and non-None, else ``_DEFAULT_UPPER_BOUND`` (10_000_000). The
+# bound is intentionally not surfaced to callers as a separate field — the
+# message embeds it.
+#
+# Content-negotiation: HTMX (``HX-Request: true``) or ``Accept: text/html``
+# returns the re-rendered ``_spec_table_header.html`` partial (200, text/html);
+# default JSON branch returns ``{"table_name": …, "row_count": <new>}``.
+#
+# No cache persistence here — S-122 owns that.
+
+#: Default upper bound for a single table's row_count. Keep in sync with the
+#: PRD (FR-014) and any explicit config override (see ``_resolve_upper_bound``).
+_DEFAULT_UPPER_BOUND: int = 10_000_000
+
+#: Detail body for the 422 envelope when ``row_count`` is missing / wrong type /
+#: out of bounds. The ``message`` is filled in per call; ``code`` is stable.
+_INVALID_ROW_COUNT_HINT = 'Send {"row_count": <int>} with 1 ≤ value ≤ upper bound.'
+
+
+def _resolve_upper_bound(app: FastAPI) -> int:
+    """Return the configured upper bound for table row_count.
+
+    Prefers ``app.state.config.generation.max_rows_per_table`` when the host
+    wires a :class:`~dbsprout.config.models.DBSproutConfig` onto the app; falls
+    back to :data:`_DEFAULT_UPPER_BOUND` otherwise. The fallback path keeps the
+    route working in the default localhost flow where no TOML config has been
+    loaded — the bound is a defence-in-depth limit, not a feature gate.
+    """
+    config = getattr(app.state, "config", None)
+    if config is None:
+        return _DEFAULT_UPPER_BOUND
+    generation = getattr(config, "generation", None)
+    if generation is None:
+        return _DEFAULT_UPPER_BOUND
+    bound = getattr(generation, "max_rows_per_table", None)
+    if bound is None:
+        return _DEFAULT_UPPER_BOUND
+    return int(bound)
+
+
+def _wants_html_response(request: Request) -> bool:
+    """Return ``True`` when an HTMX request OR ``Accept: text/html`` was sent."""
+    if request.headers.get("hx-request", "").lower() == "true":
+        return True
+    return _wants_html(request)
+
+
+def _invalid_row_count(message: str) -> HTTPException:
+    """Build the 422 envelope for any row_count validation failure."""
+    # 422 Unprocessable Content (FastAPI/Starlette renamed the constant in
+    # newer versions; use the literal to stay forward-compatible).
+    return HTTPException(
+        status_code=422,
+        detail={
+            "code": "INVALID_ROW_COUNT",
+            "message": message,
+            "hint": _INVALID_ROW_COUNT_HINT,
+        },
+    )
+
+
+def _validate_row_count(payload: Any, upper_bound: int) -> int:
+    """Validate the parsed JSON payload and return the row_count int.
+
+    Raises :class:`fastapi.HTTPException` (422 envelope) for any failure:
+    non-dict body, missing key, non-int / bool / float value, or value outside
+    ``[1, upper_bound]``.
+    """
+    if not isinstance(payload, dict):
+        raise _invalid_row_count("Request body must be a JSON object.")
+    if "row_count" not in payload:
+        raise _invalid_row_count("Missing required field 'row_count'.")
+    raw_value: object = payload["row_count"]
+    # ``bool`` is a subclass of ``int`` — reject it explicitly so True/False
+    # cannot be smuggled in as 1/0.
+    if isinstance(raw_value, bool) or not isinstance(raw_value, int):
+        raise _invalid_row_count("Field 'row_count' must be an integer.")
+    value: int = raw_value
+    if value < 1:
+        raise _invalid_row_count(
+            f"Field 'row_count' must be ≥ 1 (got {value}).",
+        )
+    if value > upper_bound:
+        raise _invalid_row_count(
+            f"Field 'row_count' must be ≤ {upper_bound} (got {value}).",
+        )
+    return value
+
+
+@spec_router.put("/api/spec/tables/{table_name}", response_model=None)
+async def put_table_row_count(
+    request: Request,
+    table_name: str,
+) -> Response | dict[str, Any]:
+    """Set the ``row_count`` for one table on the workspace spec (S-121).
+
+    See the region header above for the full contract. On the HTMX / HTML
+    branch, the response body is the ``_spec_table_header.html`` partial so
+    the Studio grid can swap the new value into ``[data-row-count]`` cleanly.
+    """
+    workspace = _workspace(request)
+    schema = workspace.get_schema()
+    if schema is None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=_NO_SCHEMA_DETAIL,
+        )
+
+    # Parse + validate body BEFORE touching the spec — bad input must not
+    # cause a heuristic build as a side effect.
+    try:
+        payload = await request.json()
+    except (ValueError, TypeError) as exc:
+        raise _invalid_row_count("Request body must be valid JSON.") from exc
+    upper_bound = _resolve_upper_bound(request.app)
+    row_count = _validate_row_count(payload, upper_bound)
+
+    # Lazily build/load the spec (same path as GET /api/spec) so the PUT
+    # works even if the client edits before reading.
+    _build_or_get_spec(workspace)
+    try:
+        new_value = workspace.update_table_row_count(table_name, row_count)
+    except KeyError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={
+                "code": "UNKNOWN_TABLE",
+                "message": f"Table {table_name!r} not found in spec.",
+            },
+        ) from exc
+
+    if _wants_html_response(request):
+        return _templates(request).TemplateResponse(
+            request,
+            "_spec_table_header.html",
+            {"table_name": table_name, "row_count": new_value},
+        )
+    return {"table_name": table_name, "row_count": new_value}
+
+
+# endregion: PUT table row_count (S-121)

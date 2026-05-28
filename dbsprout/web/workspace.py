@@ -29,7 +29,7 @@ from urllib.parse import urlsplit
 if TYPE_CHECKING:
     from dbsprout.generate.orchestrator import GenerateResult
     from dbsprout.schema.models import DatabaseSchema
-    from dbsprout.spec.models import DataSpec
+    from dbsprout.spec.models import DataSpec, TableSpec
 
 
 def _redact_url(url: str) -> str:
@@ -110,6 +110,42 @@ class Workspace:
             raise ValueError(msg)
         self.spec = self.spec.model_copy(update=changes)
         return self.spec
+
+    def update_table_row_count(self, table_name: str, row_count: int) -> int:
+        """Immutably replace one table's ``row_count`` in the loaded spec (S-121).
+
+        Looks up the matching :class:`~dbsprout.spec.models.TableSpec`, replaces
+        it with ``target.model_copy(update={"row_count": row_count})``, and
+        stores a fresh :class:`~dbsprout.spec.models.DataSpec` on the workspace
+        (table ordering preserved). Returns the new ``row_count``.
+
+        Raises:
+            ValueError: if no spec is loaded.
+            KeyError: if ``table_name`` is absent from the spec.
+
+        Like :meth:`update_spec`, ``model_copy`` does not re-run Pydantic
+        validation; callers (the PUT route in
+        :mod:`dbsprout.web.routers.spec`) are responsible for bounds checking
+        ``row_count`` at the input boundary before calling.
+        """
+        if self.spec is None:
+            msg = "no spec loaded; call set_spec() first"
+            raise ValueError(msg)
+        existing_tables = self.spec.tables
+        new_tables: list[TableSpec] = []
+        replaced = False
+        for table_spec in existing_tables:
+            if table_spec.table_name == table_name:
+                new_tables.append(
+                    table_spec.model_copy(update={"row_count": row_count}),
+                )
+                replaced = True
+            else:
+                new_tables.append(table_spec)
+        if not replaced:
+            raise KeyError(table_name)
+        self.spec = self.spec.model_copy(update={"tables": new_tables})
+        return row_count
 
     # ── last result ────────────────────────────────────────────────────
     def get_last_result(self) -> GenerateResult | None:
