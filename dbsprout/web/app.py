@@ -39,6 +39,7 @@ from dbsprout.web.jobs import JobManager, JobRecord
 from dbsprout.web.progress import ProgressHub, progress_ws_router
 from dbsprout.web.routers.connect import connect_router
 from dbsprout.web.routers.generate import generate_router
+from dbsprout.web.routers.jobs import jobs_router
 from dbsprout.web.routers.preview import preview_router
 from dbsprout.web.routers.schema import schema_router
 from dbsprout.web.routers.schema_load import schema_load_router
@@ -197,6 +198,13 @@ def create_app(
     # over the schema in app.state.workspace (S-111); returns {job_id} at once.
     app.include_router(generate_router)
     # ── end S-124 ──
+    # ── S-126 cancel route ──
+    # POST /api/jobs/{job_id}/cancel — cooperative cancel for the active
+    # generate job; arms the S-107 cancel_token on the JobManager (S-108).
+    # Lives in its own module so the S-125 parallel branch (Studio console
+    # live tail) does not collide on the generate router.
+    app.include_router(jobs_router)
+    # ── end S-126 ──
     # ── S-147 preview route ──
     # GET /api/preview/{table}?limit=N — bounded JSON sample of generated rows
     # from app.state.workspace.last_result (populated by POST /api/generate,

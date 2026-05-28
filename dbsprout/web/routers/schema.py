@@ -45,7 +45,8 @@ from typing import TYPE_CHECKING, Any, cast
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import Response
 
-from dbsprout.web.views.erd import _build_erd_with_clicks, _build_table_details
+from dbsprout.report.erd import build_erd_mermaid
+from dbsprout.web.views.erd import _build_table_details
 
 if TYPE_CHECKING:
     from fastapi.templating import Jinja2Templates
@@ -123,7 +124,7 @@ async def schema_erd_fragment(request: Request) -> Response:
     table_details_json: str | None = None
 
     if schema is not None:
-        erd_mermaid = _build_erd_with_clicks(schema)
+        erd_mermaid = build_erd_mermaid(schema)
         table_details_json = json.dumps(_build_table_details(schema), separators=(",", ":"))
 
     return _templates(request).TemplateResponse(
