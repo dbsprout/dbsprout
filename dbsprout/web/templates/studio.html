@@ -13,6 +13,15 @@
      ``{jobId}`` once POST /api/generate returns, and the factory opens the
      S-109 /ws/jobs/{job_id} WebSocket from there. #}
   <script src="/static/studio_console.js"></script>
+  {# ── S-132: per-column method-swap → instant re-preview pipeline ──
+     Listens for ``studio:row-rerendered`` window events (dispatched by
+     the S-120 method picker on successful row swap), debounces per
+     column (~150 ms), POSTs ``/api/regenerate``, then GETs
+     ``/api/preview/{table}`` and dispatches ``studio:preview-updated``
+     / ``studio:preview-error`` so any preview-grid UI can subscribe.
+     ``defer`` so the file is parsed before DOMContentLoaded; the
+     bootstrap below attaches the listener once the global is ready. #}
+  <script defer src="/static/spec_grid_rerender.js"></script>
   <script>
     /* Tiny bridge: when a script elsewhere on the page (e.g. the generate
        submit handler) calls window.dispatchEvent(new CustomEvent(
@@ -23,6 +32,15 @@
     window.studioJobStart = function (jobId) {
       window.dispatchEvent(new CustomEvent('studio:job-start', { detail: { jobId: jobId } }));
     };
+
+    /* S-132 boot: attach the spec-grid re-preview listener once the
+       module is on ``window``. We defer until DOMContentLoaded because
+       the module script itself is loaded with ``defer``. */
+    document.addEventListener('DOMContentLoaded', function () {
+      if (typeof window.attachSpecGridRerender === 'function') {
+        window.attachSpecGridRerender();
+      }
+    });
   </script>
 {% endblock %}
 

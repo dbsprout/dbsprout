@@ -264,6 +264,18 @@
             if (target) {
               target.outerHTML = html;
             }
+            /* S-132 seam: tell the per-column re-preview pipeline the
+               picker just swapped a row, so it can debounce-then-regen
+               + re-fetch the preview slice for this one column.
+               Other components can also subscribe to this event. */
+            window.dispatchEvent(new CustomEvent('studio:row-rerendered', {
+              detail: {
+                table: this.target.table,
+                column: this.target.column,
+                method: entry.method,
+                provider: entry.provider,
+              },
+            }));
             this.close();
           })
           .catch((err) => {
