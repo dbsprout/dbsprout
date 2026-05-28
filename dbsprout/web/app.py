@@ -49,6 +49,7 @@ from dbsprout.web.routers.schema_load import schema_load_router
 from dbsprout.web.routers.spec import spec_router
 from dbsprout.web.routers.studio import studio_router
 from dbsprout.web.routers.validate import validate_router
+from dbsprout.web.routers.wizard import wizard_router
 from dbsprout.web.routes import router
 from dbsprout.web.views.erd import erd_router
 from dbsprout.web.views.insights import insights_router
@@ -286,6 +287,16 @@ def create_app(
     # ``data-column`` / ``data-row`` row attributes so S-135 can wire drill-down.
     app.include_router(validate_router)
     # ── end S-133 ──
+    # ── S-142 wizard ──
+    # GET /wizard renders the 6-step guided shell (Connect → Review →
+    # Configure → Generate → Validate → Insert/Export); GET /wizard/step/{n}
+    # returns the HTMX body fragment for step n; POST /wizard/step/{n}
+    # persists the submission to app.state.workspace.wizard_state (S-142
+    # frozen Pydantic model) and advances / rewinds / jumps. Step bodies are
+    # placeholders here — S-143 (Wave 2) wires the real per-step flows
+    # without restructuring the shell or the navigation contract.
+    app.include_router(wizard_router)
+    # ── end S-142 ──
     return app
 
 

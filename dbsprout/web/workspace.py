@@ -27,6 +27,8 @@ import logging
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urlsplit
 
+from dbsprout.web.wizard_state import WizardState
+
 if TYPE_CHECKING:
     from dbsprout.generate.orchestrator import GenerateResult
     from dbsprout.schema.models import DatabaseSchema
@@ -99,6 +101,11 @@ class Workspace:
         # pay nothing, and the default location can still be overridden via
         # :meth:`set_spec_cache` for app-level wiring.
         self._spec_cache: SpecCache | None = spec_cache
+        # S-142: per-session 6-step wizard state. Frozen Pydantic model; updates
+        # go through :meth:`update_wizard_state` which swaps a new instance via
+        # ``model_copy`` (never mutated in place). Defaults are current_step=1,
+        # no completed steps, empty per-step bag.
+        self.wizard_state: WizardState = WizardState()
 
     # ── schema ─────────────────────────────────────────────────────────
     def get_schema(self) -> DatabaseSchema | None:
@@ -365,6 +372,23 @@ class Workspace:
         """
         self._reference_data = data
 
+    # ── wizard state (S-142) ───────────────────────────────────────────
+    def update_wizard_state(self, **changes: object) -> WizardState:
+        """Replace ``wizard_state`` with an immutably-copied instance.
+
+        Mirrors :meth:`update_spec` — applies
+        ``WizardState.model_copy(update=changes)`` to the current state and
+        re-binds the attribute. Returns the new, stored :class:`WizardState`.
+
+        The router has already validated ``changes`` (action / target form
+        fields are translated into the right ``current_step`` /
+        ``completed_steps`` / ``step_data`` deltas at the input boundary). As
+        with :meth:`update_spec`, ``model_copy(update=...)`` does **not** re-run
+        Pydantic validation, so this setter trusts already-validated input.
+        """
+        self.wizard_state = self.wizard_state.model_copy(update=changes)
+        return self.wizard_state
+
     # ── lifecycle ──────────────────────────────────────────────────────
     def reset(self) -> None:
         """Clear all session state back to empty."""
@@ -375,6 +399,8 @@ class Workspace:
         self.source = None
         self._target_url = None
         self._reference_data = None
+        # S-142: wizard goes back to the start of the flow on reset.
+        self.wizard_state = WizardState()
 
     def __repr__(self) -> str:
         """Safe repr — the target URL appears redacted, never in clear.
