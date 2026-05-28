@@ -195,17 +195,24 @@ def test_controls_absent_when_no_snapshot(tmp_path: Path) -> None:
     assert 'id="erd-columns-toggle"' not in body
 
 
-# ── Task 4: Click-to-detail — Mermaid click directives + panel ────────
+# ── Task 4: Click-to-detail — JS-bound (no Mermaid click directives) ──
 
 
-def test_mermaid_click_directives_present(tmp_path: Path) -> None:
-    """Server embeds Mermaid click directives for each table in the erDiagram."""
+def test_no_mermaid_click_directives(tmp_path: Path) -> None:
+    """Mermaid 10.9.6's erDiagram parser rejects ``click`` directives (raises
+    "Syntax error in text"), breaking the whole diagram. The served source must
+    NOT contain them; click-to-detail is bound in JS post-render instead.
+    """
     snap_dir = tmp_path / "snapshots"
     SnapshotStore(base_dir=snap_dir).save(_small_schema())
 
     body = _make_client(snap_dir).get("/schema").text
-    assert "click users" in body
-    assert "click orders" in body
+    assert "erDiagram" in body
+    # The breaking Mermaid directive form must be absent from the diagram source.
+    assert "click users call" not in body
+    assert "click orders call" not in body
+    # Click-to-detail is still wired via the JS callback, bound after render.
+    assert "erdTableClick" in body
 
 
 def test_detail_panel_element_present_with_snapshot(tmp_path: Path) -> None:
@@ -238,8 +245,10 @@ def test_empty_state_still_200_no_broken_js(tmp_path: Path) -> None:
     assert 'id="erd-table-data"' not in body
 
 
-def test_wide_schema_has_all_click_directives(tmp_path: Path) -> None:
-    """Large schema: all 22 tables get Mermaid click directives."""
+def test_wide_schema_renders_all_entities_without_click_directives(tmp_path: Path) -> None:
+    """Large schema: all 22 tables appear as erDiagram entities, and none get a
+    Mermaid ``click`` directive (unsupported in 10.9.x — would break the diagram).
+    """
     snap_dir = tmp_path / "snapshots"
     schema = _wide_schema(22)
     SnapshotStore(base_dir=snap_dir).save(schema)
@@ -247,7 +256,10 @@ def test_wide_schema_has_all_click_directives(tmp_path: Path) -> None:
     body = _make_client(snap_dir).get("/schema").text
     for i in range(22):
         table_name = f"table_{i:02d}"
-        assert f"click {table_name}" in body, f"Missing click directive for {table_name}"
+        assert table_name in body, f"Missing entity for {table_name}"
+        assert f"click {table_name} call" not in body, (
+            f"Unexpected Mermaid click directive for {table_name}"
+        )
 
 
 def test_wide_schema_json_blob_has_all_tables(tmp_path: Path) -> None:

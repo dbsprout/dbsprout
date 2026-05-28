@@ -201,6 +201,24 @@
           if (!window.mermaid) return;
           window.mermaid.run().then(function () {
             var svg = document.querySelector("#erd svg");
+
+            // ── Click-to-detail binding ──────────────────────────────────
+            // Mermaid 10.9.x erDiagram has no `click` directive, so bind the
+            // handler here instead. Each entity-title <text> equals its table
+            // name; bind its enclosing <g> to the existing detail handler.
+            if (svg) {
+              svg.querySelectorAll("text").forEach(function (t) {
+                var name = (t.textContent || "").trim();
+                if (!tableData[name]) return;
+                var node = t.closest("g");
+                if (!node) return;
+                node.style.cursor = "pointer";
+                node.addEventListener("click", function () {
+                  window.erdTableClick(name);
+                });
+              });
+            }
+
             if (svg && window.svgPanZoom) {
               // Remove fixed dimensions so pan/zoom can resize freely
               svg.removeAttribute("width");
