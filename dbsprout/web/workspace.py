@@ -29,7 +29,7 @@ from urllib.parse import urlsplit
 if TYPE_CHECKING:
     from dbsprout.generate.orchestrator import GenerateResult
     from dbsprout.schema.models import DatabaseSchema
-    from dbsprout.spec.models import DataSpec, TableSpec
+    from dbsprout.spec.models import DataSpec, GeneratorConfig, TableSpec
 
 
 def _redact_url(url: str) -> str:
@@ -146,6 +146,64 @@ class Workspace:
             raise KeyError(table_name)
         self.spec = self.spec.model_copy(update={"tables": new_tables})
         return row_count
+
+    def update_column(
+        self,
+        table: str,
+        column: str,
+        config: GeneratorConfig,
+    ) -> GeneratorConfig:
+        """Replace one column's ``GeneratorConfig`` on the loaded spec (S-119).
+
+        The swap is **immutable**: a new ``TableSpec`` is built via
+        :meth:`pydantic.BaseModel.model_copy` with the updated ``columns``
+        mapping, and a new ``DataSpec`` is built with the table list swapped.
+        Both frozen models are replaced, never mutated; the workspace's
+        ``spec`` attribute is reassigned to the new ``DataSpec``.
+
+        The router has already validated ``config`` against
+        :class:`~dbsprout.spec.models.GeneratorConfig` (Pydantic v2) and run
+        the referential-integrity guard
+        (:func:`dbsprout.spec.constraints.check_column_update`). This helper
+        trusts that contract — it does not re-validate.
+
+        Args:
+            table: target ``TableSpec.table_name``.
+            column: key in the table's ``columns`` mapping.
+            config: the already-validated replacement.
+
+        Returns:
+            The freshly-stored :class:`~dbsprout.spec.models.GeneratorConfig`.
+
+        Raises:
+            LookupError: when no spec is loaded, the table is not in the
+                spec, or the column is not on that table. The router maps
+                these to ``404 Not Found`` for the caller.
+        """
+        if self.spec is None:
+            msg = "no spec loaded; call set_spec() first"
+            raise LookupError(msg)
+
+        # Locate the target ``TableSpec`` while preserving table order.
+        new_tables: list[TableSpec] = []
+        found_table = False
+        for ts in self.spec.tables:
+            if ts.table_name != table:
+                new_tables.append(ts)
+                continue
+            found_table = True
+            if column not in ts.columns:
+                msg = f"unknown column {column!r} on table {table!r}"
+                raise LookupError(msg)
+            new_columns = {**ts.columns, column: config}
+            new_tables.append(ts.model_copy(update={"columns": new_columns}))
+
+        if not found_table:
+            msg = f"unknown table {table!r}"
+            raise LookupError(msg)
+
+        self.spec = self.spec.model_copy(update={"tables": new_tables})
+        return config
 
     # ── last result ────────────────────────────────────────────────────
     def get_last_result(self) -> GenerateResult | None:

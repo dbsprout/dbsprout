@@ -1,0 +1,41 @@
+{#
+  Per-column row fragment (S-119).
+
+  Shared partial used by:
+    * ``spec_grid.html`` (S-118) — full grid render via ``{% include %}``.
+    * ``PUT /api/spec/tables/{t}/columns/{c}`` (S-119) — HTMX fragment swap
+      after an edit, so the studio grid can hot-swap a single row without
+      re-rendering the whole grid.
+
+  Context contract:
+    * ``table_name`` — string, e.g. ``"users"``.
+    * ``col_name``   — string, e.g. ``"email"``.
+    * ``col_cfg``    — :class:`~dbsprout.spec.models.GeneratorConfig`.
+
+  Stable hooks the spec-edit endpoint relies on (do not rename):
+    * ``data-column="<table>.<column>"`` on the row wrapper.
+    * ``data-table=`` / ``data-column=`` / ``data-method=`` / ``data-provider=``
+      on the inner pill button.
+#}
+<div
+  class="grid grid-cols-12 gap-2 items-center py-1"
+  data-column="{{ table_name }}.{{ col_name }}"
+  title="{{ col_name }}"
+>
+  <span class="col-span-7 text-sm truncate" title="{{ col_name }}">
+    {{ col_name }}
+  </span>
+  <button
+    type="button"
+    class="col-span-5 badge badge-outline text-xs justify-start truncate cursor-pointer"
+    data-table="{{ table_name }}"
+    data-column="{{ col_name }}"
+    data-method="{{ col_cfg.method or '' }}"
+    data-provider="{{ col_cfg.provider }}"
+    aria-label="Edit generator for {{ table_name }}.{{ col_name }}"
+  >
+    <span class="truncate">
+      {{ col_cfg.provider }}{% if col_cfg.method %} · {{ col_cfg.method }}{% endif %}
+    </span>
+  </button>
+</div>
