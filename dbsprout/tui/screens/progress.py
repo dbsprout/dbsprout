@@ -300,7 +300,18 @@ class ProgressScreen(Static):
         yield DataTable(id="progress-table")
 
     def on_mount(self) -> None:
-        """Set up columns, do an immediate poll, then poll periodically."""
+        """Set up columns, do an immediate poll, then poll periodically.
+
+        Mount setup is made idempotent. On Textual 8.x the mount handler can
+        fire more than once for the same widget; without a guard the second
+        pass re-adds the columns and re-runs the initial render, so a snapshot
+        that should produce N rows ends up with 2*N rows (the duplicate-row
+        regression: a two-table snapshot rendered 4 rows instead of 2). The
+        ``_columns_ready`` guard ensures column setup and the initial render
+        happen exactly once, so later snapshots update rows in place.
+        """
+        if self._columns_ready:
+            return
         table = self.query_one("#progress-table", DataTable)
         self._column_keys = table.add_columns(*_COLUMNS)
         table.cursor_type = "row"
