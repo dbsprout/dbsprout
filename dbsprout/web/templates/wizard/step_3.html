@@ -1,9 +1,36 @@
 {#
-  ── S-142 placeholder · Step 3 (Configure) ──────────────────────────────
-  S-143 wires this into the spec grid (S-118/S-119/S-121). Placeholder
-  body keeps the shell wired and testable until then.
+  ── S-143 · Step 3 (Configure) ───────────────────────────────────────────
+  Embeds the S-118 spec grid via ``GET /api/spec`` with ``Accept: text/html``
+  (the same content negotiation Studio uses). Per-row method picks land via
+  ``PUT /api/spec/tables/{t}/columns/{c}`` (S-119); per-cell method swaps go
+  through the S-120 ``method_picker`` Alpine island which we mount once here.
+
+  The ``data-wizard="true"`` attribute lets the global ``spec_grid_rerender.js``
+  hook stay no-op outside the Studio shell — the wizard does not need the
+  per-column re-preview hot-reload pipeline.
 ── #}
 {% extends "wizard/_step_base.html" %}
 {% block content %}
-  <p>Step 3 — Configure your data spec. (Coming soon — S-143 wires this step.)</p>
+  <div data-wizard="true" class="space-y-3">
+    <p class="text-sm opacity-80">
+      Tune per-column generators, distributions, and row counts. The picker
+      swaps generator methods inline; the spec persists to <code>.dbsprout/cache</code>
+      so reloading the page keeps your edits.
+    </p>
+    <div
+      id="wizard-spec-grid-slot"
+      class="card bg-base-100 shadow p-3"
+      hx-get="/api/spec"
+      hx-headers='{"Accept": "text/html"}'
+      hx-trigger="load"
+      hx-swap="innerHTML"
+    >
+      <div class="text-xs opacity-60">Loading spec grid…</div>
+    </div>
+
+    {# Mount the shared method picker so the per-row pills can dispatch
+       ``studio:open-method-picker`` events. The picker is page-level Alpine
+       — including it once here matches the Studio shell pattern. #}
+    {% include "studio/method_picker.html" %}
+  </div>
 {% endblock %}

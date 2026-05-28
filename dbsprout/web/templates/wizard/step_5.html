@@ -1,9 +1,38 @@
 {#
-  ── S-142 placeholder · Step 5 (Validate) ───────────────────────────────
-  S-143 wires this to POST /api/validate (S-133). Placeholder body keeps
-  the shell wired and testable until then.
+  ── S-143 · Step 5 (Validate) ────────────────────────────────────────────
+  Triggers ``POST /api/validate`` on load (S-133/S-134) and swaps the returned
+  ``_validate_panel.html`` fragment in place. The fragment surfaces integrity,
+  fidelity, and detection blocks, and ``S-135`` wires the per-violation
+  drill-down dispatch.
+
+  The hidden ``validated`` form field is the gate's signal: when the user
+  clicks Next, the standard wizard form sends ``validated=true`` along with
+  ``action=next``. The router merges that into ``WizardState.step_data[5]``
+  *before* evaluating ``can_advance_from``, so a freshly-validated panel
+  unlocks the Next click without a second round-trip.
 ── #}
 {% extends "wizard/_step_base.html" %}
+{% block extra_fields %}
+  {# The wizard form (in ``_step_base.html``) is the same DOM as the Next
+     button. Tucking the hidden flag here means the gate sees ``validated=true``
+     the moment the user clicks Next on this step. #}
+  <input type="hidden" name="validated" value="true" />
+{% endblock %}
 {% block content %}
-  <p>Step 5 — Validate the generated data. (Coming soon — S-143 wires this step.)</p>
+  <div data-wizard="true" class="space-y-3">
+    <p class="text-sm opacity-80">
+      Integrity, fidelity, and detection metrics across the last run. Drill
+      into any violation by clicking its row. When the report looks clean, click
+      Next to insert into a target or export to a file.
+    </p>
+    <div
+      id="wizard-validate-slot"
+      class="card bg-base-100 shadow p-3"
+      hx-post="/api/validate"
+      hx-trigger="load"
+      hx-swap="innerHTML"
+    >
+      <div class="text-xs opacity-60">Validating last generation result…</div>
+    </div>
+  </div>
 {% endblock %}

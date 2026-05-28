@@ -33,6 +33,8 @@ from typing import TYPE_CHECKING, cast
 from fastapi import APIRouter, Form, HTTPException, Request
 from fastapi.responses import RedirectResponse, Response
 
+from dbsprout.web.errors import raise_web_error, web_error_step_gate_blocked
+
 if TYPE_CHECKING:
     from fastapi.templating import Jinja2Templates
 
@@ -225,6 +227,20 @@ async def wizard_step_submit(
     extras = await _read_extras(request)
 
     if action == "next":
+        # S-143 step-gating: the gate evaluates the workspace + any extras the
+        # current click carries (notably Step 5's hidden ``validated=true``
+        # field), so we fold extras into a *probe* state first and only then
+        # ask ``can_advance_from``. Persisting happens after the gate passes,
+        # so a blocked Next never mutates the workspace.
+        probe = state.model_copy(
+            update={"step_data": _merge_step_data(state.step_data, n, extras)},
+        )
+        if not probe.can_advance_from(n, ws):
+            missing = probe.missing_for(n, ws)
+            return raise_web_error(
+                request,
+                web_error_step_gate_blocked(step=n, missing=missing),
+            )
         new_completed = state.completed_steps | {n}
         new_current = _clamp_step(n + 1)
     elif action == "back":

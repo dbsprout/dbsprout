@@ -35,6 +35,7 @@ from dbsprout.web.errors import (
     web_error_file_too_large,
     web_error_internal,
     web_error_not_found_tables,
+    web_error_step_gate_blocked,
     web_error_unknown_parser,
 )
 
@@ -72,6 +73,8 @@ def test_web_error_code_enum_is_closed_set() -> None:
         "EXPORT_DEPENDENCY_MISSING",
         # S-139 update-column-route guard.
         "NO_REGEN",
+        # S-143 wizard step-gating guard.
+        "STEP_GATE_BLOCKED",
     }
     assert {m.name for m in WebErrorCode} == expected
     # Each code is a plain string so it round-trips through JSON unchanged.
@@ -429,3 +432,35 @@ def test_web_error_export_dependency_missing_envelope() -> None:
     assert "parquet" in err.message
     assert err.hint is not None
     assert "dbsprout[data]" in err.hint
+
+
+# ---------------------------------------------------------------------------
+# S-143 wizard step-gating factory helper.
+# ---------------------------------------------------------------------------
+
+
+def test_web_error_step_gate_blocked_envelope() -> None:
+    """400 with ``missing`` and ``step`` carried as top-level extras."""
+    err = web_error_step_gate_blocked(step=4, missing=["last_result"])
+    assert err.code is WebErrorCode.STEP_GATE_BLOCKED
+    assert err.status_code == 400
+    assert "4" in err.message
+    payload = err.to_dict()
+    assert payload["code"] == "STEP_GATE_BLOCKED"
+    assert payload["missing"] == ["last_result"]
+    assert payload["step"] == 4
+
+
+def test_web_error_step_gate_blocked_multi_missing() -> None:
+    """``missing`` round-trips a multi-element list verbatim."""
+    err = web_error_step_gate_blocked(step=5, missing=["last_result", "validation"])
+    payload = err.to_dict()
+    assert payload["missing"] == ["last_result", "validation"]
+    assert "validation" in err.message or err.hint is not None
+
+
+def test_web_error_step_gate_blocked_has_actionable_hint() -> None:
+    """The hint nudges the user to complete the missing artefact."""
+    err = web_error_step_gate_blocked(step=1, missing=["schema"])
+    assert err.hint is not None
+    assert "schema" in err.hint.lower() or "connect" in err.hint.lower()

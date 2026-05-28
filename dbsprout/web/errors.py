@@ -126,6 +126,12 @@ class WebErrorCode(str, Enum):
     # ``(table, column)`` pair — the caller must run the regenerate flow
     # first so there are fresh column values to push.
     NO_REGEN = "NO_REGEN"
+    # S-143 wizard step-gating guard — raised by ``POST /wizard/step/{n}``
+    # when ``action=next`` is rejected because the workspace lacks the
+    # artefact the next step needs (no schema, no spec, no last run, …).
+    # The envelope carries ``step`` + ``missing: [...]`` as top-level extras
+    # so the HTMX swap can render an actionable badge.
+    STEP_GATE_BLOCKED = "STEP_GATE_BLOCKED"
 
 
 @dataclass(frozen=True)
@@ -336,6 +342,11 @@ _CODE_HINTS: dict[WebErrorCode, str] = {
     WebErrorCode.NO_REGEN: (
         "POST /api/regenerate to produce fresh column values before pushing "
         "them to the target with POST /api/update-column."
+    ),
+    # S-143 — generic gating hint; the per-call factory always supplies a
+    # more specific one when only one artefact is missing.
+    WebErrorCode.STEP_GATE_BLOCKED: (
+        "Complete the highlighted action on the current step before advancing."
     ),
 }
 
@@ -724,6 +735,62 @@ def web_error_export_dependency_missing(fmt: str, extra: str) -> WebError:
 
 
 # ---------------------------------------------------------------------------
+# S-143 wizard step-gating factory helper.
+# ---------------------------------------------------------------------------
+
+
+#: Per-artefact hint copy. Single source of truth so the factory below and any
+#: future doc / panel can reuse the same friendly nudge per missing key.
+_STEP_GATE_HINTS: dict[str, str] = {
+    "schema": "Connect to a database or upload a schema file before continuing.",
+    "spec": "Open Step 3 and configure at least one column before continuing.",
+    "last_result": "Open Step 4 and run a generation job before continuing.",
+    "validation": "Run validation on Step 5 before continuing to insert / export.",
+}
+
+
+def web_error_step_gate_blocked(*, step: int, missing: list[str]) -> WebError:
+    """Surfaced when ``POST /wizard/step/{n}`` rejects a Next click (S-143).
+
+    The wizard router computes ``missing`` by calling
+    :meth:`dbsprout.web.wizard_state.WizardState.missing_for` and passes the
+    list verbatim into ``extras``; the HTMX swap can render one badge per
+    entry without re-parsing the human-readable ``message``.
+
+    Args:
+        step: The step the user tried to advance from (1..5; step 6 is the
+            final step and never blocks).
+        missing: Stable list of missing-artefact keys
+            (``"schema"`` / ``"spec"`` / ``"last_result"`` / ``"validation"``).
+            Multi-element lists are joined with " + " in the message; the
+            hint defaults to the single-artefact copy when only one is
+            missing, otherwise falls back to the generic gating hint.
+
+    Returns:
+        :class:`WebError` with code :class:`WebErrorCode.STEP_GATE_BLOCKED`,
+        status 400, ``hint`` keyed off the single-missing artefact when
+        available, and ``extras = {"step", "missing"}`` so JSON callers can
+        key off the structured fields without parsing the message.
+    """
+    joined = " + ".join(missing) if missing else "(unknown)"
+    message = (
+        f"Cannot advance from step {step}: missing {joined}. "
+        "Complete the highlighted action on the current step first."
+    )
+    if len(missing) == 1 and missing[0] in _STEP_GATE_HINTS:
+        hint: str | None = _STEP_GATE_HINTS[missing[0]]
+    else:
+        hint = _CODE_HINTS[WebErrorCode.STEP_GATE_BLOCKED]
+    return WebError(
+        code=WebErrorCode.STEP_GATE_BLOCKED,
+        message=message,
+        status_code=400,
+        hint=hint,
+        extras={"step": step, "missing": list(missing)},
+    )
+
+
+# ---------------------------------------------------------------------------
 # Renderer: HTMX-aware response, plus logging hook.
 # ---------------------------------------------------------------------------
 
@@ -813,6 +880,7 @@ __all__ = [
     "web_error_no_spec",
     "web_error_not_found",
     "web_error_not_found_tables",
+    "web_error_step_gate_blocked",
     "web_error_unknown_parser",
     "web_error_write_guard_rejected",
     "web_error_write_guard_required",
