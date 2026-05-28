@@ -87,6 +87,9 @@
                   data-table="{{ d.table }}"
                   data-column="{{ d.column }}"
                   data-row=""
+                  tabindex="0"
+                  role="button"
+                  aria-label="Focus {{ d.table }}.{{ d.column }}"
                 >
                   <td><span class="badge badge-outline">{{ d.check }}</span></td>
                   <td><code>{{ d.table }}</code></td>
@@ -101,3 +104,14 @@
     {% endif %}
   {% endif %}
 </div>
+{# ── S-135 boot: wire violation rows → studio:focus-cell window event.
+   The fragment self-bootstraps so HTMX swaps (POST /api/validate replaces
+   the panel in place) re-wire the dispatcher on each render. #}
+<script>
+  (function () {
+    var panel = document.getElementById('validate-panel');
+    if (panel && typeof window.attachFocusCell === 'function') {
+      window.attachFocusCell(panel);
+    }
+  })();
+</script>
