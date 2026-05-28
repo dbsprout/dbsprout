@@ -43,6 +43,15 @@ The sniffers themselves are not reimplemented — they live on the parser module
 and are reused verbatim. An explicit ``parser`` form-field **always** wins over
 both filename suffix and content sniff (S-113 contract preserved).
 
+Friendly errors (S-116)
+-----------------------
+Every failure path — oversize upload, empty file, unknown ``parser`` override,
+parse error, and the catch-all for unexpected exceptions — flows through the
+:mod:`dbsprout.web.errors` layer. Callers receive the typed envelope
+``{code, message, hint?, correlation_id}`` (JSON by default, HTML fragment when
+``HX-Request: true``); the route never leaks a traceback or absolute temp-file
+path to the wire.
+
 This module owns its own :class:`~fastapi.APIRouter` (``schema_load_router``),
 registered by ``create_app`` inside a delimited region. It stays import-light:
 stdlib helpers are imported lazily inside the handler to preserve CLI startup
@@ -53,8 +62,17 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Annotated, Any, cast
 
-from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
+from fastapi import APIRouter, File, Form, Request, UploadFile
 from fastapi.responses import JSONResponse
+
+from dbsprout.web.errors import (
+    classify_parse_error,
+    raise_web_error,
+    web_error_empty_file,
+    web_error_file_too_large,
+    web_error_internal,
+    web_error_unknown_parser,
+)
 
 if TYPE_CHECKING:
     from dbsprout.schema.models import DatabaseSchema
@@ -140,24 +158,23 @@ def _resolve_suffix(
     parser: str | None,
     *,
     content_head: bytes | None = None,
-) -> str:
+) -> str | None:
     """Pick the temp-file suffix: explicit ``parser`` > filename > content sniff.
 
-    A blank/whitespace ``parser`` is treated as "not provided". An unknown
-    explicit parser value raises ``HTTPException(400)``. With no override:
+    A blank/whitespace ``parser`` is treated as "not provided". With no override:
     first tries the filename suffix; if unknown/absent and ``content_head`` is
     given, sniffs the head bytes via the existing ``can_parse_*`` detectors
     (see :func:`_detect_suffix_from_content`); otherwise falls back to ``.sql``
     to match ``parse_schema_file``'s DDL behaviour.
+
+    An unknown explicit parser value returns ``None`` — the caller raises a
+    :class:`~dbsprout.web.errors.WebErrorCode.UNKNOWN_PARSER` envelope so the
+    typed-error path is the *only* path back to the client.
     """
     if parser is not None and parser.strip():
         suffix = _PARSER_SUFFIXES.get(parser.strip().lower())
         if suffix is None:
-            allowed = ", ".join(sorted(_PARSER_SUFFIXES))
-            raise HTTPException(
-                status_code=400,
-                detail=f"Unknown parser {parser!r}. Supported parsers: {allowed}.",
-            )
+            return None
         return suffix
 
     from pathlib import PurePosixPath  # noqa: PLC0415 — stdlib, lazy for startup
@@ -172,8 +189,8 @@ def _resolve_suffix(
     return ".sql"
 
 
-async def _read_capped(upload: UploadFile) -> bytes:
-    """Read the upload in chunks, aborting with 413 once the cap is exceeded.
+async def _read_capped(upload: UploadFile, request: Request) -> bytes | Any:
+    """Read the upload in chunks, surfacing 413 once the cap is exceeded.
 
     Reading-and-counting (rather than ``await upload.read()`` then checking
     ``len``) bounds the in-process ``bytes`` accumulated to ``_MAX_UPLOAD_BYTES``
@@ -189,27 +206,26 @@ async def _read_capped(upload: UploadFile) -> bytes:
             break
         total += len(chunk)
         if total > _MAX_UPLOAD_BYTES:
-            raise HTTPException(
-                status_code=413,
-                detail=(
-                    f"Uploaded file exceeds the {_MAX_UPLOAD_BYTES // (1024 * 1024)} MB limit."
-                ),
-            )
+            return raise_web_error(request, web_error_file_too_large(_MAX_UPLOAD_BYTES))
         chunks.append(chunk)
     return b"".join(chunks)
 
 
-def _parse_upload(content: bytes, suffix: str) -> DatabaseSchema:
+def _parse_upload(
+    request: Request,
+    content: bytes,
+    suffix: str,
+    filename: str | None,
+) -> DatabaseSchema | Any:
     """Parse uploaded bytes by writing a temp file and reusing ``parse_schema_file``.
 
     The temp file lives only for the duration of the parse (``with`` block) and is
-    always removed, even on parse failure. The parsers raise ``ValueError`` on
-    malformed content (DBML wraps any underlying parse error; ``OSError`` covers
-    the file IO; Pydantic ``ValidationError`` is a ``ValueError`` subclass) —
-    these become a *detailed* friendly ``HTTPException(400)``. A final guard
-    catches any *unexpected* exception and returns a *generic* 400 with no
-    exception text, so a malfunctioning parser can never leak a traceback to the
-    client (AC: "no raw traceback").
+    always removed, even on parse failure. ``ValueError`` / ``OSError`` from a
+    real parser become a :class:`~dbsprout.web.errors.WebErrorCode.PARSE_ERROR`
+    envelope; anything *unexpected* (a ``RuntimeError``, a Pydantic
+    ``ValidationError`` outside the parsers' contract, etc.) is downgraded to
+    :class:`~dbsprout.web.errors.WebErrorCode.INTERNAL` (500) with the real
+    exception logged at ``ERROR`` and a correlation id surfaced to the user.
     """
     import tempfile  # noqa: PLC0415 — stdlib, lazy for startup
     from pathlib import Path  # noqa: PLC0415
@@ -223,15 +239,9 @@ def _parse_upload(content: bytes, suffix: str) -> DatabaseSchema:
         try:
             return parse_schema_file(path)
         except (ValueError, OSError) as exc:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Could not parse the uploaded schema: {exc}",
-            ) from exc
-        except Exception as exc:  # defensive: never leak a traceback to the client
-            raise HTTPException(
-                status_code=400,
-                detail="Could not parse the uploaded schema (unsupported or invalid format).",
-            ) from exc
+            return raise_web_error(request, classify_parse_error(exc, filename), original=exc)
+        except Exception as exc:
+            return raise_web_error(request, web_error_internal(), original=exc)
 
 
 def _summary(schema: DatabaseSchema, source: str) -> dict[str, Any]:
@@ -249,27 +259,53 @@ async def load_schema_upload(
     request: Request,
     file: Annotated[UploadFile, File(description="Schema file to parse.")],
     parser: Annotated[str | None, Form(description="Optional parser override.")] = None,
-) -> JSONResponse:
+) -> Any:
     """Parse an uploaded schema file and store it in the session workspace.
 
     Returns a JSON summary (``table_count``, ``tables``, ``dialect``, ``source``)
-    on success. Rejects oversize uploads with ``413`` and unknown/unparseable
-    formats or empty uploads with ``400`` — always as a friendly JSON ``detail``,
-    never a traceback.
+    on success. Every failure mode flows through the S-116 error layer:
+
+    * oversize uploads → ``413 FILE_TOO_LARGE``;
+    * empty uploads → ``400 EMPTY_FILE``;
+    * unknown ``parser`` override → ``400 UNKNOWN_PARSER``;
+    * parser exceptions → ``400 PARSE_ERROR``;
+    * anything else → ``500 INTERNAL`` (with the original exception logged).
+
+    Bodies are JSON by default and an HTML fragment when ``HX-Request: true``;
+    no traceback ever reaches the wire.
     """
-    content = await _read_capped(file)
+    content_or_response = await _read_capped(file, request)
+    # An HTMX response from the cap path short-circuits the handler.
+    if not isinstance(content_or_response, bytes):
+        return content_or_response
+    content: bytes = content_or_response
+
     if not content.strip():
-        raise HTTPException(status_code=400, detail="Uploaded file is empty.")
+        return raise_web_error(request, web_error_empty_file(file.filename))
 
     # Resolve the suffix *after* reading so content sniffing has bytes to work
     # with when the filename suffix is unknown/absent. Explicit ``parser`` and
     # known filename suffixes never read ``content_head``.
     suffix = _resolve_suffix(file.filename, parser, content_head=content[:_SNIFF_HEAD_BYTES])
-    schema = _parse_upload(content, suffix)
-    source = f"upload:{file.filename}" if file.filename else "upload:<unnamed>"
+    if suffix is None:
+        assert parser is not None
+        return raise_web_error(request, web_error_unknown_parser(parser, sorted(_PARSER_SUFFIXES)))
 
+    schema_or_response = _parse_upload(request, content, suffix, file.filename)
+    # Same short-circuit pattern: an HTMX renderer can substitute a Response.
+    if not _is_database_schema(schema_or_response):
+        return schema_or_response
+    schema = cast("DatabaseSchema", schema_or_response)
+
+    source = f"upload:{file.filename}" if file.filename else "upload:<unnamed>"
     workspace = _workspace(request)
     workspace.set_schema(schema)
     workspace.set_source(source)
-
     return JSONResponse(_summary(schema, source))
+
+
+def _is_database_schema(obj: object) -> bool:
+    """Lazy isinstance check so the module never imports ``DatabaseSchema``."""
+    from dbsprout.schema.models import DatabaseSchema  # noqa: PLC0415
+
+    return isinstance(obj, DatabaseSchema)

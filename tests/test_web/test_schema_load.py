@@ -168,7 +168,11 @@ def test_oversize_upload_rejected_413(tmp_path: Path) -> None:
     oversize = b"x" * (schema_load._MAX_UPLOAD_BYTES + 1)
     resp = _post_file(client, filename="big.sql", content=oversize)
     assert resp.status_code == 413, resp.text
-    assert "detail" in resp.json()
+    detail = resp.json()["detail"]
+    # S-116 typed envelope.
+    assert isinstance(detail, dict)
+    assert detail["code"] == "FILE_TOO_LARGE"
+    assert "correlation_id" in detail
     assert "Traceback" not in resp.text
 
 
@@ -176,7 +180,10 @@ def test_empty_upload_rejected_400(tmp_path: Path) -> None:
     client = _make_client(tmp_path / "state.db")
     resp = _post_file(client, filename="empty.sql", content=b"")
     assert resp.status_code == 400, resp.text
-    assert "detail" in resp.json()
+    detail = resp.json()["detail"]
+    assert isinstance(detail, dict)
+    assert detail["code"] == "EMPTY_FILE"
+    assert "correlation_id" in detail
 
 
 # ── friendly errors (unknown parser, unparseable content) ───────────────
@@ -186,8 +193,10 @@ def test_unknown_parser_value_rejected_400(tmp_path: Path) -> None:
     client = _make_client(tmp_path / "state.db")
     resp = _post_file(client, filename="schema.sql", content=_SAMPLE_DDL.encode(), parser="bogus")
     assert resp.status_code == 400, resp.text
-    body = resp.json()
-    assert "detail" in body
+    detail = resp.json()["detail"]
+    assert isinstance(detail, dict)
+    assert detail["code"] == "UNKNOWN_PARSER"
+    assert "correlation_id" in detail
     assert "Traceback" not in resp.text
 
 
@@ -201,14 +210,17 @@ def test_unparseable_content_rejected_400_no_traceback(tmp_path: Path) -> None:
         parser="prisma",
     )
     assert resp.status_code == 400, resp.text
-    assert "detail" in resp.json()
+    detail = resp.json()["detail"]
+    assert isinstance(detail, dict)
+    assert detail["code"] == "PARSE_ERROR"
+    assert "correlation_id" in detail
     assert "Traceback" not in resp.text
 
 
-def test_unexpected_parser_exception_returns_generic_400(
+def test_unexpected_parser_exception_returns_internal_500(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A parser raising an *unexpected* type → generic 400, no detail/traceback leak."""
+    """S-116: a parser raising an *unexpected* type → INTERNAL/500, no detail leak."""
     import dbsprout.schema.parsers as parsers_mod  # noqa: PLC0415
 
     leak_marker = "INTERNAL-DETAIL-SHOULD-NOT-LEAK"
@@ -220,10 +232,28 @@ def test_unexpected_parser_exception_returns_generic_400(
     monkeypatch.setattr(parsers_mod, "parse_schema_file", _boom)
     client = _make_client(tmp_path / "state.db")
     resp = _post_file(client, filename="schema.sql", content=_SAMPLE_DDL.encode())
-    assert resp.status_code == 400, resp.text
-    assert "detail" in resp.json()
+    assert resp.status_code == 500, resp.text
+    detail = resp.json()["detail"]
+    assert isinstance(detail, dict)
+    assert detail["code"] == "INTERNAL"
+    assert detail["message"] == "Unexpected error"
+    assert "correlation_id" in detail
     assert leak_marker not in resp.text
     assert "Traceback" not in resp.text
+
+
+def test_schema_load_htmx_request_returns_html_fragment(tmp_path: Path) -> None:
+    """S-116 AC: HTMX swap target gets HTML fragment for parse failures."""
+    client = _make_client(tmp_path / "state.db")
+    files = {"file": ("empty.sql", b"", "application/octet-stream")}
+    resp = client.post("/api/schema/load", files=files, headers={"HX-Request": "true"})
+    assert resp.status_code == 400
+    assert resp.headers["content-type"].startswith("text/html")
+    body = resp.text
+    assert "EMPTY_FILE" in body
+    assert 'data-code="EMPTY_FILE"' in body
+    assert "Correlation ID" in body
+    assert "Traceback" not in body
 
 
 # ── router registration contract ────────────────────────────────────────
