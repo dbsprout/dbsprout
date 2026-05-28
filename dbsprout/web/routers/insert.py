@@ -1026,12 +1026,17 @@ async def insert_endpoint(request: Request, body: InsertRequest) -> dict[str, An
 def _hash_update_column_scope(*, table: str, column: str, row_count: int) -> str:
     """Stable SHA-256 hex digest of the update-column scope.
 
-    The canonical form is ``f"{table}:{column}:{row_count}"`` — a single
-    line, no list ordering to normalise (the scope is a single triple, not
-    a set of pairs like the insert scope). Tests in ``test_update_column.py``
+    The canonical form is a JSON object with stable key order so identifier
+    values can carry punctuation (``"users:role"`` etc.) without colliding
+    with neighbouring fields. The scope is a single triple, not a set of
+    pairs like the insert scope. Tests in ``test_update_column.py``
     re-derive this hash to mint valid tokens.
     """
-    canonical = f"{table}:{column}:{row_count}"
+    canonical = json.dumps(
+        {"table": table, "column": column, "row_count": row_count},
+        separators=(",", ":"),
+        sort_keys=True,
+    )
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 

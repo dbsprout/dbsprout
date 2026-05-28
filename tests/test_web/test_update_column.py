@@ -499,6 +499,24 @@ def test_update_column_pk_column_is_409_constraint_violation(
     assert detail["code"] == "CONSTRAINT_VIOLATION"
 
 
+# ── Scope canonicalisation: punctuation-heavy identifiers do not collide ─
+
+
+def test_update_column_scope_hash_avoids_punctuation_collisions() -> None:
+    """Identifier values with punctuation must NOT collide via naive joining.
+
+    A naive ``f"{table}:{column}:{row_count}"`` form would hash the same
+    bytes for ``table="users:role"`` / ``column="x"`` and
+    ``table="users"`` / ``column="role:x"``. The route uses a JSON-canonical
+    form to remove that ambiguity.
+    """
+    from dbsprout.web.routers.insert import _hash_update_column_scope  # noqa: PLC0415
+
+    a = _hash_update_column_scope(table="users:role", column="x", row_count=5)
+    b = _hash_update_column_scope(table="users", column="role:x", row_count=5)
+    assert a != b
+
+
 # ── Step 14: response shape is exactly {rows_updated, table, column} ────
 
 
