@@ -118,6 +118,9 @@ class WebErrorCode(str, Enum):
     # LOAD DATA equivalent (sqlite, mssql, oracle, …) or when the optional
     # driver for COPY is not installed (psycopg / pymysql).
     METHOD_UNSUPPORTED = "METHOD_UNSUPPORTED"
+    # S-140 export-route guards.
+    EXPORT_MULTI_TABLE_UNSUPPORTED = "EXPORT_MULTI_TABLE_UNSUPPORTED"
+    EXPORT_DEPENDENCY_MISSING = "EXPORT_DEPENDENCY_MISSING"
 
 
 @dataclass(frozen=True)
@@ -315,6 +318,14 @@ _CODE_HINTS: dict[WebErrorCode, str] = {
     # driver). This generic fallback is correct for the wrong-dialect case.
     WebErrorCode.METHOD_UNSUPPORTED: (
         "Pick one of the supported methods listed in 'supported' (commonly 'auto' or 'batch')."
+    ),
+    # S-140 export-route hints.
+    WebErrorCode.EXPORT_MULTI_TABLE_UNSUPPORTED: (
+        "Specify a single-element `tables: [name]` subset for this format, "
+        "or use the sql/json format which support multi-table exports."
+    ),
+    WebErrorCode.EXPORT_DEPENDENCY_MISSING: (
+        "Install the missing extra and retry, e.g. pip install 'dbsprout[data]'."
     ),
 }
 
@@ -628,6 +639,63 @@ def web_error_method_unsupported(
 
 
 # ---------------------------------------------------------------------------
+# S-140 export-route factory helpers (Wave 4 — Output & Insertion).
+# ---------------------------------------------------------------------------
+
+
+def web_error_not_found_tables(tables: list[str]) -> WebError:
+    """Surfaced when an export request lists tables absent from the last run.
+
+    Re-uses :attr:`WebErrorCode.NOT_FOUND` (no new enum entry) — the message
+    lists every offending name so the caller can correct the request without
+    a round-trip.
+    """
+    names = ", ".join(repr(t) for t in tables)
+    message = f"Tables not in the last generation result: {names}."
+    return WebError(
+        code=WebErrorCode.NOT_FOUND,
+        message=message,
+        status_code=404,
+        hint=_CODE_HINTS[WebErrorCode.NOT_FOUND],
+    )
+
+
+def web_error_export_multi_table_unsupported(fmt: str) -> WebError:
+    """The requested export format cannot be packed into a single file for a multi-table run.
+
+    Per the S-140 brainstorm, CSV (multiple header rows) and Parquet (binary
+    container) have no portable single-file representation when the scope
+    resolves to more than one table; the caller must narrow the scope via
+    ``tables: [name]`` or pick ``sql`` / ``json`` which support multi-table.
+    """
+    message = (
+        f"Format {fmt!r} cannot stream multiple tables in a single file. "
+        "Specify a single-element `tables: [name]` subset."
+    )
+    return WebError(
+        code=WebErrorCode.EXPORT_MULTI_TABLE_UNSUPPORTED,
+        message=message,
+        status_code=422,
+        hint=_CODE_HINTS[WebErrorCode.EXPORT_MULTI_TABLE_UNSUPPORTED],
+    )
+
+
+def web_error_export_dependency_missing(fmt: str, extra: str) -> WebError:
+    """The writer for *fmt* needs an optional dependency that is not installed.
+
+    Today the only path that hits this is Parquet without the ``[data]``
+    extra (the writer raises ``ImportError`` when ``polars`` is absent).
+    """
+    message = f"Format {fmt!r} requires the optional {extra!r} extra to be installed."
+    return WebError(
+        code=WebErrorCode.EXPORT_DEPENDENCY_MISSING,
+        message=message,
+        status_code=422,
+        hint=_CODE_HINTS[WebErrorCode.EXPORT_DEPENDENCY_MISSING],
+    )
+
+
+# ---------------------------------------------------------------------------
 # Renderer: HTMX-aware response, plus logging hook.
 # ---------------------------------------------------------------------------
 
@@ -705,6 +773,8 @@ __all__ = [
     "raise_web_error",
     "web_error_constraint_violation",
     "web_error_empty_file",
+    "web_error_export_dependency_missing",
+    "web_error_export_multi_table_unsupported",
     "web_error_file_too_large",
     "web_error_internal",
     "web_error_method_unsupported",
@@ -713,6 +783,7 @@ __all__ = [
     "web_error_no_schema",
     "web_error_no_spec",
     "web_error_not_found",
+    "web_error_not_found_tables",
     "web_error_unknown_parser",
     "web_error_write_guard_rejected",
     "web_error_write_guard_required",
