@@ -6,6 +6,24 @@
   {# ``defer`` so Alpine attaches after the DOM is parsed; the static file is
      served from dbsprout/web/static/alpine.min.js. #}
   <script defer src="/static/alpine.min.js"></script>
+  {# ── S-125: live progress console JS factory ──
+     Loaded BEFORE Alpine so window.studioConsole exists when Alpine processes
+     ``x-data="studioConsole()"``. The submit form (S-124 / S-127 wires this
+     fully) dispatches a ``studio:job-start`` window CustomEvent carrying
+     ``{jobId}`` once POST /api/generate returns, and the factory opens the
+     S-109 /ws/jobs/{job_id} WebSocket from there. #}
+  <script src="/static/studio_console.js"></script>
+  <script>
+    /* Tiny bridge: when a script elsewhere on the page (e.g. the generate
+       submit handler) calls window.dispatchEvent(new CustomEvent(
+         'studio:job-start', {detail: {jobId}}
+       )) the console factory listens via its init() hook. This single line
+       is the documented integration seam — the page just needs to know the
+       event name, not the WebSocket URL. */
+    window.studioJobStart = function (jobId) {
+      window.dispatchEvent(new CustomEvent('studio:job-start', { detail: { jobId: jobId } }));
+    };
+  </script>
 {% endblock %}
 
 {% block content %}
