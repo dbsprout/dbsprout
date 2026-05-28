@@ -13,11 +13,11 @@ from rich.console import Console
 from typer.testing import CliRunner
 
 from dbsprout.cli.app import app
-from dbsprout.cli.commands.generate import (
+from dbsprout.cli.commands._direct_insert import (
     _detect_direct_dialect,
     _run_direct_insert,
-    generate_command,
 )
+from dbsprout.cli.commands.generate import generate_command
 from dbsprout.generate.orchestrator import GenerateResult
 from dbsprout.schema.models import ColumnSchema, ColumnType, DatabaseSchema, TableSchema
 
@@ -191,7 +191,7 @@ class TestDirectInsertDispatch:
                 return_value=mock_writer,
             ),
             patch(
-                "dbsprout.cli.commands.generate.console",
+                "dbsprout.cli.commands._direct_insert.console",
                 test_console,
             ),
         ):
@@ -248,7 +248,7 @@ class TestInsertMethodValidation:
         buf = StringIO()
         test_console = Console(file=buf, force_terminal=False)
         with (
-            patch("dbsprout.cli.commands.generate.console", test_console),
+            patch("dbsprout.cli.commands._direct_insert.console", test_console),
             pytest.raises((SystemExit, click.exceptions.Exit)),
         ):
             _run_direct_insert(
@@ -265,7 +265,7 @@ class TestInsertMethodValidation:
         buf = StringIO()
         test_console = Console(file=buf, force_terminal=False)
         with (
-            patch("dbsprout.cli.commands.generate.console", test_console),
+            patch("dbsprout.cli.commands._direct_insert.console", test_console),
             pytest.raises((SystemExit, click.exceptions.Exit)),
         ):
             _run_direct_insert(
