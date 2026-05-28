@@ -132,6 +132,12 @@ class WebErrorCode(str, Enum):
     # The envelope carries ``step`` + ``missing: [...]`` as top-level extras
     # so the HTMX swap can render an actionable badge.
     STEP_GATE_BLOCKED = "STEP_GATE_BLOCKED"
+    # S-145 wizard Step 3 LLM opt-in — raised by
+    # ``POST /wizard/step/3/llm-spec`` when the local LLM provider cannot be
+    # constructed (no ``llama-cpp-python``, no GGUF model file, …). 503
+    # because the failure is server-side capability, not caller input;
+    # the existing heuristic spec on the workspace stays in place.
+    LLM_UNAVAILABLE = "LLM_UNAVAILABLE"
 
 
 @dataclass(frozen=True)
@@ -347,6 +353,13 @@ _CODE_HINTS: dict[WebErrorCode, str] = {
     # more specific one when only one artefact is missing.
     WebErrorCode.STEP_GATE_BLOCKED: (
         "Complete the highlighted action on the current step before advancing."
+    ),
+    # S-145 — generic LLM-unavailable hint. The factory always supplies the
+    # specific reason in the message; this hint nudges the user toward the
+    # heuristic path that is already wired and works offline.
+    WebErrorCode.LLM_UNAVAILABLE: (
+        "Install an LLM provider extra (e.g. pip install 'dbsprout[llm]') or "
+        "use the heuristic spec which is already populated."
     ),
 }
 
@@ -791,6 +804,34 @@ def web_error_step_gate_blocked(*, step: int, missing: list[str]) -> WebError:
 
 
 # ---------------------------------------------------------------------------
+# S-145 wizard Step 3 LLM opt-in factory helper.
+# ---------------------------------------------------------------------------
+
+
+def web_error_llm_unavailable(reason: str) -> WebError:
+    """Surfaced by ``POST /wizard/step/3/llm-spec`` when the LLM provider fails to load.
+
+    The wizard's Step 3 opt-in LLM path catches construction-time failures
+    (``ImportError`` from ``llama-cpp-python`` missing, ``RuntimeError``
+    from "no GGUF model on disk", ``OSError`` from a denied cache dir, …)
+    and translates them into a 503 envelope with the original *reason*
+    folded into the user-facing message.
+
+    Status 503 because the failure is a server-side capability gap — the
+    request itself is well-formed, the server simply cannot serve the
+    optional LLM-driven flow. The heuristic spec that was put in place
+    on entering Step 3 stays untouched on the workspace, so the user can
+    keep moving with no further action required.
+    """
+    return WebError(
+        code=WebErrorCode.LLM_UNAVAILABLE,
+        message=f"LLM spec generation unavailable: {reason}",
+        status_code=503,
+        hint=_CODE_HINTS[WebErrorCode.LLM_UNAVAILABLE],
+    )
+
+
+# ---------------------------------------------------------------------------
 # Renderer: HTMX-aware response, plus logging hook.
 # ---------------------------------------------------------------------------
 
@@ -872,6 +913,7 @@ __all__ = [
     "web_error_export_multi_table_unsupported",
     "web_error_file_too_large",
     "web_error_internal",
+    "web_error_llm_unavailable",
     "web_error_method_unsupported",
     "web_error_no_connection",
     "web_error_no_regen",

@@ -75,6 +75,8 @@ def test_web_error_code_enum_is_closed_set() -> None:
         "NO_REGEN",
         # S-143 wizard step-gating guard.
         "STEP_GATE_BLOCKED",
+        # S-145 wizard Step 3 LLM opt-in guard.
+        "LLM_UNAVAILABLE",
     }
     assert {m.name for m in WebErrorCode} == expected
     # Each code is a plain string so it round-trips through JSON unchanged.
