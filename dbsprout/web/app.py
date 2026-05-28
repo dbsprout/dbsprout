@@ -40,6 +40,7 @@ from dbsprout.web.progress import ProgressHub, progress_ws_router
 from dbsprout.web.routers.connect import connect_router
 from dbsprout.web.routers.generate import generate_router
 from dbsprout.web.routers.generators import generators_router
+from dbsprout.web.routers.insert import insert_router
 from dbsprout.web.routers.jobs import jobs_router
 from dbsprout.web.routers.preview import preview_router
 from dbsprout.web.routers.schema import schema_router
@@ -226,6 +227,16 @@ def create_app(
     # S-124). Read-only; powers the Studio grid's preview/regen feedback loop.
     app.include_router(preview_router)
     # ── end S-147 ──
+    # ── S-136 insert route ──
+    # POST /api/insert — submits a dialect-aware insertion run as a background
+    # job via app.state.job_manager (S-108) over the data in
+    # app.state.workspace.last_result (populated by POST /api/generate, S-124),
+    # using the existing writers in dbsprout/output/ (PG COPY · MySQL LOAD DATA
+    # · SaBatch fallback). Per-table progress streams on /ws/jobs/{job_id} (S-109).
+    # Write-guard (S-137) seam lives in the same module; S-136 enforces token
+    # presence (403 WRITE_GUARD_REQUIRED) so the write path is closed from day one.
+    app.include_router(insert_router)
+    # ── end S-136 ──
     # ── S-115 schema view ──
     # Read-only workspace review: GET /api/schema (tree JSON) + GET
     # /api/schema/erd (HTMX ERD fragment, reusing build_erd_mermaid). Distinct

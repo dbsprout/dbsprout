@@ -101,6 +101,11 @@ class WebErrorCode(str, Enum):
     FILE_TOO_LARGE = "FILE_TOO_LARGE"
     UNKNOWN_PARSER = "UNKNOWN_PARSER"
     INTERNAL = "INTERNAL"
+    # S-136 insert-route guards (Wave 1 of Output & Insertion).
+    NO_CONNECTION = "NO_CONNECTION"
+    NO_RUN = "NO_RUN"
+    # S-136 forward-handoff to S-137 (write-guard confirmation token).
+    WRITE_GUARD_REQUIRED = "WRITE_GUARD_REQUIRED"
 
 
 @dataclass(frozen=True)
@@ -249,6 +254,12 @@ _CODE_HINTS: dict[WebErrorCode, str] = {
     ),
     WebErrorCode.EMPTY_FILE: "Upload a non-empty schema file.",
     WebErrorCode.FILE_TOO_LARGE: "Split or compress the schema, then upload again.",
+    # S-136 hints.
+    WebErrorCode.NO_CONNECTION: "POST /api/connect with a target database URL first.",
+    WebErrorCode.NO_RUN: "POST /api/generate to produce data before inserting.",
+    WebErrorCode.WRITE_GUARD_REQUIRED: (
+        "Request a confirmation token from POST /api/insert/preview (S-137) and resubmit."
+    ),
 }
 
 
@@ -396,6 +407,46 @@ def web_error_internal() -> WebError:
 
 
 # ---------------------------------------------------------------------------
+# S-136 insert-route factory helpers (Wave 1 of Output & Insertion).
+# ---------------------------------------------------------------------------
+
+
+def web_error_no_connection() -> WebError:
+    """No target DB is wired on the workspace yet — 409, caller-actionable."""
+    return WebError(
+        code=WebErrorCode.NO_CONNECTION,
+        message="No target database is connected; POST /api/connect first.",
+        status_code=409,
+        hint=_CODE_HINTS[WebErrorCode.NO_CONNECTION],
+    )
+
+
+def web_error_no_run() -> WebError:
+    """No generation result is available on the workspace yet — 409."""
+    return WebError(
+        code=WebErrorCode.NO_RUN,
+        message="No generation result available; POST /api/generate first.",
+        status_code=409,
+        hint=_CODE_HINTS[WebErrorCode.NO_RUN],
+    )
+
+
+def web_error_write_guard_required() -> WebError:
+    """The write path is closed unless the request carries a confirmation token.
+
+    S-137 (Wave 2) lands the real HMAC verification + scope binding; for S-136
+    the gate is in place from day one so the production path can never reach
+    a live INSERT without going through it.
+    """
+    return WebError(
+        code=WebErrorCode.WRITE_GUARD_REQUIRED,
+        message="A confirmation token is required to insert into the target database.",
+        status_code=403,
+        hint=_CODE_HINTS[WebErrorCode.WRITE_GUARD_REQUIRED],
+    )
+
+
+# ---------------------------------------------------------------------------
 # Renderer: HTMX-aware response, plus logging hook.
 # ---------------------------------------------------------------------------
 
@@ -474,5 +525,8 @@ __all__ = [
     "web_error_empty_file",
     "web_error_file_too_large",
     "web_error_internal",
+    "web_error_no_connection",
+    "web_error_no_run",
     "web_error_unknown_parser",
+    "web_error_write_guard_required",
 ]

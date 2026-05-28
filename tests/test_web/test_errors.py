@@ -51,6 +51,10 @@ def test_web_error_code_enum_is_closed_set() -> None:
         "FILE_TOO_LARGE",
         "UNKNOWN_PARSER",
         "INTERNAL",
+        # S-136 insert-route guards.
+        "NO_CONNECTION",
+        "NO_RUN",
+        "WRITE_GUARD_REQUIRED",
     }
     assert {m.name for m in WebErrorCode} == expected
     # Each code is a plain string so it round-trips through JSON unchanged.
@@ -338,3 +342,36 @@ def test_raise_web_error_returns_htmx_fragment_when_header_present() -> None:
     assert "AUTH_FAILED" in body
     # Plain HTML never carries a stack frame.
     assert not _TRACEBACK_RE.search(body)
+
+
+# ── S-136 factory helpers ───────────────────────────────────────────────
+
+
+def test_web_error_no_connection_factory() -> None:
+    from dbsprout.web.errors import web_error_no_connection  # noqa: PLC0415
+
+    err = web_error_no_connection()
+    assert err.code is WebErrorCode.NO_CONNECTION
+    assert err.status_code == 409
+    assert "connect" in err.message.lower()
+    assert err.hint is not None
+
+
+def test_web_error_no_run_factory() -> None:
+    from dbsprout.web.errors import web_error_no_run  # noqa: PLC0415
+
+    err = web_error_no_run()
+    assert err.code is WebErrorCode.NO_RUN
+    assert err.status_code == 409
+    assert "generation" in err.message.lower() or "generate" in err.message.lower()
+    assert err.hint is not None
+
+
+def test_web_error_write_guard_required_factory() -> None:
+    from dbsprout.web.errors import web_error_write_guard_required  # noqa: PLC0415
+
+    err = web_error_write_guard_required()
+    assert err.code is WebErrorCode.WRITE_GUARD_REQUIRED
+    assert err.status_code == 403
+    assert "token" in err.message.lower()
+    assert err.hint is not None
