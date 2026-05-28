@@ -55,6 +55,18 @@ def _snapshot_store(request: Request) -> SnapshotStore:
     return cast("SnapshotStore", factory())
 
 
+def _build_erd_with_clicks(schema: DatabaseSchema) -> str:
+    """Return the Mermaid ``erDiagram`` source for *schema*.
+
+    Thin alias around :func:`dbsprout.report.erd.build_erd_mermaid` kept here so
+    that ``dbsprout.web.routers.schema`` (S-115) can import a single helper from
+    this module. Mermaid 10.9.x ``erDiagram`` rejects per-node ``click``
+    directives, so click-to-detail is bound in JS post-render against the
+    embedded JSON metadata (see ``_build_table_details``).
+    """
+    return build_erd_mermaid(schema)
+
+
 def _build_table_details(schema: DatabaseSchema) -> dict[str, Any]:
     """Build a per-table column/FK detail dict suitable for JSON serialisation.
 
