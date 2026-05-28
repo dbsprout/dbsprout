@@ -108,6 +108,11 @@ class WebErrorCode(str, Enum):
     WRITE_GUARD_REQUIRED = "WRITE_GUARD_REQUIRED"
     # S-137: token present but failed HMAC / scope / TTL / single-use check.
     WRITE_GUARD_REJECTED = "WRITE_GUARD_REJECTED"
+    # S-131 regenerate-route guards (Wave 3 — Granular Control).
+    NO_SCHEMA = "NO_SCHEMA"
+    NO_SPEC = "NO_SPEC"
+    CONSTRAINT_VIOLATION = "CONSTRAINT_VIOLATION"
+    NOT_FOUND = "NOT_FOUND"
 
 
 @dataclass(frozen=True)
@@ -265,6 +270,18 @@ _CODE_HINTS: dict[WebErrorCode, str] = {
     WebErrorCode.WRITE_GUARD_REJECTED: (
         "Re-fetch a token from POST /api/insert/preview — yours expired, was "
         "already used, or was bound to a different target/scope."
+    ),
+    # S-131 regenerate-route hints.
+    WebErrorCode.NO_SCHEMA: ("Load a schema first via POST /api/connect or POST /api/schema/load."),
+    WebErrorCode.NO_SPEC: (
+        "Build or load a DataSpec first; the regenerate path needs a spec when engine='spec'."
+    ),
+    WebErrorCode.CONSTRAINT_VIOLATION: (
+        "Pick a non-PK, non-FK-referenced column; regenerating these would "
+        "violate referential integrity."
+    ),
+    WebErrorCode.NOT_FOUND: (
+        "Check the schema and re-issue the request with a valid table / column name."
     ),
 }
 
@@ -466,6 +483,73 @@ def web_error_write_guard_rejected() -> WebError:
 
 
 # ---------------------------------------------------------------------------
+# S-131 regenerate-route factory helpers (Wave 3 — Granular Control).
+# ---------------------------------------------------------------------------
+
+
+def web_error_no_schema() -> WebError:
+    """No schema is loaded on the workspace yet — 409, caller-actionable."""
+    return WebError(
+        code=WebErrorCode.NO_SCHEMA,
+        message="No schema loaded; connect to a database or upload a schema first.",
+        status_code=409,
+        hint=_CODE_HINTS[WebErrorCode.NO_SCHEMA],
+    )
+
+
+def web_error_no_spec() -> WebError:
+    """No DataSpec is available on the workspace yet — 409."""
+    return WebError(
+        code=WebErrorCode.NO_SPEC,
+        message="No DataSpec available; build a spec before requesting a spec-driven regen.",
+        status_code=409,
+        hint=_CODE_HINTS[WebErrorCode.NO_SPEC],
+    )
+
+
+def web_error_constraint_violation(
+    *,
+    table: str,
+    column: str | None,
+    reason: str,
+) -> WebError:
+    """Surfaced when a regenerate call hits a referential-integrity invariant.
+
+    The two triggering reasons are ``primary_key`` (the column is part of the
+    table's PK, which the regen path preserves byte-identically) and
+    ``fk_referenced`` (the column is referenced by another table's FK, so
+    re-rolling would orphan child rows). The reason is echoed verbatim into
+    the user-facing message + the envelope so the Studio UI can render an
+    actionable badge next to the offending cell.
+    """
+    column_part = f".{column}" if column else ""
+    message = (
+        f"Cannot regenerate {table}{column_part}: {reason.replace('_', ' ')}. "
+        "Pick a non-PK, non-FK-referenced column."
+    )
+    return WebError(
+        code=WebErrorCode.CONSTRAINT_VIOLATION,
+        message=message,
+        status_code=409,
+        hint=_CODE_HINTS[WebErrorCode.CONSTRAINT_VIOLATION],
+    )
+
+
+def web_error_not_found(*, table: str, column: str | None = None) -> WebError:
+    """Surfaced when the table or column referenced by a request is unknown."""
+    if column is not None:
+        message = f"Column {table}.{column!r} is not in the loaded schema."
+    else:
+        message = f"Table {table!r} is not in the loaded schema."
+    return WebError(
+        code=WebErrorCode.NOT_FOUND,
+        message=message,
+        status_code=404,
+        hint=_CODE_HINTS[WebErrorCode.NOT_FOUND],
+    )
+
+
+# ---------------------------------------------------------------------------
 # Renderer: HTMX-aware response, plus logging hook.
 # ---------------------------------------------------------------------------
 
@@ -541,11 +625,15 @@ __all__ = [
     "classify_connect_error",
     "classify_parse_error",
     "raise_web_error",
+    "web_error_constraint_violation",
     "web_error_empty_file",
     "web_error_file_too_large",
     "web_error_internal",
     "web_error_no_connection",
     "web_error_no_run",
+    "web_error_no_schema",
+    "web_error_no_spec",
+    "web_error_not_found",
     "web_error_unknown_parser",
     "web_error_write_guard_rejected",
     "web_error_write_guard_required",

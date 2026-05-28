@@ -43,6 +43,7 @@ from dbsprout.web.routers.generators import generators_router
 from dbsprout.web.routers.insert import insert_router
 from dbsprout.web.routers.jobs import jobs_router
 from dbsprout.web.routers.preview import preview_router
+from dbsprout.web.routers.regenerate import regenerate_router
 from dbsprout.web.routers.schema import schema_router
 from dbsprout.web.routers.schema_load import schema_load_router
 from dbsprout.web.routers.spec import spec_router
@@ -265,6 +266,17 @@ def create_app(
     # #studio-console) without editing this shell.
     app.include_router(studio_router)
     # ── end S-117 ──
+    # ── S-131 regenerate router ──
+    # POST /api/regenerate — re-roll one column or one whole table via the
+    # surgical S-128/S-129 entry points in dbsprout/generate/regenerate.py.
+    # Sync path when affected rows <= SYNC_REGEN_THRESHOLD (100_000); above
+    # that the regen runs as a background job via app.state.job_manager
+    # (S-108) and progress streams over the existing /ws/jobs/{job_id} (S-109).
+    # Typed envelopes via dbsprout/web/errors.py — PK/FK-referenced regen is
+    # rejected as 409 CONSTRAINT_VIOLATION, unknown table/column as 404
+    # NOT_FOUND, no schema as 409 NO_SCHEMA.
+    app.include_router(regenerate_router)
+    # ── end S-131 ──
     # ── S-133 validate router ──
     # POST /api/validate — integrity report over app.state.workspace.last_result.
     # Reuses dbsprout/quality/integrity.py (FK / UNIQUE / NOT NULL); CHECK slot
