@@ -235,3 +235,161 @@ def test_router_registered_via_create_app(tmp_path: Path) -> None:
     # A bad request still proves the route exists (404 would mean unregistered).
     resp = client.post("/api/schema/load")
     assert resp.status_code != 404, "POST /api/schema/load not registered in create_app"
+
+
+# ── S-114: auto-detect (extension → content sniff → DDL fallback) ──────
+
+
+def test_autodetect_dbml_content_via_generic_suffix(tmp_path: Path) -> None:
+    """DBML payload + ``.txt`` filename + no parser → content sniff routes to DBML."""
+    client = _make_client(tmp_path / "state.db")
+    resp = _post_file(client, filename="schema.txt", content=_SAMPLE_DBML.encode())
+    assert resp.status_code == 200, resp.text
+    assert "users" in resp.json()["tables"]
+
+
+@pytest.mark.parametrize(
+    ("filename", "content", "expected_table"),
+    [
+        ("schema.sql", _SAMPLE_DDL, "users"),
+        ("schema.dbml", _SAMPLE_DBML, "users"),
+        ("schema.mermaid", _SAMPLE_MERMAID, "users"),
+        ("schema.mmd", _SAMPLE_MERMAID, "users"),
+        ("schema.puml", _SAMPLE_PLANTUML, "users"),
+        ("schema.plantuml", _SAMPLE_PLANTUML, "users"),
+        ("schema.pu", _SAMPLE_PLANTUML, "users"),
+        ("schema.prisma", _SAMPLE_PRISMA, "user"),
+    ],
+)
+def test_autodetect_each_format_by_extension(
+    tmp_path: Path, filename: str, content: str, expected_table: str
+) -> None:
+    """Every known suffix maps to its parser without an explicit ``parser`` field."""
+    client = _make_client(tmp_path / "state.db")
+    resp = _post_file(client, filename=filename, content=content.encode())
+    assert resp.status_code == 200, resp.text
+    assert expected_table in resp.json()["tables"]
+
+
+@pytest.mark.parametrize(
+    ("content", "expected_table"),
+    [
+        (_SAMPLE_DBML, "users"),
+        (_SAMPLE_MERMAID, "users"),
+        (_SAMPLE_PLANTUML, "users"),
+        (_SAMPLE_PRISMA, "user"),
+    ],
+)
+def test_autodetect_content_sniff_with_generic_suffix(
+    tmp_path: Path, content: str, expected_table: str
+) -> None:
+    """Generic ``.txt`` filename + no parser → content sniff picks the right parser."""
+    client = _make_client(tmp_path / "state.db")
+    resp = _post_file(client, filename="schema.txt", content=content.encode())
+    assert resp.status_code == 200, resp.text
+    assert expected_table in resp.json()["tables"]
+
+
+def test_autodetect_extensionless_filename_uses_content_sniff(tmp_path: Path) -> None:
+    """Filename without an extension → content sniff still routes correctly."""
+    client = _make_client(tmp_path / "state.db")
+    resp = _post_file(client, filename="schema_no_extension", content=_SAMPLE_PRISMA.encode())
+    assert resp.status_code == 200, resp.text
+    assert "user" in resp.json()["tables"]
+
+
+def test_explicit_parser_overrides_autodetect(tmp_path: Path) -> None:
+    """An explicit ``parser`` beats both filename and content auto-detect."""
+    client = _make_client(tmp_path / "state.db")
+    # DBML payload, DBML filename, but force Prisma → Prisma parser rejects → 400.
+    resp = _post_file(
+        client,
+        filename="schema.dbml",
+        content=_SAMPLE_DBML.encode(),
+        parser="prisma",
+    )
+    assert resp.status_code == 400, resp.text
+    assert "detail" in resp.json()
+    assert "Traceback" not in resp.text
+
+
+def test_autodetect_unknown_content_falls_back_to_ddl(tmp_path: Path) -> None:
+    """Unknown suffix + content that none of the sniffers match → DDL fallback.
+
+    DDL parser then rejects the garbage with a friendly 400 (no traceback).
+    """
+    client = _make_client(tmp_path / "state.db")
+    resp = _post_file(
+        client,
+        filename="schema.unknown",
+        content=b"this content matches none of the sniffers !!!",
+    )
+    assert resp.status_code == 400, resp.text
+    assert "detail" in resp.json()
+    assert "Traceback" not in resp.text
+
+
+def test_autodetect_binary_garbage_falls_back_safely(tmp_path: Path) -> None:
+    """Non-UTF-8 / binary garbage head should not crash the sniffer."""
+    client = _make_client(tmp_path / "state.db")
+    # Non-UTF-8 bytes — the sniffer decodes with errors="ignore" and falls through.
+    resp = _post_file(
+        client,
+        filename="schema.bin",
+        content=b"\xff\xfe\x00\x01\x02\x03" * 64,
+    )
+    # Either 400 (DDL parser rejects) — the goal is "no 500, no traceback".
+    assert resp.status_code == 400, resp.text
+    assert "Traceback" not in resp.text
+
+
+# ── unit tests for the detection helpers (cheap, no TestClient) ────────
+
+
+def test_detect_suffix_from_content_returns_none_for_empty_head() -> None:
+    """Empty / whitespace head → no sniff match → returns ``None``."""
+    from dbsprout.web.routers.schema_load import _detect_suffix_from_content  # noqa: PLC0415
+
+    assert _detect_suffix_from_content(b"") is None
+    assert _detect_suffix_from_content(b"   \n\t ") is None
+
+
+def test_detect_suffix_from_content_returns_none_for_random_bytes() -> None:
+    """Random text matching none of the sniffers → ``None``."""
+    from dbsprout.web.routers.schema_load import _detect_suffix_from_content  # noqa: PLC0415
+
+    assert _detect_suffix_from_content(b"hello world, just a note") is None
+
+
+def test_detect_suffix_from_content_matches_each_format() -> None:
+    """Each canonical format keyword resolves to its suffix."""
+    from dbsprout.web.routers.schema_load import _detect_suffix_from_content  # noqa: PLC0415
+
+    assert _detect_suffix_from_content(_SAMPLE_DBML.encode()) == ".dbml"
+    assert _detect_suffix_from_content(_SAMPLE_MERMAID.encode()) == ".mermaid"
+    assert _detect_suffix_from_content(_SAMPLE_PLANTUML.encode()) == ".puml"
+    assert _detect_suffix_from_content(_SAMPLE_PRISMA.encode()) == ".prisma"
+
+
+def test_resolve_suffix_without_content_head_falls_back_to_ddl() -> None:
+    """When no content_head is passed and filename suffix is unknown → ``.sql``."""
+    from dbsprout.web.routers.schema_load import _resolve_suffix  # noqa: PLC0415
+
+    assert _resolve_suffix("schema.unknown", None) == ".sql"
+    assert _resolve_suffix(None, None) == ".sql"
+
+
+def test_resolve_suffix_known_filename_skips_content_sniff() -> None:
+    """A known filename suffix wins even when content would sniff differently."""
+    from dbsprout.web.routers.schema_load import _resolve_suffix  # noqa: PLC0415
+
+    # DBML content, but the filename says .sql → .sql (filename beats content).
+    assert _resolve_suffix("schema.sql", None, content_head=_SAMPLE_DBML.encode()) == ".sql"
+
+
+def test_resolve_suffix_parser_override_skips_filename_and_content() -> None:
+    """Explicit parser override beats both filename and content sniff."""
+    from dbsprout.web.routers.schema_load import _resolve_suffix  # noqa: PLC0415
+
+    # DBML filename + DBML content, but parser=prisma → .prisma.
+    assert _resolve_suffix("schema.dbml", "prisma", content_head=_SAMPLE_DBML.encode()) == ".prisma"
