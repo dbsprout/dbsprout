@@ -1,6 +1,23 @@
 {% extends "base.html" %}
 {% block title %}DBSprout — Wizard{% endblock %}
 
+{% block head_extra %}
+  {# ── S-143 wizard head assets ──────────────────────────────────────────
+     The wizard steps include shared Alpine islands (method-picker, write-
+     guard modal, _studio_console.html). Mounting Alpine + the studio-console
+     factory at shell level means each step body is just markup — no per-step
+     script-tag drift, and HTMX swaps between bodies do not re-load Alpine. #}
+  <script defer src="/static/alpine.min.js"></script>
+  <script src="/static/studio_console.js"></script>
+  <script>
+    /* Bridge for the generate launcher inside ``_studio_console.html`` —
+       lets the form hand off the WebSocket id to the console factory. */
+    window.studioJobStart = function (jobId) {
+      window.dispatchEvent(new CustomEvent('studio:job-start', { detail: { jobId: jobId } }));
+    };
+  </script>
+{% endblock %}
+
 {#
   ── S-142 Wizard shell ───────────────────────────────────────────────────
   The wizard is a guided walk-through of the six DBSprout phases. The shell
