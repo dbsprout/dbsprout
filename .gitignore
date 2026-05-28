@@ -54,3 +54,6 @@ models/*.gguf
 
 # Config with secrets (keep dbsprout.toml template, ignore user overrides)
 dbsprout.local.toml
+
+# Transient benchmark run output (only benchmarks/baseline.json is committed)
+/benchmark-results.json

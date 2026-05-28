@@ -66,8 +66,8 @@ class DetectionReport:
 
 
 def c2st_accuracy(
-    real_features: np.ndarray,
-    synthetic_features: np.ndarray,
+    real_features: np.ndarray[Any, np.dtype[Any]],
+    synthetic_features: np.ndarray[Any, np.dtype[Any]],
     seed: int = 42,
 ) -> float:
     """Classifier Two-Sample Test accuracy.
@@ -123,7 +123,10 @@ def c2st_accuracy(
     return float(np.mean(scores))
 
 
-def _subsample(features: np.ndarray, rng: np.random.Generator) -> np.ndarray:
+def _subsample(
+    features: np.ndarray[Any, np.dtype[Any]],
+    rng: np.random.Generator,
+) -> np.ndarray[Any, np.dtype[Any]]:
     """Subsample rows if exceeding _MAX_SUBSAMPLE."""
     if features.shape[0] <= _MAX_SUBSAMPLE:
         return features
@@ -149,7 +152,7 @@ def _build_feature_matrix_combined(
     synthetic_rows: list[dict[str, Any]],
     columns: list[str],
     schema_columns: dict[str, ColumnType],
-) -> tuple[np.ndarray, np.ndarray]:
+) -> tuple[np.ndarray[Any, np.dtype[Any]], np.ndarray[Any, np.dtype[Any]]]:
     """Build feature matrices for real and synthetic data with shared preprocessing.
 
     Fits StandardScaler and OrdinalEncoder on the combined dataset so both
@@ -181,7 +184,7 @@ def _build_feature_matrix_combined(
         else:
             categorical_cols.append(col)
 
-    feature_blocks: list[np.ndarray] = []
+    feature_blocks: list[np.ndarray[Any, np.dtype[Any]]] = []
 
     # Numeric features — vectorized extraction
     if numeric_cols:

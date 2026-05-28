@@ -76,13 +76,19 @@ def _enforce_unique(
     fk_cols: set[str],
 ) -> None:
     """Enforce single-column and composite UNIQUE constraints."""
-    # Single-column UNIQUE (from ColumnSchema.unique or single-column PK)
+    # Single-column UNIQUE (from ColumnSchema.unique or single-column PK).
+    # The PK case keys off ``table.primary_key`` — the same source the
+    # integrity validator uses — rather than the per-column ``primary_key``
+    # flag, so a schema where the two disagree (e.g. a stale snapshot with
+    # ``table.primary_key=['id']`` but ``col.primary_key`` unset) is still
+    # deduplicated instead of silently emitting duplicate PKs.
+    single_col_pk = table.primary_key[0] if len(table.primary_key) == 1 else None
     for col in table.columns:
         if col.name in fk_cols:
             continue
         if col.autoincrement:
             continue
-        if not (col.unique or (col.primary_key and len(table.primary_key) == 1)):
+        if not (col.unique or col.name == single_col_pk):
             continue
         _dedup_single_column(table.name, col, rows, rng)
 

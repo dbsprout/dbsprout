@@ -1,0 +1,14 @@
+{# ── S-117 context panel placeholder ──
+   The context / help panel is owned by S-127 (seed control + per-column help).
+   This placeholder reserves the slot + ids so future content swaps in via
+   either a Jinja block override or an HTMX ``hx-get`` into
+   ``#studio-context-body``. #}
+<div class="space-y-3">
+  <h2 class="text-base font-semibold opacity-80">Context</h2>
+  <p class="text-xs opacity-60">
+    Help, column details, and generation controls appear here. Select a table in
+    the tree to see its details.
+  </p>
+  <p class="text-xs opacity-50">Slot reserved for S-127 (seed control).</p>
+  <div id="studio-context-body" class="text-sm" hx-swap="innerHTML"></div>
+</div>

@@ -1,0 +1,78 @@
+{#
+  ── S-142 wizard rail ────────────────────────────────────────────────────
+  Renders the 6-step left rail. Inputs:
+
+    * ``step_labels``    — tuple[str, ...] of length 6 (from STEP_LABELS).
+    * ``current_step``   — int 1..6, the step the user is looking at.
+    * ``completed_steps``— sorted list[int] of completed step numbers.
+    * ``step_help``      — tuple[(blurb, generators), ...] (S-146).
+
+  The rail surfaces stable attributes so S-143 can target items without
+  editing this file:
+
+    * ``id="wizard-rail"`` — list container.
+    * ``data-step="N"``    — every rail item.
+    * ``data-current="N"`` — appears on the currently-active item.
+    * ``data-completed="N"`` — appears on completed items.
+
+  Clicking a *completed* step posts a ``jump`` action (HTMX swap into
+  ``#wizard-body``); future / current steps are not clickable jumps. The
+  jump form lives inline so the rail can stay a single ``<ol>`` for screen
+  readers.
+
+  ── region: S-146 help icons ────────────────────────────────────────────
+  Each rail item ends with a ``?`` trigger from the shared
+  ``_help.html::step_help`` macro. Native ``<details>`` semantics give
+  keyboard accessibility for free — ``summary`` is focusable, Enter /
+  Space toggles. ``Escape`` is handled by a single global listener on the
+  rail panel that closes any open ``<details data-help-step>`` block.
+── #}
+{% from "_help.html" import step_help %}
+<ol id="wizard-rail" data-panel="rail"
+    class="menu bg-base-100 rounded-box w-full p-2 gap-1"
+    role="list" aria-label="Wizard steps"
+    onkeydown="if(event.key==='Escape'){this.querySelectorAll('details[data-help-step][open]').forEach(d=>d.open=false)}">
+  {% for label in step_labels %}
+    {% set n = loop.index %}
+    {% set is_current = (n == current_step) %}
+    {% set is_completed = (n in completed_steps) %}
+    {% set _help_entry = step_help_entries[n - 1] if step_help_entries and step_help_entries[n - 1] else (("", [])) %}
+    {% set _blurb = _help_entry[0] %}
+    {% set _gens = _help_entry[1] %}
+    <li role="listitem"
+        data-step="{{ n }}"
+        {% if is_current %}data-current="{{ n }}"{% endif %}
+        {% if is_completed %}data-completed="{{ n }}"{% endif %}
+        class="rounded {% if is_current %}bg-primary text-primary-content{% elif is_completed %}bg-base-200{% endif %} relative">
+      {% if is_completed and not is_current %}
+        {# Completed-but-not-current → clickable jump (HTMX swap). #}
+        <form method="post" action="/wizard/step/{{ current_step }}"
+              hx-post="/wizard/step/{{ current_step }}"
+              hx-target="#wizard-body" hx-swap="innerHTML"
+              class="contents">
+          <input type="hidden" name="action" value="jump" />
+          <input type="hidden" name="target" value="{{ n }}" />
+          <button type="submit"
+                  class="flex items-center gap-2 w-full text-left"
+                  aria-label="Jump to step {{ n }}: {{ label }}">
+            <span aria-hidden="true">✓</span>
+            <span class="badge badge-sm">{{ n }}</span>
+            <span>{{ label }}</span>
+          </button>
+        </form>
+      {% else %}
+        <span class="flex items-center gap-2"
+              aria-current="{% if is_current %}step{% endif %}">
+          <span aria-hidden="true">
+            {%- if is_completed -%}✓{%- elif is_current -%}●{%- else -%}○{%- endif -%}
+          </span>
+          <span class="badge badge-sm">{{ n }}</span>
+          <span>{{ label }}</span>
+        </span>
+      {% endif %}
+      {# region: S-146 help icons #}
+      {{ step_help(n, label, _blurb, _gens) }}
+      {# endregion: S-146 help icons #}
+    </li>
+  {% endfor %}
+</ol>

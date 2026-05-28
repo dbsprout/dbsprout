@@ -1,0 +1,78 @@
+{#
+  Per-column row fragment (S-119 + S-120 + S-123 + S-146).
+
+  Shared partial used by:
+    * ``spec_grid.html`` (S-118) — full grid render via ``{% include %}``.
+    * ``PUT /api/spec/tables/{t}/columns/{c}`` (S-119) — HTMX fragment swap
+      after an edit, so the studio grid can hot-swap a single row without
+      re-rendering the whole grid.
+
+  Context contract:
+    * ``table_name`` — string, e.g. ``"users"``.
+    * ``col_name``   — string, e.g. ``"email"``.
+    * ``col_cfg``    — :class:`~dbsprout.spec.models.GeneratorConfig`.
+    * ``col_dtype``  — *optional* string, e.g. ``"VARCHAR"`` (S-120).
+                       Falls back to the empty string when the renderer
+                       can't resolve a schema-side dtype.
+
+  Stable hooks the spec-edit endpoint relies on (do not rename):
+    * ``data-column="<table>.<column>"`` on the row wrapper.
+    * ``data-table=`` / ``data-column=`` / ``data-method=`` /
+      ``data-provider=`` / ``data-dtype=`` on the inner pill button.
+      ``data-dtype`` was added by S-120 so the method-picker can filter
+      its catalogue to methods that apply to this column's type.
+
+  S-123 → S-146 additions:
+    * The per-method tooltip (``title=`` + ``aria-describedby=`` +
+      sr-only span) is now produced by the shared
+      ``_help.html::tooltip`` macro so the wizard / Studio share a
+      single rendering path.
+    * The pill keeps the same Studio-picker click handler; only the
+      visible label is wrapped in the macro.
+
+  Description text is computed via the ``describe_method`` Jinja global
+  registered in ``dbsprout.web.app.create_app`` — the catalogue in
+  ``dbsprout.spec.catalog`` is the single source of truth.
+#}
+{% from "_help.html" import tooltip %}
+{% set _pill_id = 'desc-' ~ table_name ~ '-' ~ col_name %}
+{% set _method_desc = describe_method(col_cfg.provider, col_cfg.method) if col_cfg.method else (col_cfg.provider ~ ' (no method set yet)') %}
+{% set _pill_label %}{{ col_cfg.provider }}{% if col_cfg.method %} · {{ col_cfg.method }}{% endif %}{% endset %}
+<div
+  class="grid grid-cols-12 gap-2 items-center py-1"
+  data-column="{{ table_name }}.{{ col_name }}"
+  title="{{ col_name }}"
+>
+  <span class="col-span-7 text-sm truncate" title="{{ col_name }}">
+    {{ col_name }}
+  </span>
+  <button
+    type="button"
+    class="col-span-5 badge badge-outline text-xs justify-start truncate cursor-pointer"
+    data-table="{{ table_name }}"
+    data-column="{{ col_name }}"
+    data-method="{{ col_cfg.method or '' }}"
+    data-provider="{{ col_cfg.provider }}"
+    data-dtype="{{ col_dtype or '' }}"
+    title="{{ _method_desc }}"
+    aria-describedby="{{ _pill_id }}"
+    @click="window.dispatchEvent(new CustomEvent('studio:open-method-picker', { detail: { table: '{{ table_name }}', column: '{{ col_name }}', method: '{{ col_cfg.method or '' }}', provider: '{{ col_cfg.provider }}', dtype: '{{ col_dtype or '' }}' } }))"
+    aria-label="Edit generator for {{ table_name }}.{{ col_name }}"
+  >
+    <span class="truncate">{{ _pill_label | trim }}</span>
+  </button>
+  {#
+    S-146: shared sr-only description span via the tooltip macro. The
+    pill's ``aria-describedby`` above still points at ``_pill_id`` — we
+    keep the legacy id contract for compatibility with focus / screen-
+    reader paths and tests; the macro's own span id is namespaced via
+    ``id_prefix`` so it can't collide if a future caller renders the
+    same row in a different context.
+  #}
+  <span id="{{ _pill_id }}" class="sr-only">{{ _method_desc }}</span>
+  {# Shared tooltip macro — invoked but kept hidden so the spec_row
+     keeps its original visual layout (the pill itself is the visible
+     surface). This guarantees every row exercises the consolidated
+     macro path so we have one rendering pipeline for help copy. #}
+  <span class="sr-only">{{ tooltip(_pill_label | trim, _method_desc, id_prefix='spec-' ~ table_name ~ '-' ~ col_name) }}</span>
+</div>

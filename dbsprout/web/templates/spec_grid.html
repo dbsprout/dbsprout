@@ -1,0 +1,79 @@
+{#
+  Spec grid fragment (S-118 + S-120).
+
+  Renders the active workspace ``DataSpec`` as a table → columns → method-pill
+  layout. Rendered standalone as an HTMX fragment (no ``base.html`` extend) so
+  the Studio grid panel can ``hx-get`` this content directly into
+  ``#studio-grid-body``.
+
+  Stable hooks the upcoming S-119 spec-edit endpoint relies on:
+    * Outer wrapper: ``id="spec-grid" data-spec-grid``.
+    * Per-table section: ``data-table="<name>"``.
+    * Per-column row: ``data-column="<table>.<column>"`` + ``title="<column>"``.
+    * Method pill: ``<button type="button" data-method=… data-provider=…
+                            data-table=… data-column=… data-dtype=…>`` —
+      ``data-dtype`` lets the S-120 method-picker filter its catalogue to
+      methods that apply to this column's type. The click handler is wired
+      by S-120 (Alpine method-picker dispatch); the template only surfaces
+      the shape.
+
+  Empty states (both ``200``):
+    * No schema at all → ``data-empty-state`` body nudges the user toward
+      ``/api/connect`` / ``/api/schema/load``.
+    * Schema loaded but zero tables → ``data-empty-tables`` body explains the
+      schema came back empty.
+
+  Context contract:
+    * ``spec``               — :class:`~dbsprout.spec.models.DataSpec` | None.
+    * ``column_dtypes``      — optional ``{table_name: {col_name: dtype_name}}``
+                                map used to populate the S-120 ``data-dtype``
+                                attribute on each pill.
+    * ``empty_message``      — friendly nudge when ``spec`` is ``None``.
+#}
+<div id="spec-grid" data-spec-grid class="space-y-4">
+  {% if spec is none %}
+    <div data-empty-state class="text-center opacity-70 p-6">
+      <p class="text-sm">{{ empty_message or "No schema is loaded yet." }}</p>
+      <p class="text-xs mt-1">Connect to a database or upload a schema file to get started.</p>
+    </div>
+  {% elif not spec.tables %}
+    <div data-empty-tables class="text-center opacity-70 p-6">
+      <p class="text-sm">The loaded schema contains no tables.</p>
+    </div>
+  {% else %}
+    {% for table in spec.tables %}
+      <section
+        class="border border-base-300 rounded p-3"
+        data-table="{{ table.table_name }}"
+      >
+        <header class="flex items-center justify-between mb-2">
+          <h3 class="font-semibold text-sm truncate" title="{{ table.table_name }}">
+            {{ table.table_name }}
+          </h3>
+          <span class="text-xs opacity-70" data-row-count>
+            {{ table.row_count }} rows
+          </span>
+        </header>
+        <div class="divide-y divide-base-200">
+          {% for col_name, col_cfg in table.columns.items() %}
+            {% with table_name=table.table_name, col_dtype=(column_dtypes.get(table.table_name, {}).get(col_name, '') if column_dtypes else '') %}
+              {% include "spec_row.html" %}
+            {% endwith %}
+          {% endfor %}
+        </div>
+      </section>
+    {% endfor %}
+  {% endif %}
+</div>
+{# ── S-135 boot: install ``studio:focus-cell`` listener on the grid so the
+   violation drill-down can scroll + highlight the matching column row.
+   The fragment self-bootstraps so HTMX swaps (full grid refresh after
+   schema load) re-install the listener idempotently. #}
+<script>
+  (function () {
+    var grid = document.getElementById('spec-grid');
+    if (grid && typeof window.installFocusCell === 'function') {
+      window.installFocusCell(grid);
+    }
+  })();
+</script>

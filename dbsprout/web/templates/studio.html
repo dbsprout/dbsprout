@@ -1,0 +1,112 @@
+{% extends "base.html" %}
+{% block title %}DBSprout — Studio{% endblock %}
+
+{% block head_extra %}
+  {# ── S-117: vendored Alpine.js for light interactivity (NOT a Python dep). ── #}
+  {# ``defer`` so Alpine attaches after the DOM is parsed; the static file is
+     served from dbsprout/web/static/alpine.min.js. #}
+  <script defer src="/static/alpine.min.js"></script>
+  {# ── S-125: live progress console JS factory ──
+     Loaded BEFORE Alpine so window.studioConsole exists when Alpine processes
+     ``x-data="studioConsole()"``. The submit form (S-124 / S-127 wires this
+     fully) dispatches a ``studio:job-start`` window CustomEvent carrying
+     ``{jobId}`` once POST /api/generate returns, and the factory opens the
+     S-109 /ws/jobs/{job_id} WebSocket from there. #}
+  <script src="/static/studio_console.js"></script>
+  {# ── S-132: per-column method-swap → instant re-preview pipeline ──
+     Listens for ``studio:row-rerendered`` window events (dispatched by
+     the S-120 method picker on successful row swap), debounces per
+     column (~150 ms), POSTs ``/api/regenerate``, then GETs
+     ``/api/preview/{table}`` and dispatches ``studio:preview-updated``
+     / ``studio:preview-error`` so any preview-grid UI can subscribe.
+     ``defer`` so the file is parsed before DOMContentLoaded; the
+     bootstrap below attaches the listener once the global is ready. #}
+  <script defer src="/static/spec_grid_rerender.js"></script>
+  <script>
+    /* Tiny bridge: when a script elsewhere on the page (e.g. the generate
+       submit handler) calls window.dispatchEvent(new CustomEvent(
+         'studio:job-start', {detail: {jobId}}
+       )) the console factory listens via its init() hook. This single line
+       is the documented integration seam — the page just needs to know the
+       event name, not the WebSocket URL. */
+    window.studioJobStart = function (jobId) {
+      window.dispatchEvent(new CustomEvent('studio:job-start', { detail: { jobId: jobId } }));
+    };
+
+    /* S-132 boot: attach the spec-grid re-preview listener once the
+       module is on ``window``. We defer until DOMContentLoaded because
+       the module script itself is loaded with ``defer``. */
+    document.addEventListener('DOMContentLoaded', function () {
+      if (typeof window.attachSpecGridRerender === 'function') {
+        window.attachSpecGridRerender();
+      }
+    });
+  </script>
+{% endblock %}
+
+{% block content %}
+  {#
+    ── S-117 Studio shell ─────────────────────────────────────────────────────
+    Four-panel layout: tree (left) · grid (centre) · context (right) ·
+    console (bottom). Each panel carries:
+
+      * a stable element id (#studio-tree, #studio-grid, #studio-context,
+        #studio-console) so later Phase-C stories can target it directly via
+        HTMX hx-target / Alpine x-ref.
+      * a ``data-panel`` attribute mirroring the slot name (for CSS / JS hooks).
+      * a named Jinja block (tree/grid/context/console) so later stories can
+        override the *default* content without forking this shell template.
+      * an ARIA landmark role + aria-label for keyboard-navigable navigation.
+
+    Desktop-first responsive grid: at md+ the three top panels sit side-by-side
+    (tree 1fr · grid 3fr · context 1fr) with the console docked underneath;
+    below md they stack vertically for narrower viewports.
+    ── #}
+  <div
+    id="studio"
+    class="grid gap-4 grid-cols-1 md:[grid-template-columns:minmax(14rem,1fr)_3fr_minmax(14rem,1fr)] md:[grid-template-rows:minmax(0,1fr)_auto] md:[grid-template-areas:'tree_grid_context''console_console_console'] min-h-[calc(100vh-12rem)]"
+    role="application"
+    aria-label="DBSprout Studio"
+  >
+    <aside id="studio-tree" data-panel="tree" role="navigation"
+           aria-label="Schema tree" tabindex="0"
+           class="card bg-base-100 shadow p-3 md:[grid-area:tree] overflow-y-auto">
+      {% block tree %}{% include "_studio_tree.html" %}{% endblock %}
+    </aside>
+
+    <main id="studio-grid" data-panel="grid" role="region"
+          aria-label="Spec preview grid" tabindex="0"
+          class="card bg-base-100 shadow p-3 md:[grid-area:grid] overflow-auto">
+      {% block grid %}{% include "_studio_grid.html" %}{% endblock %}
+    </main>
+
+    <aside id="studio-context" data-panel="context" role="complementary"
+           aria-label="Context and help" tabindex="0"
+           class="card bg-base-100 shadow p-3 md:[grid-area:context] overflow-y-auto">
+      {% block context %}{% include "_studio_context.html" %}{% endblock %}
+    </aside>
+
+    <footer id="studio-console" data-panel="console" role="region"
+            aria-label="Run console" tabindex="0"
+            class="card bg-base-100 shadow p-3 md:[grid-area:console] max-h-64 overflow-y-auto">
+      {% block console %}{% include "_studio_console.html" %}{% endblock %}
+    </footer>
+  </div>
+
+  {# ── S-120 method picker ───────────────────────────────────────────────
+     Alpine component mounted once at page level. Listens for
+     ``studio:open-method-picker`` window events dispatched by the column
+     method pill (see ``spec_row.html``) and PUTs the selection via the
+     S-119 column-edit endpoint, swapping the returned ``spec_row.html``
+     fragment in place via outerHTML.
+  ── #}
+  {% include "studio/method_picker.html" %}
+
+  {# ── S-137 write-guard modal ────────────────────────────────────────────
+     Confirmation step before any live INSERT — shows the redacted target
+     DSN + the per-table scope, requires explicit Confirm. Listens for
+     ``studio:open-write-guard`` window events dispatched by the Insert
+     button after a successful ``POST /api/insert/preview`` response.
+  ── #}
+  {% include "studio/write_guard_modal.html" %}
+{% endblock %}

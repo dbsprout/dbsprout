@@ -1,0 +1,193 @@
+{# Integrity report HTMX fragment (S-133).
+
+   Rendered by ``dbsprout.web.routers.validate.validate_run`` when the request
+   carries ``HX-Request: true``. The panel surfaces a clean "pass" state when no
+   violations exist, and a per-table summary plus detail rows when there are
+   violations. Detail rows carry stable ``data-table`` / ``data-column`` /
+   ``data-row`` attributes so the S-135 drill-down can wire ``studio:focus-cell``
+   events on click.
+
+   Variables:
+     * ``no_run`` (bool) — render the 409 NO_RUN state when ``True``.
+     * ``message`` (str | None) — friendly message for the NO_RUN state.
+     * ``summary`` (dict | None) — ``{tables, rows, violations}``.
+     * ``by_table`` (list[dict]) — per-table counters.
+     * ``details`` (list[dict]) — capped at ``max_detail_rows`` failed checks.
+     * ``max_detail_rows`` (int) — cap echoed in the header when truncated.
+     * ``fidelity`` (dict | None) — ``{overall_score, passed, metrics}`` (S-134); omit when ``None``.
+     * ``detection`` (dict | None) — ``{overall_score, passed, metrics}`` (S-134); omit when ``None``.
+#}
+<div id="validate-panel" class="space-y-4">
+  {% if no_run %}
+    <div class="alert alert-warning" role="alert">
+      <div>
+        <h3 class="font-semibold">NO_RUN — no generation result yet</h3>
+        <p>{{ message }}</p>
+      </div>
+    </div>
+  {% else %}
+    <div class="flex items-center justify-between">
+      <h2 class="text-lg font-semibold">Integrity report</h2>
+      {% if summary.violations == 0 %}
+        <span class="badge badge-success">0 violations — all checks passed</span>
+      {% else %}
+        <span class="badge badge-error">{{ summary.violations }} violations</span>
+      {% endif %}
+    </div>
+
+    <div class="text-sm opacity-80">
+      Validated {{ summary.tables }} table(s), {{ summary.rows }} row(s).
+    </div>
+
+    <div class="overflow-x-auto">
+      <table class="table table-zebra">
+        <thead>
+          <tr>
+            <th>Table</th>
+            <th>FK</th>
+            <th>UNIQUE</th>
+            <th>NOT NULL</th>
+            <th>CHECK</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in by_table %}
+            <tr data-table="{{ row.table }}">
+              <td><code>{{ row.table }}</code></td>
+              <td>{{ row.fk_violations }}</td>
+              <td>{{ row.unique_violations }}</td>
+              <td>{{ row.not_null_violations }}</td>
+              <td>{{ row.check_violations }}</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+
+    {% if details %}
+      <div>
+        <h3 class="font-semibold mb-2">
+          Violation details
+          {% if details|length >= max_detail_rows %}
+            <span class="badge badge-warning">truncated to first {{ max_detail_rows }}</span>
+          {% endif %}
+        </h3>
+        <div class="overflow-x-auto">
+          <table class="table table-sm">
+            <thead>
+              <tr>
+                <th>Check</th>
+                <th>Table</th>
+                <th>Column</th>
+                <th>Details</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for d in details %}
+                <tr
+                  class="violation-row cursor-pointer"
+                  data-table="{{ d.table }}"
+                  data-column="{{ d.column }}"
+                  data-row=""
+                  tabindex="0"
+                  role="button"
+                  aria-label="Focus {{ d.table }}.{{ d.column }}"
+                >
+                  <td><span class="badge badge-outline">{{ d.check }}</span></td>
+                  <td><code>{{ d.table }}</code></td>
+                  <td><code>{{ d.column }}</code></td>
+                  <td>{{ d.details }}</td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    {% endif %}
+
+    {# S-134: Fidelity block — only rendered when source-data reference rows are available. #}
+    {% if fidelity %}
+      <div data-fidelity-panel>
+        <div class="flex items-center justify-between">
+          <h3 class="font-semibold">Fidelity</h3>
+          {% if fidelity.passed %}
+            <span class="badge badge-success">overall {{ "%.3f"|format(fidelity.overall_score) }}</span>
+          {% else %}
+            <span class="badge badge-warning">overall {{ "%.3f"|format(fidelity.overall_score) }}</span>
+          {% endif %}
+        </div>
+        {% if fidelity.metrics %}
+          <div class="overflow-x-auto">
+            <table class="table table-sm">
+              <thead>
+                <tr>
+                  <th>Metric</th>
+                  <th>Table</th>
+                  <th>Column</th>
+                  <th>Score</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for m in fidelity.metrics %}
+                  <tr data-fidelity-metric data-table="{{ m.table }}" data-column="{{ m.column }}">
+                    <td><span class="badge badge-outline">{{ m.metric }}</span></td>
+                    <td><code>{{ m.table }}</code></td>
+                    <td><code>{{ m.column }}</code></td>
+                    <td>{{ "%.3f"|format(m.score) }}</td>
+                  </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        {% endif %}
+      </div>
+    {% endif %}
+
+    {# S-134: Detection block — C2ST classifier accuracy per table. Lower = better. #}
+    {% if detection %}
+      <div data-detection-panel>
+        <div class="flex items-center justify-between">
+          <h3 class="font-semibold">Detection</h3>
+          {% if detection.passed %}
+            <span class="badge badge-success">overall {{ "%.3f"|format(detection.overall_score) }}</span>
+          {% else %}
+            <span class="badge badge-warning">overall {{ "%.3f"|format(detection.overall_score) }}</span>
+          {% endif %}
+        </div>
+        {% if detection.metrics %}
+          <div class="overflow-x-auto">
+            <table class="table table-sm">
+              <thead>
+                <tr>
+                  <th>Metric</th>
+                  <th>Table</th>
+                  <th>Accuracy</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for m in detection.metrics %}
+                  <tr data-detection-metric data-table="{{ m.table }}">
+                    <td><span class="badge badge-outline">{{ m.metric }}</span></td>
+                    <td><code>{{ m.table }}</code></td>
+                    <td>{{ "%.3f"|format(m.accuracy) }}</td>
+                  </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        {% endif %}
+      </div>
+    {% endif %}
+  {% endif %}
+</div>
+{# ── S-135 boot: wire violation rows → studio:focus-cell window event.
+   The fragment self-bootstraps so HTMX swaps (POST /api/validate replaces
+   the panel in place) re-wire the dispatcher on each render. #}
+<script>
+  (function () {
+    var panel = document.getElementById('validate-panel');
+    if (panel && typeof window.attachFocusCell === 'function') {
+      window.attachFocusCell(panel);
+    }
+  })();
+</script>

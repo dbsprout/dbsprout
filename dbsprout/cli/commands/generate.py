@@ -12,16 +12,15 @@ from rich.console import Console
 from rich.table import Table
 
 from dbsprout.config.models import DBSproutConfig
+from dbsprout.core import service
 from dbsprout.errors import ModelError
-from dbsprout.generate.orchestrator import GenerateResult, orchestrate
-from dbsprout.plugins.dispatch import resolve_writer as _resolve_writer
+from dbsprout.generate.orchestrator import GenerateResult
 from dbsprout.schema.models import DatabaseSchema
 
 if TYPE_CHECKING:
     from dbsprout.cli.sources import SchemaSource
     from dbsprout.migrate.snapshot import SnapshotStore
     from dbsprout.migrate.update_models import UpdateResult
-    from dbsprout.output.models import InsertResult
     from dbsprout.quality.integrity import IntegrityReport
 
 console = Console()
@@ -165,9 +164,9 @@ def generate_command(  # noqa: PLR0913
             )
         _validate_lora_adapter_path(resolved_lora)
 
-    # Orchestrate
+    # Orchestrate (via the core service facade — single seam for CLI + web UI)
     ref = _load_reference_for_engine(reference_data, schema, engine)
-    result = orchestrate(
+    result = service.generate(
         schema,
         config,
         seed=seed,
@@ -194,10 +193,8 @@ def generate_command(  # noqa: PLR0913
         insert_method,
     )
 
-    # Validate integrity
-    from dbsprout.quality.integrity import validate_integrity  # noqa: PLC0415
-
-    integrity = validate_integrity(result.tables_data, schema)
+    # Validate integrity (via the facade re-export)
+    integrity = service.validate_integrity(result.tables_data, schema)
     _print_validation(integrity)
 
     # Record run telemetry (best-effort; never fails generation) — S-080
@@ -287,45 +284,39 @@ def _write_output(  # noqa: PLR0913
     upsert: bool = False,
     insert_method: str = "auto",
 ) -> None:
-    """Write generated data using the selected output writer."""
-    if upsert and output_format not in ("sql", "direct"):
-        console.print(
-            "[yellow]Warning:[/yellow] --upsert only applies to "
-            f"--output-format sql or direct; it is ignored for {output_format!r}."
-        )
-    if output_format == "sql":
-        writer = _resolve_writer("sql")
-        writer.write(
-            result.tables_data,
-            schema,
-            insertion_order,
-            output_dir,
-            dialect=dialect,
-            upsert=upsert,
-        )
-    elif output_format == "csv":
-        writer = _resolve_writer("csv")
-        writer.write(result.tables_data, schema, insertion_order, output_dir)
-    elif output_format in ("json", "jsonl"):
-        writer = _resolve_writer(output_format)
-        writer.write(
-            result.tables_data,
-            schema,
-            insertion_order,
-            output_dir,
-            fmt=output_format,
-        )
-    elif output_format == "parquet":
-        writer = _resolve_writer("parquet")
-        writer.write(result.tables_data, schema, insertion_order, output_dir)
-    elif output_format == "direct":
+    """Write generated data using the selected output writer.
+
+    File-format writes (sql/csv/json/jsonl/parquet) go through the core service
+    facade; the facade returns any non-fatal warnings (e.g. ``--upsert`` ignored
+    for a non-SQL format) which the CLI surfaces here. The interactive live-DB
+    ``direct`` target stays in the CLI (its psycopg/pymysql fallbacks are
+    CLI-coupled UX) — see ``dbsprout/core/service.py``.
+    """
+    if output_format == "direct":
         if not target_db:
             console.print("[red]Error:[/red] --db is required when using --output-format direct")
             raise typer.Exit(code=1)
+        from dbsprout.cli.commands._direct_insert import _run_direct_insert  # noqa: PLC0415
+
         _run_direct_insert(result, schema, insertion_order, target_db, insert_method, upsert)
-    else:
+        return
+
+    try:
+        outcome = service.write_output(
+            result,
+            schema,
+            insertion_order,
+            output_dir,
+            output_format=output_format,
+            dialect=dialect,
+            upsert=upsert,
+        )
+    except ValueError:
         console.print(f"[red]Error:[/red] Unknown output format: {output_format}")
-        raise typer.Exit(code=1)
+        raise typer.Exit(code=1) from None
+
+    for warning in outcome.warnings:
+        console.print(f"[yellow]Warning:[/yellow] {warning}")
 
 
 def _print_validation(report: IntegrityReport) -> None:
@@ -345,161 +336,6 @@ def _print_validation(report: IntegrityReport) -> None:
         table.add_row(check.check, check.table, check.column, status, check.details)
 
     console.print(table)
-
-
-def _detect_direct_dialect(url: str) -> str:
-    """Detect database dialect from a connection URL prefix."""
-    lower = url.lower()
-    if lower.startswith(("postgresql", "postgres")):
-        return "postgresql"
-    if lower.startswith("mysql"):
-        return "mysql"
-    if lower.startswith("sqlite"):
-        return "sqlite"
-    if lower.startswith("mssql"):
-        return "mssql"
-    return lower.split("://")[0].split("+")[0] if "://" in lower else "unknown"
-
-
-def _run_direct_insert(  # noqa: PLR0913
-    result: GenerateResult,
-    schema: DatabaseSchema,
-    insertion_order: list[str],
-    target_db: str,
-    insert_method: str = "auto",
-    upsert: bool = False,
-) -> None:
-    """Dispatch direct insertion to the appropriate dialect writer.
-
-    Parameters
-    ----------
-    result:
-        Generated data from the orchestrator.
-    schema:
-        Unified database schema.
-    insertion_order:
-        Table names in FK-safe insertion order.
-    target_db:
-        SQLAlchemy connection URL.
-    insert_method:
-        One of ``"auto"``, ``"copy"``, ``"load_data"``, ``"batch"``.
-        ``"auto"`` selects the fastest available writer for the dialect.
-    upsert:
-        When True, the PG COPY and MySQL LOAD DATA writers perform an
-        UPSERT via a staging table. The SQLAlchemy batch fallback does not
-        support UPSERT; a one-time warning is printed in that case.
-    """
-    dialect = _detect_direct_dialect(target_db)
-
-    # Validate method/dialect compatibility
-    if insert_method == "copy" and dialect != "postgresql":
-        console.print("[red]Error:[/red] --insert-method copy is only available for PostgreSQL.")
-        raise typer.Exit(code=1)
-    if insert_method == "load_data" and dialect != "mysql":
-        console.print("[red]Error:[/red] --insert-method load_data is only available for MySQL.")
-        raise typer.Exit(code=1)
-
-    method_name: str
-    insert_result: InsertResult
-
-    if upsert and (insert_method == "batch" or dialect in ("sqlite", "mssql")):
-        console.print(
-            "[yellow]Warning:[/yellow] --upsert is not supported by the "
-            "SQLAlchemy batch insert path; rows will be inserted without "
-            "UPSERT semantics."
-        )
-
-    if insert_method == "batch":
-        from dbsprout.output.sa_batch import SaBatchWriter  # noqa: PLC0415
-
-        method_name = f"SQLAlchemy batch INSERT ({dialect})"
-        insert_result = SaBatchWriter().write(
-            result.tables_data, schema, insertion_order, target_db
-        )
-
-    elif insert_method == "copy" or (insert_method == "auto" and dialect == "postgresql"):
-        try:
-            import psycopg  # noqa: F401, PLC0415
-
-            from dbsprout.output.pg_copy import PgCopyWriter  # noqa: PLC0415
-
-            method_name = (
-                "PostgreSQL COPY (auto-detected)"
-                if insert_method == "auto"
-                else "PostgreSQL COPY (user-selected)"
-            )
-            insert_result = PgCopyWriter().write(
-                result.tables_data,
-                schema,
-                insertion_order,
-                target_db,
-                upsert=upsert,
-            )
-        except ImportError:
-            console.print(
-                "[yellow]Warning:[/yellow] psycopg not installed, falling back to batch INSERT."
-            )
-            if upsert:
-                console.print(
-                    "[yellow]Warning:[/yellow] --upsert is ignored on the batch INSERT fallback."
-                )
-            from dbsprout.output.sa_batch import SaBatchWriter  # noqa: PLC0415
-
-            method_name = "SQLAlchemy batch INSERT (fallback)"
-            insert_result = SaBatchWriter().write(
-                result.tables_data, schema, insertion_order, target_db
-            )
-
-    elif insert_method == "load_data" or (insert_method == "auto" and dialect == "mysql"):
-        try:
-            import pymysql  # type: ignore[import-untyped]  # noqa: F401, PLC0415
-
-            from dbsprout.output.mysql_load_data import (  # noqa: PLC0415
-                MysqlLoadDataWriter,
-            )
-
-            method_name = (
-                "MySQL LOAD DATA (auto-detected)"
-                if insert_method == "auto"
-                else "MySQL LOAD DATA (user-selected)"
-            )
-            insert_result = MysqlLoadDataWriter().write(
-                result.tables_data,
-                schema,
-                insertion_order,
-                target_db,
-                upsert=upsert,
-            )
-        except ImportError:
-            console.print(
-                "[yellow]Warning:[/yellow] pymysql not installed, falling back to batch INSERT."
-            )
-            if upsert:
-                console.print(
-                    "[yellow]Warning:[/yellow] --upsert is ignored on the batch INSERT fallback."
-                )
-            from dbsprout.output.sa_batch import SaBatchWriter  # noqa: PLC0415
-
-            method_name = "SQLAlchemy batch INSERT (fallback)"
-            insert_result = SaBatchWriter().write(
-                result.tables_data, schema, insertion_order, target_db
-            )
-
-    else:
-        # sqlite, mssql, unknown -- all use SaBatchWriter
-        from dbsprout.output.sa_batch import SaBatchWriter  # noqa: PLC0415
-
-        method_name = f"SQLAlchemy batch INSERT ({dialect})"
-        insert_result = SaBatchWriter().write(
-            result.tables_data, schema, insertion_order, target_db
-        )
-
-    console.print(f"[blue]Insert method:[/blue] {method_name}")
-    console.print(
-        f"[green]Inserted {insert_result.total_rows} rows "
-        f"into {insert_result.tables_inserted} tables "
-        f"in {insert_result.duration_seconds:.3f}s[/green]"
-    )
 
 
 def _record_state(
@@ -596,8 +432,6 @@ def _persist_result(  # noqa: PLR0913
 
     Raises ``typer.Exit(1)`` if integrity validation fails.
     """
-    from dbsprout.quality.integrity import validate_integrity  # noqa: PLC0415
-
     if result.total_tables == 0:  # pragma: no cover — pre-checked by callers
         console.print("[yellow]No tables to generate.[/yellow]")
         raise typer.Exit(code=0)
@@ -613,7 +447,7 @@ def _persist_result(  # noqa: PLR0913
         upsert,
         insert_method,
     )
-    report = validate_integrity(result.tables_data, schema)
+    report = service.validate_integrity(result.tables_data, schema)
     _print_validation(report)
     _record_state(result, report, engine=engine, seed=seed, lora_path=None)
     _print_summary(result, output_dir, output_format)
@@ -674,13 +508,10 @@ def _load_schema_from_source(source: SchemaSource) -> DatabaseSchema:
     """
     import sqlalchemy as sa  # noqa: PLC0415
 
-    from dbsprout.schema.introspect import introspect  # noqa: PLC0415
-    from dbsprout.schema.parsers import parse_schema_file  # noqa: PLC0415
+    from dbsprout.core import service  # noqa: PLC0415
 
     try:
-        if source.kind == "db":
-            return introspect(source.raw_value)
-        return parse_schema_file(Path(source.raw_value))
+        return service.load_schema(source)
     except (FileNotFoundError, ValueError, OSError, sa.exc.SQLAlchemyError) as exc:
         msg = _scrub_schema_source_secrets(str(exc), source)
         console.print(f"[red]Error:[/red] {msg}")
@@ -725,7 +556,7 @@ def _run_full_gen_from_source(  # noqa: PLR0913
     cfg_path = config_path or Path("dbsprout.toml")
     config = DBSproutConfig.from_toml(cfg_path if cfg_path.exists() else None)
 
-    result = orchestrate(schema, config, seed=seed, default_rows=default_rows, engine=engine)
+    result = service.generate(schema, config, seed=seed, default_rows=default_rows, engine=engine)
     _persist_result(
         result,
         schema,
@@ -809,7 +640,9 @@ def _run_incremental(  # noqa: PLR0913
     cfg_path = config_path or Path("dbsprout.toml")
     config = DBSproutConfig.from_toml(cfg_path if cfg_path.exists() else None)
 
-    existing = orchestrate(old_schema, config, seed=seed, default_rows=default_rows, engine=engine)
+    existing = service.generate(
+        old_schema, config, seed=seed, default_rows=default_rows, engine=engine
+    )
 
     changes = SchemaDiffer.diff(old_schema, new_schema)
     if not changes:

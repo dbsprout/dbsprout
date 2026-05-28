@@ -285,3 +285,45 @@ class TestTableSpecCardinality:
             cardinality={"fk_ratio": 0.5},
         )
         assert ts.cardinality == {"fk_ratio": 0.5}
+
+
+# ── Field-description tests (S-123) ─────────────────────────────────
+
+
+class TestGeneratorConfigDescriptions:
+    """S-123: every ``GeneratorConfig`` field carries a user-facing description.
+
+    Studio surfaces these as field tooltips (``title=`` / ``aria-describedby``)
+    so users can understand a setting without reading source. Pydantic v2's
+    ``Field(description=…)`` is the single source of truth — no parallel
+    hand-maintained list.
+    """
+
+    def test_every_field_has_description(self) -> None:
+        """All public fields advertise a non-empty ``description``."""
+        for name, info in GeneratorConfig.model_fields.items():
+            assert info.description, f"GeneratorConfig.{name} missing description"
+            assert isinstance(info.description, str)
+            assert info.description.strip(), f"GeneratorConfig.{name} description is blank-ish"
+
+    def test_field_descriptions_helper_returns_map(self) -> None:
+        """``field_descriptions()`` exposes the descriptions as ``dict[str,str]``."""
+        from dbsprout.spec.models import field_descriptions  # noqa: PLC0415
+
+        mapping = field_descriptions()
+        assert isinstance(mapping, dict)
+        # Every model field must appear in the map with a non-empty string.
+        for name in GeneratorConfig.model_fields:
+            assert name in mapping, f"missing description for {name}"
+            assert isinstance(mapping[name], str)
+            assert mapping[name].strip(), f"blank description for {name}"
+
+    def test_field_descriptions_is_immutable_copy(self) -> None:
+        """Callers cannot mutate the shared module-level mapping."""
+        from dbsprout.spec.models import field_descriptions  # noqa: PLC0415
+
+        first = field_descriptions()
+        first["provider"] = "TAMPERED"
+        # Second call must not show the tampered value.
+        second = field_descriptions()
+        assert second["provider"] != "TAMPERED"

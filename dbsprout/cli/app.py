@@ -260,6 +260,30 @@ def audit_proxy(
     audit_command(last=last)
 
 
+@app.command(name="tui")
+def tui_proxy() -> None:
+    """Launch the interactive terminal UI (requires the 'tui' optional extra)."""
+    from dbsprout.cli.tui import tui_command  # noqa: PLC0415
+
+    tui_command()
+
+
+@app.command(name="serve")
+def serve_proxy(
+    host: str = typer.Option(
+        "127.0.0.1", "--host", help="Interface to bind (localhost only by default)."
+    ),
+    port: int = typer.Option(8420, "--port", "-p", min=1, max=65535, help="Port to listen on."),
+    reload: bool = typer.Option(
+        False, "--reload", help="Auto-reload on code changes (development only)."
+    ),
+) -> None:
+    """Launch the web dashboard (requires the 'web' optional extra)."""
+    from dbsprout.cli.serve import serve_command  # noqa: PLC0415
+
+    serve_command(host=host, port=port, reload=reload)
+
+
 @app.command(name="doctor")
 def doctor_proxy(
     db: str | None = typer.Option(

@@ -1,0 +1,256 @@
+{# ── S-117 / S-125 / S-126 / S-127 console panel ──
+   Three Alpine islands talk via a single window CustomEvent
+   ``studio:job-start`` with ``detail.jobId`` (and optional ``detail.seed``):
+
+   * S-127 generate launcher dispatches the event after a successful
+     ``POST /api/generate`` (returns ``{job_id, seed}``).
+   * S-126 cancel button listens, surfaces a Cancel control while a job is
+     running, and POSTs ``/api/jobs/{job_id}/cancel`` on click.
+   * S-125 live progress console listens, opens the S-109
+     ``/ws/jobs/{job_id}`` WebSocket via ``studioConsole()``
+     (``/static/studio_console.js``), and renders the per-table bars +
+     rows/sec + terminal summary.
+
+   Stable ids for the wave-merge / future stories:
+   ``studio-generate-btn``, ``studio-seed-input``, ``studio-cancel-button``,
+   ``studio-console-status``, ``studio-console-overall``,
+   ``studio-console-tables``, ``studio-console-summary``.
+#}
+<div class="flex flex-col h-full">
+
+  {# ── S-127 generate launcher ── #}
+  <div
+    id="studio-generate-form"
+    class="flex flex-wrap items-end gap-2 mb-3"
+    x-data="{
+      seed: '',
+      random: true,
+      lastSeed: null,
+      pending: false,
+      error: null,
+      async submit() {
+        this.pending = true;
+        this.error = null;
+        let body;
+        if (this.random || this.seed === '' || this.seed === null) {
+          body = { seed: null };
+        } else {
+          const parsed = Number(this.seed);
+          if (!Number.isFinite(parsed) || parsed < 0) {
+            this.error = 'Seed must be a non-negative integer.';
+            this.pending = false;
+            return;
+          }
+          body = { seed: parsed };
+        }
+        try {
+          const resp = await fetch('/api/generate', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body),
+          });
+          if (!resp.ok) {
+            const detail = await resp.json().catch(() => ({ detail: resp.statusText }));
+            this.error = detail.detail || resp.statusText;
+            return;
+          }
+          const data = await resp.json();
+          this.lastSeed = data.seed;
+          window.dispatchEvent(new CustomEvent('studio:job-start', { detail: { jobId: data.job_id, seed: data.seed } }));
+        } catch (err) {
+          this.error = String(err);
+        } finally {
+          this.pending = false;
+        }
+      },
+      copySeed() {
+        if (this.lastSeed === null || this.lastSeed === undefined) return;
+        const text = String(this.lastSeed);
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(text);
+        }
+      },
+    }"
+  >
+    <label class="form-control">
+      <span class="label-text text-xs opacity-70">Seed</span>
+      <input
+        id="studio-seed-input"
+        type="number"
+        min="0"
+        step="1"
+        inputmode="numeric"
+        placeholder="Random"
+        class="input input-bordered input-sm w-40"
+        x-model="seed"
+        :disabled="random || pending"
+        aria-label="Generation seed"
+      />
+    </label>
+    <label class="label cursor-pointer gap-2">
+      <input
+        id="studio-seed-random"
+        type="checkbox"
+        class="checkbox checkbox-sm"
+        x-model="random"
+      />
+      <span class="label-text text-xs">Random</span>
+    </label>
+    <button
+      id="studio-generate-btn"
+      type="button"
+      class="btn btn-primary btn-sm"
+      x-on:click="submit()"
+      :disabled="pending"
+    >
+      <span x-show="!pending">Generate</span>
+      <span x-show="pending">Submitting…</span>
+    </button>
+
+    <div
+      id="studio-seed-result"
+      class="flex items-center gap-2 ml-auto"
+      x-show="lastSeed !== null && lastSeed !== undefined"
+      x-cloak
+    >
+      <span class="text-xs opacity-70">Seed:</span>
+      <code
+        id="studio-seed-value"
+        class="text-xs font-mono"
+        x-text="lastSeed"
+      ></code>
+      <button
+        id="studio-copy-seed-btn"
+        type="button"
+        class="btn btn-ghost btn-xs"
+        x-on:click="copySeed()"
+        aria-label="Copy seed"
+        title="Copy seed"
+      >Copy seed</button>
+    </div>
+
+    <p
+      class="basis-full text-xs text-error"
+      x-show="error"
+      x-cloak
+      x-text="error"
+    ></p>
+  </div>
+
+  {# ── S-126 cancel button island ── #}
+  <div
+    class="flex items-center gap-2 mb-2"
+    x-data="{
+      jobId: null,
+      cancelling: false,
+      error: null,
+      async cancel() {
+        if (!this.jobId || this.cancelling) return;
+        this.cancelling = true;
+        this.error = null;
+        try {
+          const resp = await fetch(`/api/jobs/${this.jobId}/cancel`, { method: 'POST' });
+          if (!resp.ok) {
+            const body = await resp.json().catch(() => ({ detail: resp.statusText }));
+            this.error = body.detail || `Cancel failed (${resp.status})`;
+            this.cancelling = false;
+          }
+        } catch (e) {
+          this.error = String(e);
+          this.cancelling = false;
+        }
+      }
+    }"
+    x-on:studio:job-start.window="jobId = $event.detail?.jobId ?? null; cancelling = false; error = null;"
+  >
+    <button
+      id="studio-cancel-button"
+      data-testid="studio-cancel-button"
+      type="button"
+      class="btn btn-xs btn-error"
+      x-show="jobId"
+      x-bind:disabled="cancelling"
+      x-on:click="cancel()"
+    >
+      <span x-show="!cancelling">Cancel</span>
+      <span x-show="cancelling">Cancelling…</span>
+    </button>
+    <p
+      class="text-xs text-error"
+      role="alert"
+      x-show="error"
+      x-text="error"
+    ></p>
+  </div>
+
+  {# ── S-125 live progress console ── #}
+  <div class="flex flex-col flex-1" x-data="studioConsole()" data-component="studio-console">
+    <div class="flex items-center justify-between mb-2 gap-2">
+      <h2 class="text-sm font-semibold uppercase opacity-70">Run console</h2>
+      <div class="flex items-center gap-2 text-xs">
+        <span x-show="!frozen && tablesTotal > 0" class="opacity-70">
+          <span x-text="rowsPerSec.toLocaleString()"></span> rows/sec
+        </span>
+        <span
+          id="studio-console-status"
+          class="badge badge-ghost badge-sm"
+          x-text="status"
+          :class="{
+            'badge-success': status === 'succeeded',
+            'badge-error': status === 'failed' || status === 'cancelled',
+            'badge-warning': status === 'reconnecting',
+            'badge-info': status === 'running'
+          }"
+        >idle</span>
+      </div>
+    </div>
+
+    {# Overall progress bar — visible once a job is connected. #}
+    <div
+      id="studio-console-overall"
+      class="mb-2"
+      x-show="tablesTotal > 0"
+      role="progressbar"
+      aria-label="Overall generation progress"
+      :aria-valuenow="overall"
+      aria-valuemin="0"
+      aria-valuemax="100"
+    >
+      <div class="flex items-center justify-between text-xs opacity-70 mb-1">
+        <span>Overall</span>
+        <span><span x-text="tablesDone"></span> / <span x-text="tablesTotal"></span> tables · <span x-text="overall"></span>%</span>
+      </div>
+      <progress class="progress progress-primary w-full" :value="overall" max="100"></progress>
+    </div>
+
+    {# Per-table list (keyed by table name → stable Alpine x-for, no full re-render). #}
+    <div
+      id="studio-console-tables"
+      class="font-mono text-xs bg-base-300 rounded p-2 overflow-y-auto flex-1 min-h-[6rem]"
+      role="log"
+      aria-live="polite"
+    >
+      <p class="opacity-50" x-show="tables.length === 0 && !frozen">
+        No active run. Submit a generate job to stream live progress here.
+      </p>
+      <template x-for="t in visibleTables" :key="t.name">
+        <div class="flex items-center gap-2 py-0.5">
+          <span class="truncate w-1/3" x-text="t.name"></span>
+          <progress class="progress progress-primary flex-1" :value="t.percent" max="100"></progress>
+          <span class="opacity-70 tabular-nums" x-text="t.rows_done.toLocaleString() + ' rows'"></span>
+        </div>
+      </template>
+    </div>
+
+    <p
+      id="studio-console-summary"
+      class="text-xs mt-2"
+      x-show="frozen"
+      x-text="summary"
+      :class="{
+        'text-success': status === 'succeeded',
+        'text-error': status === 'failed' || status === 'cancelled'
+      }"
+    ></p>
+  </div>
+</div>

@@ -2,6 +2,21 @@
 
 Uses sqlglot to parse CREATE TABLE, ALTER TABLE, and CREATE INDEX
 statements across SQLite, PostgreSQL, and MySQL dialects.
+
+Performance notes (S-098)
+--------------------------
+The dominant avoidable cost in the original implementation was calling
+``dtype.sql()`` once per column.  That method deep-copies the entire
+expression sub-tree and re-runs the sqlglot generator just to get a
+human-readable type string like ``VARCHAR(100)`` or ``DECIMAL(10, 2)``.
+
+The replacement ``_dtype_raw_type()`` builds the same string cheaply from
+the DataType enum value (``dtype.this.value``) and its literal parameters,
+avoiding both the deepcopy and the generator dispatch.
+
+Additional micro-optimisation applied in the same pass:
+- Single-pass statement scan: CREATE TABLE, CREATE INDEX, and ALTER TABLE
+  are all collected in one loop instead of two.
 """
 
 from __future__ import annotations
@@ -118,24 +133,27 @@ def parse_ddl(
 
     tables: dict[str, TableSchema] = {}
     indexes: dict[str, list[IndexSchema]] = {}
+    alter_stmts: list[exp.Alter] = []
 
-    # First pass: CREATE TABLE
+    # Single pass: collect CREATE TABLE, CREATE INDEX, and ALTER TABLE.
+    # ALTER TABLE ADD FK statements reference tables that may not yet have
+    # been seen, so they are deferred and processed after all CREATEs.
     for stmt in statements:
         if stmt is None:
             continue
-        if isinstance(stmt, exp.Create) and isinstance(stmt.this, exp.Schema):
-            table = _extract_table(stmt)
-            if table is not None:
-                tables[table.name] = table
-        elif isinstance(stmt, exp.Create) and isinstance(stmt.this, exp.Index):
-            _extract_index(stmt, indexes)
+        if isinstance(stmt, exp.Create):
+            if isinstance(stmt.this, exp.Schema):
+                table = _extract_table(stmt)
+                if table is not None:
+                    tables[table.name] = table
+            elif isinstance(stmt.this, exp.Index):
+                _extract_index(stmt, indexes)
+        elif isinstance(stmt, exp.Alter):
+            alter_stmts.append(stmt)
 
-    # Second pass: ALTER TABLE ADD FK
-    for stmt in statements:
-        if stmt is None:
-            continue
-        if isinstance(stmt, exp.Alter):
-            _merge_alter_fks(stmt, tables)
+    # Process deferred ALTER TABLE ADD FK
+    for stmt in alter_stmts:
+        _merge_alter_fks(stmt, tables)
 
     if not tables:
         file_hint = f" in {source_file}" if source_file else ""
@@ -163,7 +181,13 @@ def parse_ddl(
 
 
 def _detect_dialect(sql_text: str) -> str | None:
-    """Auto-detect SQL dialect from DDL content."""
+    """Auto-detect SQL dialect from DDL content.
+
+    Scans the full text: dialect markers are not guaranteed to appear near
+    the top (e.g. ``SERIAL`` on a table defined after a large licence/comment
+    header), and this runs once per parse — negligible next to the per-column
+    cost.
+    """
     upper = sql_text.upper()
     if re.search(r"\bSERIAL\b", upper) or re.search(r"\bBIGSERIAL\b", upper):
         return "postgres"
@@ -248,7 +272,7 @@ def _extract_column(
     autoincrement = False
 
     if isinstance(dtype, exp.DataType):
-        raw_type = dtype.sql()
+        raw_type = _dtype_raw_type(dtype)
         mapped = _DTYPE_MAP.get(dtype.this)
         if mapped is not None:
             col_type = mapped
@@ -460,6 +484,44 @@ def _extract_index(
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────
+
+
+def _dtype_raw_type(dtype: exp.DataType) -> str:
+    """Build a human-readable type string without calling ``dtype.sql()``.
+
+    ``dtype.sql()`` deep-copies the entire sqlglot expression sub-tree and
+    then runs the full generator pipeline — expensive when called once per
+    column.  This function produces the same output (e.g. ``VARCHAR(100)``,
+    ``DECIMAL(10, 2)``, ``INTEGER``) using only attribute access and string
+    formatting, with no deep-copies.
+
+    Parameters
+    ----------
+    dtype:
+        A sqlglot ``DataType`` expression node.
+
+    Returns
+    -------
+    str
+        Human-readable type name, e.g. ``"VARCHAR(100)"``, ``"DECIMAL(10, 2)"``,
+        ``"INTEGER"``, ``"TIMESTAMPTZ"``.
+    """
+    base: str = dtype.this.value  # e.g. "VARCHAR", "DECIMAL", "INT", ...
+    params = dtype.expressions
+    if not params:
+        return base
+
+    parts: list[str] = []
+    for p in params:
+        inner = p.this if isinstance(p, exp.DataTypeParam) else p
+        if isinstance(inner, exp.Literal):
+            # Re-quote string literals to match ``dtype.sql()`` exactly
+            # (e.g. ENUM('active', 'inactive')); numeric literals stay bare.
+            parts.append(f"'{inner.this}'" if inner.is_string else inner.this)
+        else:
+            # Fallback: non-literal param (e.g. type name inside ARRAY(TEXT))
+            parts.append(inner.this.value if isinstance(inner, exp.DataType) else str(inner))
+    return f"{base}({', '.join(parts)})"
 
 
 def _mark_unique_from_constraint(

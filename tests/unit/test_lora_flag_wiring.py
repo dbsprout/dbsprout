@@ -19,6 +19,7 @@ from dbsprout.cli.commands.generate import (
     generate_command,
 )
 from dbsprout.config.models import DBSproutConfig
+from dbsprout.core import service as service_mod
 from dbsprout.errors import ModelError
 from dbsprout.generate.orchestrator import GenerateResult, orchestrate
 from dbsprout.schema.models import (
@@ -171,7 +172,7 @@ class TestGenerateCommandLoraValidation:
                 total_tables=1,
             )
 
-        with patch.object(gen_mod, "orchestrate", _fake_orchestrate):
+        with patch.object(service_mod, "orchestrate", _fake_orchestrate):
             gen_mod.generate_command(
                 schema_snapshot=snap_dir / "schema.json",
                 engine="spec",
@@ -218,7 +219,7 @@ class TestLoraConfigPrecedence:
         snap = self._setup(tmp_path, adapter)
         captured: dict[str, object] = {}
 
-        with patch.object(gen_mod, "orchestrate", self._capturing_orchestrate(captured)):
+        with patch.object(service_mod, "orchestrate", self._capturing_orchestrate(captured)):
             gen_mod.generate_command(
                 schema_snapshot=snap,
                 config_path=tmp_path / "dbsprout.toml",
@@ -238,7 +239,7 @@ class TestLoraConfigPrecedence:
         snap = self._setup(tmp_path, cfg_adapter)
         captured: dict[str, object] = {}
 
-        with patch.object(gen_mod, "orchestrate", self._capturing_orchestrate(captured)):
+        with patch.object(service_mod, "orchestrate", self._capturing_orchestrate(captured)):
             gen_mod.generate_command(
                 schema_snapshot=snap,
                 config_path=tmp_path / "dbsprout.toml",
@@ -254,7 +255,7 @@ class TestLoraConfigPrecedence:
         snap = self._setup(tmp_path, None)
         captured: dict[str, object] = {}
 
-        with patch.object(gen_mod, "orchestrate", self._capturing_orchestrate(captured)):
+        with patch.object(service_mod, "orchestrate", self._capturing_orchestrate(captured)):
             gen_mod.generate_command(
                 schema_snapshot=snap,
                 config_path=tmp_path / "dbsprout.toml",

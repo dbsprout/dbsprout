@@ -118,13 +118,20 @@ def _op_name(op: ast.Call) -> str:
 
 @dataclass(frozen=True)
 class DjangoMigrationParser:
-    """Parse Django migration histories into ``SchemaChange`` lists."""
+    """Parse Django migration histories into ``SchemaChange`` lists.
+
+    ``max_files`` caps the total number of migration files accepted per run.
+    Raise this value or narrow ``project_path`` if you hit the limit in a
+    legitimately large project.
+    """
+
+    max_files: int = 10_000
 
     def detect_changes(self, project_path: Path) -> list[SchemaChange]:
         # Populate _HANDLERS lazily to avoid circular import at module load.
         import dbsprout.migrate.parsers._django_handlers  # noqa: F401, PLC0415
 
-        files = _discover_migration_files(project_path)
+        files = _discover_migration_files(project_path, max_files=self.max_files)
         if not files:
             raise MigrationParseError(
                 f"no */migrations/*.py found under {project_path}",
@@ -145,11 +152,15 @@ class DjangoMigrationParser:
 # ---------------------------------------------------------------------------
 
 
-def _discover_migration_files(project_path: Path) -> list[Path]:
+def _discover_migration_files(project_path: Path, *, max_files: int = 10_000) -> list[Path]:
     """Return every migration file under ``project_path``.
 
     Filters out ``__init__.py``, ``__pycache__`` entries, files larger than
     1 MB, and anything that resolves outside ``project_path`` (symlink guard).
+
+    ``max_files`` caps the total number of migration files accepted; raise this
+    value or narrow ``project_path`` if you hit the limit in a legitimately
+    large project.
     """
     project_resolved = project_path.resolve()
     found: list[Path] = []
@@ -175,6 +186,11 @@ def _discover_migration_files(project_path: Path) -> list[Path]:
             logger.debug("skipping oversize migration file %s (%d bytes)", path, size)
             continue
         found.append(path)
+        if len(found) > max_files:
+            raise MigrationParseError(
+                f"discovered more than {max_files} Django migration files under "
+                f"{project_path}; raise max_files or narrow project_path to proceed",
+            )
     return found
 
 

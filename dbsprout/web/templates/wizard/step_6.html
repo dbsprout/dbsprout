@@ -1,0 +1,144 @@
+{#
+  ── S-143 · Step 6 (Insert / Export) ─────────────────────────────────────
+  Last surface: the user either INSERTs into the configured target database
+  (S-136 with the S-137 HMAC write-guard + S-141 method selector) or EXPORTs
+  the rows as a file (S-140).
+
+  Insert flow:
+    1. The "Preview insert" button POSTs ``/api/insert/preview`` to mint a
+       short-lived HMAC confirmation token.
+    2. On success it dispatches ``studio:open-write-guard`` with the response
+       body — the shared modal then opens, shows the redacted target + scope,
+       and POSTs ``/api/insert`` with the token after explicit confirmation.
+
+  Export flow:
+    1. Pick a format (sql / csv / json / parquet) and an optional single-table
+       scope. CSV / Parquet cannot stream multi-table runs in one file (the
+       error envelope says so explicitly).
+    2. The native form POSTs ``/api/export`` and the browser receives the
+       streamed download.
+── #}
+{% extends "wizard/_step_base.html" %}
+{% block content %}
+  <div data-wizard="true" class="space-y-4">
+    <p class="text-sm opacity-80">
+      You are done — pick how to deliver the data. Insert writes the rows into
+      your connected target with an explicit confirmation. Export downloads a
+      file you can ship anywhere.
+    </p>
+
+    {# ── Insert lane ──────────────────────────────────────────────────── #}
+    <section class="card bg-base-200" aria-labelledby="wizard-insert-h">
+      <div class="card-body">
+        <h3 id="wizard-insert-h" class="card-title text-sm">Insert into the target database</h3>
+        <p class="text-xs opacity-70">
+          Requires an active connection (Step 1) and a successful run (Step 4).
+          The write-guard modal will show the redacted target before confirming.
+        </p>
+        <div
+          x-data="{
+            pending: false,
+            error: null,
+            async preview() {
+              this.pending = true; this.error = null;
+              try {
+                const resp = await fetch('/api/insert/preview', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({}),
+                });
+                const body = await resp.json().catch(() => ({}));
+                if (!resp.ok) {
+                  this.error = (body.detail && body.detail.message) || resp.statusText;
+                  return;
+                }
+                window.dispatchEvent(new CustomEvent('studio:open-write-guard', { detail: body }));
+              } catch (err) { this.error = String(err); }
+              finally { this.pending = false; }
+            },
+          }"
+        >
+          <button type="button" class="btn btn-primary btn-sm"
+                  x-on:click="preview()" :disabled="pending"
+                  data-testid="wizard-insert-preview">
+            <span x-show="!pending">Preview insert…</span>
+            <span x-show="pending">Loading…</span>
+          </button>
+          <p class="text-xs text-error mt-2" x-show="error" x-text="error"></p>
+        </div>
+      </div>
+    </section>
+
+    {# ── Export lane ──────────────────────────────────────────────────── #}
+    <section class="card bg-base-200" aria-labelledby="wizard-export-h">
+      <div class="card-body">
+        <h3 id="wizard-export-h" class="card-title text-sm">Export to a file</h3>
+        <div
+          data-testid="wizard-export-form"
+          x-data="{
+            format: 'sql',
+            tablesText: '',
+            pending: false,
+            error: null,
+            parseTables() {
+              const raw = (this.tablesText || '').split(',').map(s => s.trim()).filter(Boolean);
+              return raw.length ? raw : null;
+            },
+            filenameFor(fmt) {
+              const map = { sql: 'export.sql', csv: 'export.csv', json: 'export.json', parquet: 'export.parquet' };
+              return map[fmt] || ('export.' + fmt);
+            },
+            async submit() {
+              this.pending = true; this.error = null;
+              try {
+                const resp = await fetch('/api/export', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ format: this.format, tables: this.parseTables() }),
+                });
+                if (!resp.ok) {
+                  const body = await resp.json().catch(() => ({}));
+                  this.error = (body.detail && body.detail.message) || resp.statusText;
+                  return;
+                }
+                const blob = await resp.blob();
+                const a = document.createElement('a');
+                a.href = URL.createObjectURL(blob);
+                a.download = this.filenameFor(this.format);
+                document.body.appendChild(a); a.click(); a.remove();
+              } catch (err) { this.error = String(err); }
+              finally { this.pending = false; }
+            },
+          }"
+          class="space-y-2"
+        >
+          <label class="form-control">
+            <span class="label-text text-xs opacity-70">Format</span>
+            <select x-model="format" class="select select-bordered select-sm">
+              <option value="sql">sql (INSERT statements)</option>
+              <option value="json">json</option>
+              <option value="csv">csv (single table)</option>
+              <option value="parquet">parquet (single table)</option>
+            </select>
+          </label>
+          <label class="form-control">
+            <span class="label-text text-xs opacity-70">Tables (optional, comma-separated)</span>
+            <input type="text" x-model="tablesText"
+                   class="input input-bordered input-sm font-mono"
+                   placeholder="users, orders" />
+          </label>
+          <button type="button" class="btn btn-secondary btn-sm"
+                  x-on:click="submit()" :disabled="pending">
+            <span x-show="!pending">Download</span>
+            <span x-show="pending">Preparing…</span>
+          </button>
+          <p class="text-xs text-error" x-show="error" x-text="error"></p>
+        </div>
+      </div>
+    </section>
+
+    {# Mount the shared write-guard modal once at the bottom — it listens for
+       ``studio:open-write-guard`` window events fired by the Preview button. #}
+    {% include "studio/write_guard_modal.html" %}
+  </div>
+{% endblock %}

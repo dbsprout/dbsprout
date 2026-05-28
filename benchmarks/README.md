@@ -43,10 +43,61 @@ releases.
 
 ## CI
 
-The `benchmark` job in `.github/workflows/ci.yml` runs the suite
-non-blocking (`continue-on-error: true`) and uploads
-`benchmark-results.json` as a build artifact.
+Two jobs in `.github/workflows/ci.yml` consume this suite:
 
-> Historical baseline comparison with a >20% regression gate requires a
-> persistent artifact store (e.g. gh-pages or an external benchmark store)
-> and is tracked as a follow-up story.
+- **`benchmark`** — runs the suite non-blocking (`continue-on-error: true`)
+  and uploads `benchmark-results.json` as a build artifact (trend analysis).
+- **`benchmark-gate`** — the **blocking** regression gate (S-096). It runs
+  the suite and then compares the result against the committed baseline,
+  failing CI on a regression.
+
+## Regression gate (S-096)
+
+`check_regression.py` compares a fresh `benchmark-results.json` against the
+committed baseline `baseline.json` and **fails when any benchmark's mean run
+time regresses by more than 20%** (a benchmark regresses when
+`current.mean > baseline.mean * 1.20`). The 20% margin is wide enough to
+tolerate normal CI hardware variance while still catching real regressions.
+
+Run it locally:
+
+```bash
+uv run pytest benchmarks/ --benchmark-json=benchmark-results.json
+uv run python benchmarks/check_regression.py \
+    --baseline benchmarks/baseline.json \
+    --current benchmark-results.json
+```
+
+Exit codes: `0` (no regression), `1` (regression found — CI fails), `2`
+(bad input). A custom threshold can be passed with `--threshold 0.15`.
+
+Matching is by benchmark `fullname`. Benchmarks present in only one of the two
+files are ignored (a new benchmark cannot regress; a removed one is not a
+regression), so adding or removing a benchmark never breaks the gate.
+
+### Refreshing the baseline
+
+The committed baseline (`benchmarks/baseline.json`) is a slim file holding only
+each benchmark's `fullname` and `stats.mean`. Refresh it after an *intentional*
+performance change, when merging to `dev`/`main`:
+
+```bash
+uv run pytest benchmarks/ --benchmark-json=benchmark-results.json
+python - <<'PY'
+import json
+raw = json.load(open("benchmark-results.json"))
+slim = {
+    "version": raw.get("version"),
+    "benchmarks": [
+        {"name": b["name"], "fullname": b["fullname"], "stats": {"mean": b["stats"]["mean"]}}
+        for b in raw["benchmarks"]
+    ],
+}
+json.dump(slim, open("benchmarks/baseline.json", "w"), indent=2)
+open("benchmarks/baseline.json", "a").write("\n")
+PY
+git add benchmarks/baseline.json
+```
+
+> A future story may automate baseline persistence on merge (e.g. via
+> `github-action-benchmark` + gh-pages) to remove the manual refresh step.

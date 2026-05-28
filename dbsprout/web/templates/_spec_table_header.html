@@ -1,0 +1,21 @@
+{#
+  Spec table header fragment (S-121).
+
+  Re-rendered after PUT /api/spec/tables/{table_name} so HTMX can swap the
+  row-count display in the spec grid without re-rendering the whole grid.
+
+  Mirrors the ``<header>`` block of ``spec_grid.html`` exactly so the swap
+  target shape (``[data-row-count]``) and surrounding markup stay consistent.
+
+  Context:
+    * ``table_name``: the table whose row_count just changed.
+    * ``row_count``: the new value (int).
+#}
+<header class="flex items-center justify-between mb-2" data-table-header="{{ table_name }}">
+  <h3 class="font-semibold text-sm truncate" title="{{ table_name }}">
+    {{ table_name }}
+  </h3>
+  <span class="text-xs opacity-70" data-row-count>
+    {{ row_count }} rows
+  </span>
+</header>
