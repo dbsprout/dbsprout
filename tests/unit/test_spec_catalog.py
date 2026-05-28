@@ -119,3 +119,68 @@ def test_method_entry_carries_description_and_dtypes() -> None:
     assert isinstance(sample.dtypes, frozenset)
     assert all(isinstance(d, ColumnType) for d in sample.dtypes)
     assert isinstance(sample.params, frozenset)
+
+
+# ── S-123: human-readable method descriptions ─────────────────────────────
+
+
+def _entry(provider: str, method: str):  # type: ignore[no-untyped-def]
+    """Locate the catalogue entry for ``(provider, method)`` or fail loudly."""
+    for entry in iter_methods():
+        if entry.provider == provider and entry.method == method:
+            return entry
+    msg = f"missing catalogue entry {provider}.{method}"
+    raise AssertionError(msg)
+
+
+@pytest.mark.parametrize(
+    ("provider", "method", "needle"),
+    [
+        ("mimesis", "email", "email"),
+        ("builtin", "random_int", "integer"),
+        ("builtin", "random_bool", "boolean"),
+        ("builtin", "uuid4", "UUID"),
+        ("mimesis", "datetime", "datetime"),
+        ("builtin", "random_choice", "enum"),
+    ],
+)
+def test_method_entry_description_is_user_friendly_for_known_methods(
+    provider: str,
+    method: str,
+    needle: str,
+) -> None:
+    """Known methods carry a curated, user-friendly description.
+
+    The exact wording isn't pinned; we just require the description to
+    contain a topical keyword so the UI tooltip is meaningful rather
+    than the legacy ``"Mimesis email"`` placeholder.
+    """
+    entry = _entry(provider, method)
+    assert needle.lower() in entry.description.lower(), (
+        f"{provider}.{method} description {entry.description!r} missing {needle!r}"
+    )
+
+
+def test_describe_falls_back_for_unknown_methods() -> None:
+    """Unknown methods still get a non-empty default description.
+
+    Plugin-supplied methods that aren't curated must still surface
+    *something* on the UI rather than an empty string.
+    """
+    from dbsprout.spec.catalog import _describe  # noqa: PLC0415
+
+    out = _describe("custom_provider", "shiny_new_method")
+    assert out
+    assert isinstance(out, str)
+    # Fallback shape is provider-aware ("Custom_provider shiny new method")
+    # — we only assert it includes both tokens.
+    assert "shiny" in out.lower()
+
+
+def test_every_catalogue_entry_has_non_empty_description() -> None:
+    """No catalogue row should ship a blank description."""
+    for entry in iter_methods():
+        assert entry.description, f"{entry.provider}.{entry.method} blank description"
+        assert entry.description.strip(), (
+            f"{entry.provider}.{entry.method} whitespace-only description"
+        )

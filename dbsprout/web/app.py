@@ -117,6 +117,18 @@ def create_app(
         openapi_url=None,
     )
     app.state.templates = Jinja2Templates(directory=str(_TEMPLATES_DIR))
+    # ─── S-123 inline tooltips ───
+    # Expose two helpers as Jinja globals so any template can render a
+    # generator's human description or the GeneratorConfig field tooltips
+    # without re-importing the spec module. Single source of truth: the
+    # S-120 catalogue + the Pydantic ``description=`` fields on
+    # ``GeneratorConfig``.
+    from dbsprout.spec.catalog import _describe as _catalog_describe  # noqa: PLC0415
+    from dbsprout.spec.models import field_descriptions  # noqa: PLC0415
+
+    app.state.templates.env.globals["describe_method"] = _catalog_describe
+    app.state.templates.env.globals["field_descriptions"] = field_descriptions
+    # ─── end S-123 ───
     app.state.get_state_db = lambda: StateDB(resolved)
     app.state.get_snapshot_store = lambda: SnapshotStore(base_dir=resolved_snapshots)
     # ─── S-111 in-memory session ───
