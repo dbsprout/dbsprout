@@ -55,6 +55,8 @@ def test_web_error_code_enum_is_closed_set() -> None:
         "NO_CONNECTION",
         "NO_RUN",
         "WRITE_GUARD_REQUIRED",
+        # S-137 write-guard HMAC token validation.
+        "WRITE_GUARD_REJECTED",
     }
     assert {m.name for m in WebErrorCode} == expected
     # Each code is a plain string so it round-trips through JSON unchanged.

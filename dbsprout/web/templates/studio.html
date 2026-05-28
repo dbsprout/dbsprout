@@ -83,4 +83,12 @@
      fragment in place via outerHTML.
   ── #}
   {% include "studio/method_picker.html" %}
+
+  {# ── S-137 write-guard modal ────────────────────────────────────────────
+     Confirmation step before any live INSERT — shows the redacted target
+     DSN + the per-table scope, requires explicit Confirm. Listens for
+     ``studio:open-write-guard`` window events dispatched by the Insert
+     button after a successful ``POST /api/insert/preview`` response.
+  ── #}
+  {% include "studio/write_guard_modal.html" %}
 {% endblock %}

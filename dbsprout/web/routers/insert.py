@@ -63,10 +63,16 @@ registered by :func:`dbsprout.web.app.create_app` inside a delimited region.
 
 from __future__ import annotations
 
+import base64
+import hashlib
+import hmac
+import json
 import os
+import secrets
+import time
 from typing import TYPE_CHECKING, Any, cast
 
-from fastapi import APIRouter, HTTPException, Request, status
+from fastapi import APIRouter, FastAPI, HTTPException, Request, status
 from pydantic import BaseModel, ConfigDict, Field
 
 if TYPE_CHECKING:
@@ -84,52 +90,226 @@ insert_router = APIRouter()
 # ─────────────────────────────────────────────────────────────────────────
 # region: write-guard (S-137)
 # ─────────────────────────────────────────────────────────────────────────
-# S-137 (Wave 2) lands the real HMAC verification + scope binding inside
-# this region; the insert handler does not change. Until then the contract
-# is:
+# S-137 lands the real HMAC verification + scope binding plus the
+# ``POST /api/insert/preview`` endpoint that issues short-lived,
+# single-use, scope-bound tokens.
 #
-#   * ``_require_confirmation_token`` raises ``403 WRITE_GUARD_REQUIRED``
-#     when the token is missing, UNLESS the test-only escape hatch env var
-#     ``DBSPROUT_DISABLE_WRITE_GUARD`` is set (production code never sets
-#     this — it exists so S-136's own happy-path tests can drive the insert
-#     without an HMAC-signed token).
-#   * ``_validate_confirmation_token`` is a no-op stub returning ``True``
-#     for any non-empty token. S-137 replaces the body with a real HMAC
-#     verify + ``(target, scope)`` re-derivation; this signature is the
-#     pre-agreed seam.
+# Design:
+#
+#   * The token is ``base64url(json(payload)).base64url(hmac_sha256(secret,
+#     json(payload)))``. ``payload`` carries ONLY hashes — never the raw
+#     DSN — so a leaked token never leaks credentials.
+#   * The HMAC secret comes from ``app.state.config.web.secret_key`` if
+#     present, else a 32-byte secret is generated lazily at the first
+#     verification call and stashed on ``app.state.write_guard_secret``.
+#     The secret is never persisted to disk.
+#   * ``app.state.write_guard_issued`` is a ``dict[nonce -> exp]`` of
+#     unconsumed tokens — single-use enforcement pops the entry; expired
+#     entries are garbage-collected lazily on every preview call.
+#   * The test-only env var ``DBSPROUT_DISABLE_WRITE_GUARD`` short-circuits
+#     ONLY the *missing-token* path (preserving the S-136 contract for the
+#     existing happy-path tests in ``test_insert.py``). A present-but-
+#     invalid token is ALWAYS rejected, env var or no env var — production
+#     code path cannot be bypassed by a non-local actor.
 # ─────────────────────────────────────────────────────────────────────────
 
 #: Test-only escape hatch env var. Production callers never set this.
 _WRITE_GUARD_DISABLED_ENV = "DBSPROUT_DISABLE_WRITE_GUARD"
 
+#: Preview token TTL in seconds (5 min default — long enough for a human
+#: to read the modal and click Confirm; short enough to bound replay).
+_PREVIEW_TOKEN_TTL = 300
+
+#: HMAC secret size — stdlib :func:`secrets.token_bytes` produces a
+#: cryptographically strong random byte-string of this length.
+_SECRET_BYTES = 32
+
 
 def _write_guard_disabled() -> bool:
     """``True`` when the test-only escape hatch env var is set to a truthy value.
 
-    Kept as a private helper so the env-var name lives in exactly one place;
-    S-137 will not touch this either.
+    The env var ONLY short-circuits the *missing-token* path (handled in
+    :func:`_require_confirmation_token` below). It has no effect on the
+    HMAC verification — a present-but-invalid token is always rejected.
     """
     raw = os.environ.get(_WRITE_GUARD_DISABLED_ENV, "")
     return raw.strip().lower() in {"1", "true", "yes", "on"}
 
 
-def _validate_confirmation_token(
+def _b64url_encode(raw: bytes) -> str:
+    """Padding-free base64url encode."""
+    return base64.urlsafe_b64encode(raw).rstrip(b"=").decode("ascii")
+
+
+def _b64url_decode(text: str) -> bytes:
+    """Padding-free base64url decode (raises ``ValueError`` on malformed input)."""
+    pad = "=" * (-len(text) % 4)
+    return base64.urlsafe_b64decode(text + pad)
+
+
+def _get_write_guard_secret(app: FastAPI) -> bytes:
+    """Return the per-app HMAC secret, generating + memoising one on first call.
+
+    Resolution order:
+      1. ``app.state.config.web.secret_key`` — if a config object is wired
+         (production / when ``--secret-key`` is provided), use it directly.
+      2. ``app.state.write_guard_secret`` — once we generate a random
+         secret on first call, memoise it on ``app.state`` so subsequent
+         calls within the same app instance see the same secret. The
+         secret is NEVER persisted to disk.
+
+    The function is idempotent and side-effect-free except for memoising
+    a freshly-generated secret on the app state.
+    """
+    config = getattr(app.state, "config", None)
+    if config is not None:
+        web_config = getattr(config, "web", None)
+        if web_config is not None:
+            secret_key = getattr(web_config, "secret_key", None)
+            if secret_key:
+                # Normalise str → bytes if the user supplied a string.
+                if isinstance(secret_key, str):
+                    return secret_key.encode("utf-8")
+                return cast("bytes", secret_key)
+    existing = getattr(app.state, "write_guard_secret", None)
+    if existing is not None:
+        return cast("bytes", existing)
+    fresh = secrets.token_bytes(_SECRET_BYTES)
+    app.state.write_guard_secret = fresh
+    return fresh
+
+
+def _hash_target(target_url: str) -> str:
+    """Return a stable SHA-256 hex digest of *target_url*.
+
+    Used in the token payload so the server can re-derive the binding on
+    the wire without storing the raw DSN (no credential leak via the
+    token).
+    """
+    return hashlib.sha256(target_url.encode("utf-8")).hexdigest()
+
+
+def _hash_scope(scope_pairs: list[tuple[str, int]]) -> str:
+    """Return a stable SHA-256 hex digest of the (table, row_count) scope.
+
+    Ordering is normalised before hashing so that two equivalent scopes
+    presented in different orders yield the same digest. The pair-form
+    binds the row count too, so a regen that produces a different row
+    count for the same table invalidates the token (the user gets a
+    fresh preview).
+    """
+    canonical = "\n".join(f"{name}:{count}" for name, count in sorted(scope_pairs))
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def _encode_token(payload: dict[str, Any], secret: bytes) -> str:
+    """Encode *payload* into a signed ``payload_b64.sig_b64`` token string."""
+    payload_bytes = json.dumps(payload, separators=(",", ":"), sort_keys=True).encode("utf-8")
+    sig = hmac.new(secret, payload_bytes, hashlib.sha256).digest()
+    return f"{_b64url_encode(payload_bytes)}.{_b64url_encode(sig)}"
+
+
+def _decode_token(token: str, secret: bytes) -> dict[str, Any] | None:
+    """Verify HMAC + decode payload. Returns ``None`` on ANY failure.
+
+    Constant-time HMAC compare via :func:`hmac.compare_digest`. We never
+    raise here — callers want a boolean / ``None`` result so they can
+    surface a uniform 403 rather than leaking exception type info.
+    """
+    if not isinstance(token, str) or "." not in token:
+        return None
+    try:
+        payload_b64, sig_b64 = token.split(".", 1)
+        payload_bytes = _b64url_decode(payload_b64)
+        signature = _b64url_decode(sig_b64)
+    except (ValueError, TypeError):
+        return None
+    expected = hmac.new(secret, payload_bytes, hashlib.sha256).digest()
+    if not hmac.compare_digest(signature, expected):
+        return None
+    try:
+        decoded = json.loads(payload_bytes.decode("utf-8"))
+    except (ValueError, UnicodeDecodeError):
+        return None
+    if not isinstance(decoded, dict):
+        return None
+    return cast("dict[str, Any]", decoded)
+
+
+def _gc_issued_tokens(issued: dict[str, int]) -> None:
+    """Remove expired nonces from the issued-token registry (in-place)."""
+    now = int(time.time())
+    expired = [nonce for nonce, exp in issued.items() if exp <= now]
+    for nonce in expired:
+        issued.pop(nonce, None)
+
+
+def _get_issued_registry(app: FastAPI) -> dict[str, int]:
+    """Return the per-app issued-token registry, creating it on first call."""
+    registry = getattr(app.state, "write_guard_issued", None)
+    if registry is None:
+        registry = {}
+        app.state.write_guard_issued = registry
+    return cast("dict[str, int]", registry)
+
+
+def _validate_confirmation_token(  # noqa: PLR0911 — each guard returns False
     token: str,
     *,
     scope: list[str],
     target_url: str,
+    app: FastAPI | None = None,
+    row_counts: dict[str, int] | None = None,
 ) -> bool:
-    """Validate a confirmation token against the announced scope + target.
+    """Verify *token* against the announced *scope* + *target_url*.
 
-    **S-136 stub.** Returns ``True`` for any non-empty token — S-137 will
-    replace the body with a real HMAC verify + a scope/target hash compare.
-    The signature is the pre-agreed seam; callers (the insert handler) will
-    not change when S-137 lands. ``scope`` + ``target_url`` are accepted
-    here (even though the stub ignores them) so the S-137 implementation
-    has the parameters it needs without a signature churn.
+    Returns ``True`` only if every check passes:
+
+      1. Token decodes + HMAC verifies under the per-app secret.
+      2. Token has not expired (``exp > now``).
+      3. ``target_hash`` matches ``_hash_target(target_url)``.
+      4. ``scope_hash`` matches ``_hash_scope(zip(scope, row_counts))``.
+      5. The ``nonce`` is in the issued-token registry (single-use).
+
+    On success the nonce is popped from the registry so a second call
+    with the same token fails (single-use).
+
+    Any failure path returns ``False`` — callers translate to
+    ``403 WRITE_GUARD_REJECTED``.
+
+    The ``app`` parameter is optional only for the historical S-136
+    signature compatibility; when ``None`` the function returns ``False``
+    (we cannot verify without access to the per-app secret + registry).
     """
-    del scope, target_url  # used by S-137; recorded here to lock the contract.
-    return bool(token)
+    if app is None or not token:
+        return False
+    secret = _get_write_guard_secret(app)
+    payload = _decode_token(token, secret)
+    if payload is None:
+        return False
+    exp = payload.get("exp")
+    nonce = payload.get("nonce")
+    claimed_target = payload.get("target_hash")
+    claimed_scope = payload.get("scope_hash")
+    if not isinstance(exp, int):
+        return False
+    if exp <= int(time.time()):
+        return False
+    if not isinstance(nonce, str):
+        return False
+    if not isinstance(claimed_target, str) or not isinstance(claimed_scope, str):
+        return False
+    if not hmac.compare_digest(claimed_target, _hash_target(target_url)):
+        return False
+    rc = row_counts or {}
+    expected_scope_hash = _hash_scope([(t, int(rc.get(t, 0))) for t in scope])
+    if not hmac.compare_digest(claimed_scope, expected_scope_hash):
+        return False
+    issued = _get_issued_registry(app)
+    if nonce not in issued:
+        return False
+    issued.pop(nonce, None)
+    return True
 
 
 def _require_confirmation_token(
@@ -137,42 +317,131 @@ def _require_confirmation_token(
     *,
     scope: list[str],
     target_url: str,
+    app: FastAPI | None = None,
+    row_counts: dict[str, int] | None = None,
 ) -> None:
-    """Enforce the write-guard gate (S-136 from day one).
+    """Enforce the write-guard gate.
 
-    Raises :class:`fastapi.HTTPException` ``403 WRITE_GUARD_REQUIRED`` when
-    the token is missing. When present, delegates to
-    :func:`_validate_confirmation_token` (a stub today; HMAC verify under
-    S-137). The test-only escape hatch ``DBSPROUT_DISABLE_WRITE_GUARD``
-    short-circuits the missing-token path so S-136's happy-path tests can
-    drive the insert without first synthesising an HMAC-signed token.
-    Production callers never set this env var; the gate cannot be bypassed
-    by a non-local actor.
+    * Token missing AND env var unset → 403 ``WRITE_GUARD_REQUIRED``.
+    * Token missing AND env var set → returns (test-only escape hatch).
+    * Token present BUT fails HMAC / scope / TTL / single-use → 403
+      ``WRITE_GUARD_REJECTED`` regardless of the env var (production
+      code path is never bypassable for present-but-invalid tokens).
     """
-    if not token:  # None or empty string — both fail the gate.
+    if not token:
         if _write_guard_disabled():
             return
         from dbsprout.web.errors import (  # noqa: PLC0415
             web_error_write_guard_required,
         )
 
-        # The handler reroutes failed-validation paths via raise_web_error,
-        # but for the missing-token path we raise a JSON ``HTTPException``
-        # directly so the gate is uniform whether reached from the handler
-        # or from a future direct caller (S-137 will use this same helper).
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail=web_error_write_guard_required().to_dict(),
         )
-    # Stub validation; S-137 will plug in real HMAC verification here.
-    if not _validate_confirmation_token(token, scope=scope, target_url=target_url):
+    # Token present — always verify, env var has NO effect here.
+    if not _validate_confirmation_token(
+        token,
+        scope=scope,
+        target_url=target_url,
+        app=app,
+        row_counts=row_counts,
+    ):
+        from dbsprout.web.errors import (  # noqa: PLC0415
+            web_error_write_guard_rejected,
+        )
+
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail={
-                "code": "WRITE_GUARD_REQUIRED",
-                "message": "Confirmation token failed validation.",
-            },
+            detail=web_error_write_guard_rejected().to_dict(),
         )
+
+
+class PreviewRequest(BaseModel):
+    """Request body for ``POST /api/insert/preview``.
+
+    Mirrors :class:`InsertRequest` — only ``tables`` is meaningful here;
+    forbidding extra keys keeps the contract tight (mirrors siblings).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    tables: list[str] | None = Field(default=None)
+
+
+@insert_router.post("/api/insert/preview")
+async def insert_preview_endpoint(request: Request, body: PreviewRequest) -> dict[str, Any]:
+    """Issue a short-lived, single-use, scope-bound confirmation token.
+
+    Guards:
+
+    * No target on workspace → ``409 NO_CONNECTION``.
+    * No generation result on workspace → ``409 NO_RUN``.
+    * Unknown table in ``tables[]`` → ``422``.
+
+    Response shape:
+
+    .. code-block:: json
+
+        {
+          "target": "<redacted DSN>",
+          "dialect": "postgresql",
+          "scope": [{"table": "users", "row_count": 100}, ...],
+          "total_rows": 250,
+          "confirmation_token": "<base64url(payload).base64url(sig)>"
+        }
+
+    The token payload carries only hashes (``target_hash``,
+    ``scope_hash``) plus a ``nonce`` and ``exp`` — never the raw DSN.
+    """
+    from dbsprout.web.errors import (  # noqa: PLC0415
+        raise_web_error,
+        web_error_no_connection,
+        web_error_no_run,
+    )
+    from dbsprout.web.workspace import _redact_url  # noqa: PLC0415
+
+    workspace = _workspace(request)
+    raw_target = workspace.peek_target_url()
+    if raw_target is None:
+        raise_web_error(request, web_error_no_connection())
+    result = workspace.get_last_result()
+    if result is None or not result.tables_data:
+        raise_web_error(request, web_error_no_run())
+    assert result is not None  # narrowed
+    known = set(result.tables_data.keys())
+    if body.tables:
+        unknown = [t for t in body.tables if t not in known]
+        if unknown:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail=f"Unknown tables: {', '.join(sorted(unknown))}",
+            )
+    insertion_order_scope, _scope_warnings = _resolve_scope(result, body.tables)
+    row_counts = {t: len(result.tables_data.get(t, [])) for t in insertion_order_scope}
+
+    # Build + sign the token.
+    assert raw_target is not None  # narrowed
+    secret = _get_write_guard_secret(request.app)
+    nonce = secrets.token_hex(16)
+    payload: dict[str, Any] = {
+        "target_hash": _hash_target(raw_target),
+        "scope_hash": _hash_scope([(t, row_counts[t]) for t in insertion_order_scope]),
+        "exp": int(time.time()) + _PREVIEW_TOKEN_TTL,
+        "nonce": nonce,
+    }
+    token = _encode_token(payload, secret)
+    issued = _get_issued_registry(request.app)
+    _gc_issued_tokens(issued)  # lazy GC of expired nonces
+    issued[nonce] = payload["exp"]
+
+    return {
+        "target": _redact_url(raw_target),
+        "dialect": _detect_direct_dialect(raw_target),
+        "scope": [{"table": t, "row_count": row_counts[t]} for t in insertion_order_scope],
+        "total_rows": sum(row_counts.values()),
+        "confirmation_token": token,
+    }
 
 
 # endregion write-guard
@@ -496,15 +765,16 @@ async def insert_endpoint(request: Request, body: InsertRequest) -> dict[str, An
     # 4. Resolve scope (FK-safe order preserved).
     insertion_order_scope, scope_warnings = _resolve_scope(result, body.tables)
 
-    # 5. Write-guard gate (S-137 forward-handoff). Must come AFTER the
-    # request shape is validated + scope is known, so the announced scope
-    # is what S-137's real HMAC verification will bind against. ``raw_target``
-    # is non-None at this point (guarded above).
+    # 5. Write-guard gate (S-137). Must come AFTER the request shape is
+    # validated + scope is known, so the announced scope is what the HMAC
+    # verification binds against. ``raw_target`` is non-None at this point.
     assert raw_target is not None  # narrowed by the guard above
     _require_confirmation_token(
         body.confirmation_token,
         scope=insertion_order_scope,
         target_url=raw_target,
+        app=request.app,
+        row_counts={t: len(result.tables_data.get(t, [])) for t in insertion_order_scope},
     )
 
     # 6. Select writer (lifted CLI policy — no new writer code).

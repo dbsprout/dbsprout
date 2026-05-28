@@ -106,6 +106,8 @@ class WebErrorCode(str, Enum):
     NO_RUN = "NO_RUN"
     # S-136 forward-handoff to S-137 (write-guard confirmation token).
     WRITE_GUARD_REQUIRED = "WRITE_GUARD_REQUIRED"
+    # S-137: token present but failed HMAC / scope / TTL / single-use check.
+    WRITE_GUARD_REJECTED = "WRITE_GUARD_REJECTED"
 
 
 @dataclass(frozen=True)
@@ -259,6 +261,10 @@ _CODE_HINTS: dict[WebErrorCode, str] = {
     WebErrorCode.NO_RUN: "POST /api/generate to produce data before inserting.",
     WebErrorCode.WRITE_GUARD_REQUIRED: (
         "Request a confirmation token from POST /api/insert/preview (S-137) and resubmit."
+    ),
+    WebErrorCode.WRITE_GUARD_REJECTED: (
+        "Re-fetch a token from POST /api/insert/preview — yours expired, was "
+        "already used, or was bound to a different target/scope."
     ),
 }
 
@@ -446,6 +452,19 @@ def web_error_write_guard_required() -> WebError:
     )
 
 
+def web_error_write_guard_rejected() -> WebError:
+    """The provided confirmation token failed HMAC / scope / TTL / single-use check (S-137)."""
+    return WebError(
+        code=WebErrorCode.WRITE_GUARD_REJECTED,
+        message=(
+            "Confirmation token rejected: expired, single-use already consumed, "
+            "or bound to a different target / scope."
+        ),
+        status_code=403,
+        hint=_CODE_HINTS[WebErrorCode.WRITE_GUARD_REJECTED],
+    )
+
+
 # ---------------------------------------------------------------------------
 # Renderer: HTMX-aware response, plus logging hook.
 # ---------------------------------------------------------------------------
@@ -528,5 +547,6 @@ __all__ = [
     "web_error_no_connection",
     "web_error_no_run",
     "web_error_unknown_parser",
+    "web_error_write_guard_rejected",
     "web_error_write_guard_required",
 ]
