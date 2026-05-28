@@ -74,4 +74,13 @@
       {% block console %}{% include "_studio_console.html" %}{% endblock %}
     </footer>
   </div>
+
+  {# ── S-120 method picker ───────────────────────────────────────────────
+     Alpine component mounted once at page level. Listens for
+     ``studio:open-method-picker`` window events dispatched by the column
+     method pill (see ``spec_row.html``) and PUTs the selection via the
+     S-119 column-edit endpoint, swapping the returned ``spec_row.html``
+     fragment in place via outerHTML.
+  ── #}
+  {% include "studio/method_picker.html" %}
 {% endblock %}

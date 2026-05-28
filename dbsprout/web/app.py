@@ -39,6 +39,7 @@ from dbsprout.web.jobs import JobManager, JobRecord
 from dbsprout.web.progress import ProgressHub, progress_ws_router
 from dbsprout.web.routers.connect import connect_router
 from dbsprout.web.routers.generate import generate_router
+from dbsprout.web.routers.generators import generators_router
 from dbsprout.web.routers.jobs import jobs_router
 from dbsprout.web.routers.preview import preview_router
 from dbsprout.web.routers.schema import schema_router
@@ -225,6 +226,13 @@ def create_app(
     # fragment on ``Accept: text/html``. No persistence; no LLM.
     app.include_router(spec_router)
     # ── end S-118 ──
+    # ─── S-120 generators region ───
+    # GET /api/generators — provider/method catalogue derived from the
+    # spec.catalog helpers (heuristic PATTERNS + _TYPE_FALLBACKS). Read-only,
+    # workspace-independent; the Studio method-picker fetches this once on
+    # open to populate the dropdown.
+    app.include_router(generators_router)
+    # ─── end S-120 ───
     # ── S-117 studio shell ──
     # GET /studio — single-page workspace shell with four named-slot panels
     # (tree · grid · context · console). Later Phase-C stories (S-118 spec
