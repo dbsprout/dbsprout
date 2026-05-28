@@ -187,6 +187,24 @@ def test_studio_grid_has_placeholder(tmp_path: Path) -> None:
     assert "preview" in grid_chunk or "spec" in grid_chunk or "grid" in grid_chunk
 
 
+def test_studio_grid_panel_has_spec_hx_get(tmp_path: Path) -> None:
+    """S-118: the grid panel lazily loads the spec via HTMX on page load.
+
+    The placeholder body stays as the visual fallback inside
+    ``#studio-grid-body`` until HTMX swaps in the rendered spec grid
+    fragment from ``GET /api/spec`` (``Accept: text/html``).
+    """
+    body = TestClient(_make_app(tmp_path)).get("/studio").text
+    grid_start = body.index('id="studio-grid"')
+    grid_chunk = body[grid_start : grid_start + 4000]
+    assert 'hx-get="/api/spec"' in grid_chunk
+    assert 'hx-target="#studio-grid-body"' in grid_chunk
+    # Content-negotiation hint for the HTML branch travels in hx-headers.
+    assert "text/html" in grid_chunk
+    # Triggered on initial page load — no user interaction needed.
+    assert 'hx-trigger="load"' in grid_chunk
+
+
 def test_studio_console_has_placeholder(tmp_path: Path) -> None:
     """Bottom console is a placeholder (S-125 fills it)."""
     body = TestClient(_make_app(tmp_path)).get("/studio").text

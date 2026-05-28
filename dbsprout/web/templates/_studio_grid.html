@@ -1,10 +1,22 @@
-{# ── S-117 grid panel placeholder ──
-   The live preview grid is owned by S-118 (spec grid). This placeholder
-   reserves the slot + ids so future content can swap in via either a Jinja
-   block override or an HTMX ``hx-get`` into ``#studio-grid-body``. #}
-<div class="flex flex-col items-center justify-center h-full text-center p-6 opacity-70">
+{# ── S-117 grid panel placeholder, wired for S-118 spec grid ──
+   The live preview grid is owned by S-118 (spec grid). The placeholder copy
+   stays as the *empty-state* fallback inside ``#studio-grid-body`` until
+   HTMX swaps in the rendered spec grid fragment from ``GET /api/spec``
+   (``Accept: text/html``). When no schema is loaded, the endpoint returns
+   ``200`` with its own ``data-empty-state`` body — so the swap is always safe. #}
+<div
+  class="flex flex-col h-full"
+  id="studio-grid-loader"
+  hx-get="/api/spec"
+  hx-headers='{"Accept": "text/html"}'
+  hx-trigger="load"
+  hx-target="#studio-grid-body"
+  hx-swap="innerHTML"
+>
   <h2 class="text-lg font-semibold mb-2">Spec preview grid</h2>
-  <p class="text-sm mb-1">Live preview of the data spec will render here.</p>
-  <p class="text-xs opacity-60">Slot reserved for S-118 (spec grid).</p>
-  <div id="studio-grid-body" class="w-full mt-4" hx-swap="innerHTML"></div>
+  <div id="studio-grid-body" class="w-full mt-2 flex-1" hx-swap="innerHTML">
+    <div class="text-center opacity-70 p-6 text-xs">
+      Loading spec grid…
+    </div>
+  </div>
 </div>
