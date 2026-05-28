@@ -23,8 +23,12 @@ import sys
 import threading
 import time
 from datetime import datetime, timezone
+from typing import TYPE_CHECKING
 
 import pytest
+
+if TYPE_CHECKING:
+    import pathlib
 
 pytest.importorskip("starlette", reason="starlette absent (pip install dbsprout[web])")
 
@@ -270,6 +274,186 @@ def test_separate_apps_get_independent_job_managers() -> None:
     app_a = create_app()
     app_b = create_app()
     assert app_a.state.job_manager is not app_b.state.job_manager
+
+
+# ── S-110: state-write hook on success; skipped on failure / cancel ───
+
+
+@pytest.mark.anyio
+async def test_state_writer_invoked_on_success() -> None:
+    """A wired state-writer hook is called once when the job succeeds."""
+    seen: list[JobRecord] = []
+
+    def writer(record: JobRecord) -> None:
+        seen.append(record)
+
+    def fn(_cb: object, _tok: object) -> str:
+        return "ok"
+
+    mgr = JobManager(state_writer=writer)
+    job_id = await mgr.submit("generate", fn, engine="heuristic", seed=99)
+    await mgr.wait(job_id)
+
+    assert len(seen) == 1
+    assert seen[0].status is JobStatus.SUCCEEDED
+    assert seen[0].engine == "heuristic"
+    assert seen[0].seed == 99
+    assert seen[0].result == "ok"
+
+
+@pytest.mark.anyio
+async def test_state_writer_skipped_on_failure() -> None:
+    seen: list[JobRecord] = []
+
+    def writer(record: JobRecord) -> None:
+        seen.append(record)
+
+    def fn(_cb: object, _tok: object) -> None:
+        raise RuntimeError("boom")
+
+    mgr = JobManager(state_writer=writer)
+    job_id = await mgr.submit("generate", fn)
+    await mgr.wait(job_id)
+
+    assert seen == []  # no fake-success row
+
+
+@pytest.mark.anyio
+async def test_state_writer_skipped_on_cancel() -> None:
+    seen: list[JobRecord] = []
+    started = threading.Event()
+
+    def writer(record: JobRecord) -> None:
+        seen.append(record)
+
+    def fn(_cb: object, tok: CancelToken) -> None:
+        started.set()
+        deadline = time.monotonic() + 5
+        while not tok.is_cancelled():
+            if time.monotonic() > deadline:
+                raise AssertionError("cancel never armed")
+            time.sleep(0.001)
+        raise GenerationCancelled(tables_done=0, tables_total=1)
+
+    mgr = JobManager(state_writer=writer)
+    job_id = await mgr.submit("generate", fn)
+    await _run_sync(started.wait)
+    mgr.cancel(job_id)
+    await mgr.wait(job_id)
+
+    assert mgr.get(job_id).status is JobStatus.CANCELLED
+    assert seen == []
+
+
+@pytest.mark.anyio
+async def test_state_writer_failure_is_swallowed() -> None:
+    """A raise in the state-writer hook must not regress the job's terminal
+    status — telemetry is best-effort, like the CLI path."""
+
+    def writer(_record: JobRecord) -> None:
+        raise RuntimeError("disk full")
+
+    def fn(_cb: object, _tok: object) -> str:
+        return "ok"
+
+    mgr = JobManager(state_writer=writer)
+    job_id = await mgr.submit("generate", fn)
+    await mgr.wait(job_id)
+
+    rec = mgr.get(job_id)
+    assert rec.status is JobStatus.SUCCEEDED  # still succeeded
+    assert rec.error is None
+
+
+@pytest.mark.anyio
+async def test_job_record_carries_engine_and_seed_when_supplied() -> None:
+    def fn(_cb: object, _tok: object) -> None:
+        return None
+
+    mgr = JobManager()
+    job_id = await mgr.submit("generate", fn, engine="spec", seed=7)
+    await mgr.wait(job_id)
+
+    rec = mgr.get(job_id)
+    assert rec.engine == "spec"
+    assert rec.seed == 7
+
+
+@pytest.mark.anyio
+async def test_job_record_engine_and_seed_default_none() -> None:
+    """When not supplied, the JobRecord engine/seed stay ``None`` (back-compat)."""
+
+    def fn(_cb: object, _tok: object) -> None:
+        return None
+
+    mgr = JobManager()
+    job_id = await mgr.submit("generate", fn)
+    await mgr.wait(job_id)
+
+    rec = mgr.get(job_id)
+    assert rec.engine is None
+    assert rec.seed is None
+
+
+def test_job_history_default_returns_empty_list() -> None:
+    """Without a wired reader, ``job_history`` returns an empty list (not a raise)."""
+    assert JobManager().job_history() == []
+
+
+def test_job_history_returns_reader_output() -> None:
+    """``job_history`` delegates to the injected reader."""
+    sentinel: list[object] = ["row-a", "row-b"]  # opaque to the manager
+
+    def reader() -> list[object]:
+        return list(sentinel)
+
+    mgr = JobManager(state_reader=reader)  # type: ignore[arg-type]
+    history = mgr.job_history()
+    assert history == sentinel
+    # the manager returns a fresh list each call (does not mutate reader output)
+    history.append("mutated")
+    assert mgr.job_history() == sentinel
+
+
+# ── S-110: app-level wiring records a generated run + history reads it ─
+
+
+def test_create_app_wires_state_writer_and_reader(tmp_path: pathlib.Path) -> None:
+    """The factory must inject both the state_writer hook and the state_reader
+    so persisted runs flow into job_history() out-of-the-box."""
+    pytest.importorskip("fastapi", reason="fastapi absent (pip install dbsprout[web])")
+    from dbsprout.web.app import create_app  # noqa: PLC0415
+
+    db_path = tmp_path / "state.db"
+    app = create_app(state_db_path=db_path)
+    mgr: JobManager = app.state.job_manager
+    assert mgr._state_writer is not None
+    assert mgr._state_reader is not None
+
+
+@pytest.mark.anyio
+async def test_wired_state_writer_ignores_non_generate_result(tmp_path: pathlib.Path) -> None:
+    """The factory's persist closure is kind-agnostic: a job whose ``result`` is
+    not a :class:`GenerateResult` (e.g. an opaque object from a future job kind)
+    must not be persisted as a run — the hook returns early. The state DB stays
+    empty (no fake row) and the job still reaches ``SUCCEEDED``."""
+    pytest.importorskip("fastapi", reason="fastapi absent (pip install dbsprout[web])")
+    from dbsprout.state.db import StateDB  # noqa: PLC0415
+    from dbsprout.web.app import create_app  # noqa: PLC0415
+
+    db_path = tmp_path / "state.db"
+    app = create_app(state_db_path=db_path)
+    mgr: JobManager = app.state.job_manager
+
+    def fn(_cb: object, _tok: object) -> str:
+        return "not-a-generate-result"
+
+    job_id = await mgr.submit("opaque", fn)  # arbitrary, non-generate kind
+    await mgr.wait(job_id)
+    assert mgr.get(job_id).status is JobStatus.SUCCEEDED
+
+    assert StateDB(db_path).get_runs() == []  # nothing persisted
+    assert mgr.job_history() == []
 
 
 # ── helper: run a blocking callable off the event loop (test-side) ────

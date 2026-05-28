@@ -185,7 +185,10 @@ async def generate_endpoint(request: Request, body: GenerateRequest) -> dict[str
     fn = _build_job_fn(body, workspace)
     manager = request.app.state.job_manager
     try:
-        job_id = await manager.submit("generate", fn)
+        # S-110: thread engine + seed through to the JobRecord so the
+        # state-write hook can map them onto the persisted RunRecord
+        # without poking at the closure's captured locals.
+        job_id = await manager.submit("generate", fn, engine=body.engine, seed=body.seed)
     except JobError as exc:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,

@@ -30,6 +30,7 @@ value as an opaque result reference.
 from __future__ import annotations
 
 import asyncio
+import logging
 import threading
 import uuid
 from dataclasses import dataclass, field
@@ -45,9 +46,12 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
     from dbsprout.generate.progress import ProgressEvent
+    from dbsprout.state.models import RunRecord
     from dbsprout.web.progress import ProgressHub
 
 __all__ = ["JobError", "JobManager", "JobRecord", "JobStatus"]
+
+logger = logging.getLogger(__name__)
 
 
 class JobStatus(str, Enum):
@@ -108,6 +112,12 @@ class JobRecord:
     opaque ``fn`` return value — the manager is kind-agnostic, so it is typed
     ``object | None``; for the ``generate`` kind it is a
     :class:`~dbsprout.generate.orchestrator.GenerateResult` (the consumer casts).
+
+    ``engine`` and ``seed`` (S-110) are optional metadata captured at
+    :meth:`JobManager.submit` time so the state-write hook can populate
+    :class:`~dbsprout.state.models.RunRecord` without having to peek into the
+    submitter's closure. They default to ``None`` for back-compat with S-108
+    callers that submit non-``generate`` kinds.
     """
 
     id: str
@@ -119,6 +129,8 @@ class JobRecord:
     result: object | None = None
     events: list[ProgressEvent] = field(default_factory=list)
     latest_event: ProgressEvent | None = None
+    engine: str | None = None
+    seed: int | None = None
 
 
 def _now() -> datetime:
@@ -135,12 +147,33 @@ class JobManager:
     tests and any caller that wants to join).
     """
 
-    def __init__(self, progress_hub: ProgressHub | None = None) -> None:
+    def __init__(
+        self,
+        progress_hub: ProgressHub | None = None,
+        *,
+        state_writer: Callable[[JobRecord], None] | None = None,
+        state_reader: Callable[[], list[RunRecord]] | None = None,
+    ) -> None:
+        """Create a manager.
+
+        *state_writer* (S-110) is invoked **once** with the finalized
+        :class:`JobRecord` after a job reaches the ``SUCCEEDED`` terminal
+        state. Failed / cancelled jobs are intentionally skipped — the state
+        DB only records successful runs (no fake-success rows). A raise from
+        the hook is swallowed (logged) so telemetry is strictly best-effort.
+
+        *state_reader* (S-110) backs :meth:`job_history` — a thin accessor
+        returning the read accessor's output verbatim. Both default to
+        ``None`` so :class:`JobManager` keeps working without state plumbing
+        (the S-108 / S-124 unit tests rely on this back-compat).
+        """
         self._records: dict[str, JobRecord] = {}
         self._tokens: dict[str, _CancelToken] = {}
         self._tasks: dict[str, asyncio.Task[None]] = {}
         self._active_id: str | None = None
         self._hub = progress_hub
+        self._state_writer = state_writer
+        self._state_reader = state_reader
 
     # ── queries ────────────────────────────────────────────────────────
     def get(self, job_id: str) -> JobRecord:
@@ -150,8 +183,27 @@ class JobManager:
         except KeyError as exc:
             raise JobError(f"unknown job {job_id!r}") from exc
 
+    def job_history(self) -> list[RunRecord]:
+        """Return persisted completed runs (newest first), or ``[]``.
+
+        Delegates to the injected ``state_reader``; if none is wired (e.g.
+        bare ``JobManager()`` in unit tests) returns an empty list. The
+        returned list is a fresh copy so callers cannot mutate the reader's
+        cached state.
+        """
+        if self._state_reader is None:
+            return []
+        return list(self._state_reader())
+
     # ── lifecycle ──────────────────────────────────────────────────────
-    async def submit(self, kind: str, fn: Callable[..., object]) -> str:
+    async def submit(
+        self,
+        kind: str,
+        fn: Callable[..., object],
+        *,
+        engine: str | None = None,
+        seed: int | None = None,
+    ) -> str:
         """Start *fn* as the single active background job; return its id.
 
         Rejects with :class:`JobError` if a job is already active
@@ -159,11 +211,22 @@ class JobManager:
         registration run with no ``await`` between them, so under asyncio's
         single-threaded loop they are atomic (a concurrent ``submit`` only runs
         its check after this one has registered the active id).
+
+        *engine* and *seed* (S-110) are optional metadata captured on the
+        :class:`JobRecord` so the state-write hook can map them onto the
+        persisted :class:`~dbsprout.state.models.RunRecord` without poking at
+        the submitter's closure.
         """
         self._reject_if_active()
         job_id = uuid.uuid4().hex
         token = _CancelToken()
-        record = JobRecord(id=job_id, kind=kind, started_at=_now())
+        record = JobRecord(
+            id=job_id,
+            kind=kind,
+            started_at=_now(),
+            engine=engine,
+            seed=seed,
+        )
         self._records[job_id] = record
         self._tokens[job_id] = token
         self._active_id = job_id
@@ -227,6 +290,23 @@ class JobManager:
         finally:
             record.finished_at = _now()
             self._active_id = None
+            # S-110: persist completed runs to the state DB. Only the
+            # SUCCEEDED terminal state writes a row — FAILED / CANCELLED
+            # would create a fake-success entry, which the AC explicitly
+            # forbids. A raise from the hook is swallowed (best-effort
+            # telemetry, matching the CLI ``_record_state`` contract); the
+            # job's terminal status is therefore never regressed by a
+            # state-write failure.
+            if record.status is JobStatus.SUCCEEDED and self._state_writer is not None:
+                try:
+                    self._state_writer(record)
+                except Exception as state_exc:
+                    logger.warning(
+                        "State-write hook failed for job %s (%s); "
+                        "continuing — state telemetry is optional.",
+                        record.id,
+                        state_exc,
+                    )
             # Terminal sentinel: lets a tailing WebSocket (S-109) stop and send
             # its final frame. Status is already set above, so the WS reads the
             # correct terminal status off the record.
