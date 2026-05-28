@@ -12,7 +12,7 @@ import sqlalchemy as sa
 from rich.progress import BarColumn, Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
 
 from dbsprout import __version__ as dbs_version
-from dbsprout.schema.introspect import introspect
+from dbsprout.schema.introspect import introspect_engine
 from dbsprout.train.allocator import allocate_budget
 from dbsprout.train.closure import ParentFetcher, close_fk_graph
 from dbsprout.train.manifest import write_manifest
@@ -185,7 +185,7 @@ class SampleExtractor:
         start = time.perf_counter()
         engine = sa.create_engine(source)
         try:
-            schema = introspect(source)
+            schema = introspect_engine(engine)
             allocations, _ = self._allocate(engine, schema, config)
             samples = self._fetch_samples(engine, allocations, config)
 
