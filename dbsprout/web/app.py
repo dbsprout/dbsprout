@@ -46,6 +46,7 @@ from dbsprout.web.routers.schema import schema_router
 from dbsprout.web.routers.schema_load import schema_load_router
 from dbsprout.web.routers.spec import spec_router
 from dbsprout.web.routers.studio import studio_router
+from dbsprout.web.routers.validate import validate_router
 from dbsprout.web.routes import router
 from dbsprout.web.views.erd import erd_router
 from dbsprout.web.views.insights import insights_router
@@ -241,6 +242,15 @@ def create_app(
     # #studio-console) without editing this shell.
     app.include_router(studio_router)
     # ── end S-117 ──
+    # ── S-133 validate router ──
+    # POST /api/validate — integrity report over app.state.workspace.last_result.
+    # Reuses dbsprout/quality/integrity.py (FK / UNIQUE / NOT NULL); CHECK slot
+    # is reserved in the envelope shape for future quality work (S-134+). 409
+    # NO_RUN when no generation has run yet. HTMX-aware: returns the
+    # ``_validate_panel.html`` fragment with stable ``data-table`` /
+    # ``data-column`` / ``data-row`` row attributes so S-135 can wire drill-down.
+    app.include_router(validate_router)
+    # ── end S-133 ──
     return app
 
 
