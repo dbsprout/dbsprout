@@ -1,0 +1,148 @@
+{#
+  Write-guard confirmation modal (S-137).
+
+  Mounted once at the Studio page level (see ``studio.html``). Listens for
+  ``studio:open-write-guard`` window events. The opening flow is:
+
+    1. Caller (the Insert button in the Studio toolbar) POSTs
+       ``/api/insert/preview`` with the desired scope.
+    2. On success it dispatches ``studio:open-write-guard`` with the
+       response body as the event detail.
+    3. This modal renders the redacted ``target`` + the ``scope`` table
+       + a Confirm button that POSTs ``/api/insert`` with the original
+       ``{tables, confirmation_token}`` body.
+
+  Failure paths (token expired / scope mismatched / single-use already
+  consumed) bubble up as ``WRITE_GUARD_REJECTED`` from ``/api/insert``;
+  this modal just surfaces the message and stays open so the user can
+  re-preview without losing context.
+#}
+<div
+  id="write-guard-modal"
+  data-write-guard-modal
+  x-data="writeGuardModal()"
+  x-init="init()"
+  x-show="open"
+  x-cloak
+  role="dialog"
+  aria-modal="true"
+  aria-labelledby="write-guard-title"
+  class="modal modal-open"
+  @keydown.escape.window="close()"
+>
+  <div class="modal-box max-w-2xl">
+    <header class="flex items-start justify-between gap-2">
+      <h3 id="write-guard-title" class="text-lg font-semibold">
+        Confirm insert into <span class="font-mono break-all" x-text="target"></span>
+      </h3>
+      <button
+        type="button"
+        class="btn btn-sm btn-ghost"
+        @click="close()"
+        aria-label="Cancel"
+      >Cancel</button>
+    </header>
+
+    <p class="text-sm text-base-content/70 mt-2" x-show="error" x-text="error"></p>
+
+    <section class="mt-3" aria-label="Insert scope">
+      <p class="text-sm">
+        <span class="badge badge-outline" x-text="dialect"></span>
+        <span class="ml-2" x-text="total_rows + ' rows total'"></span>
+      </p>
+      <div class="overflow-x-auto mt-2">
+        <table class="table table-sm">
+          <thead><tr><th>Table</th><th class="text-right">Row count</th></tr></thead>
+          <tbody>
+            <template x-for="row in scope" :key="row.table">
+              <tr>
+                <td class="font-mono" x-text="row.table"></td>
+                <td class="text-right" x-text="row.row_count"></td>
+              </tr>
+            </template>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <footer class="modal-action">
+      <button
+        type="button"
+        class="btn"
+        @click="close()"
+      >Cancel</button>
+      <button
+        type="button"
+        class="btn btn-primary"
+        :disabled="submitting"
+        @click="confirm()"
+        data-test="write-guard-confirm"
+      >
+        <span x-show="!submitting">Confirm insert</span>
+        <span x-show="submitting">Inserting…</span>
+      </button>
+    </footer>
+  </div>
+
+  <div class="modal-backdrop" @click="close()"></div>
+</div>
+
+<script>
+  function writeGuardModal() {
+    return {
+      open: false,
+      submitting: false,
+      target: '',
+      dialect: '',
+      scope: [],
+      total_rows: 0,
+      tables: null,
+      confirmation_token: '',
+      error: '',
+      init() {
+        window.addEventListener('studio:open-write-guard', (e) => {
+          const d = e.detail || {};
+          this.target = d.target || '';
+          this.dialect = d.dialect || '';
+          this.scope = d.scope || [];
+          this.total_rows = d.total_rows || 0;
+          this.confirmation_token = d.confirmation_token || '';
+          this.tables = d.tables || null;
+          this.error = '';
+          this.open = true;
+        });
+      },
+      close() {
+        if (this.submitting) return;
+        this.open = false;
+      },
+      async confirm() {
+        this.submitting = true;
+        this.error = '';
+        try {
+          const body = { confirmation_token: this.confirmation_token };
+          if (this.tables) body.tables = this.tables;
+          const r = await fetch('/api/insert', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body),
+          });
+          if (!r.ok) {
+            const data = await r.json().catch(() => ({}));
+            const detail = (data && data.detail) || {};
+            this.error = detail.message || ('HTTP ' + r.status);
+            this.submitting = false;
+            return;
+          }
+          const data = await r.json();
+          window.dispatchEvent(new CustomEvent('studio:insert-submitted', { detail: data }));
+          this.open = false;
+          this.submitting = false;
+        } catch (err) {
+          this.error = String(err);
+          this.submitting = false;
+        }
+      },
+    };
+  }
+</script>

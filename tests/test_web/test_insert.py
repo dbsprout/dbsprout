@@ -504,19 +504,28 @@ def test_select_writer_dispatch_branches(monkeypatch: pytest.MonkeyPatch) -> Non
 # ── coverage: direct unit tests on private helpers ──────────────────────
 
 
-def test_validate_confirmation_token_stub_returns_true_for_non_empty() -> None:
-    """The S-136 stub returns ``bool(token)`` — S-137 will replace with HMAC."""
+def test_validate_confirmation_token_rejects_without_app() -> None:
+    """The S-137 validator returns ``False`` when no app is provided.
+
+    The legacy S-136 stub returned ``bool(token)`` for any non-empty
+    string; S-137 replaces it with HMAC verification that requires an
+    app reference (for the per-app secret + issued-token registry). The
+    historical positional kwargs (``token``, ``scope``, ``target_url``)
+    remain part of the signature for source compatibility, but the
+    function returns ``False`` when called without the ``app`` kwarg.
+    """
     from dbsprout.web.routers.insert import _validate_confirmation_token  # noqa: PLC0415
 
-    assert _validate_confirmation_token("anything", scope=["t"], target_url="u") is True
+    assert _validate_confirmation_token("anything", scope=["t"], target_url="u") is False
     assert _validate_confirmation_token("", scope=[], target_url="") is False
 
 
-def test_require_confirmation_token_failed_validation_raises_403(
+def test_require_confirmation_token_failed_validation_raises_403_rejected(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """When ``_validate_confirmation_token`` rejects a non-empty token →
-    the gate still raises 403. Locks the S-137 plug-in seam."""
+    the gate raises 403 ``WRITE_GUARD_REJECTED`` (S-137 — distinct from
+    the missing-token ``WRITE_GUARD_REQUIRED`` code)."""
     from fastapi import HTTPException  # noqa: PLC0415
 
     from dbsprout.web.routers import insert as insert_module  # noqa: PLC0415
@@ -524,7 +533,7 @@ def test_require_confirmation_token_failed_validation_raises_403(
     monkeypatch.setattr(
         insert_module,
         "_validate_confirmation_token",
-        lambda token, scope, target_url: False,  # noqa: ARG005
+        lambda token, scope, target_url, app=None, row_counts=None: False,  # noqa: ARG005
     )
     with pytest.raises(HTTPException) as exc_info:
         insert_module._require_confirmation_token(
@@ -533,7 +542,7 @@ def test_require_confirmation_token_failed_validation_raises_403(
     assert exc_info.value.status_code == 403
     detail = exc_info.value.detail
     assert isinstance(detail, dict)
-    assert detail["code"] == "WRITE_GUARD_REQUIRED"
+    assert detail["code"] == "WRITE_GUARD_REJECTED"
 
 
 def test_resolve_scope_empty_rows_table_is_skipped() -> None:
