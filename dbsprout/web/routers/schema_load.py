@@ -29,9 +29,19 @@ check is the backstop; the web cap is smaller so the friendly 413 fires first.
 
 Django / MongoDB are intentionally *not* file-content uploads:
 ``parse_django_models`` introspects a live Django app (app labels) and Mongo
-parsing takes a connection URL — neither parses uploaded file content. Basic
-content auto-detect polish is the later S-114; here suffix/override dispatch is
-sufficient.
+parsing takes a connection URL — neither parses uploaded file content.
+
+Auto-detect (S-114)
+-------------------
+When no ``parser`` form-field is given, suffix dispatch is the cheap first cut
+(matches ``parse_schema_file``'s own ordering). For ambiguous extensions
+(``.txt``, ``.schema``, no extension, …) the route additionally sniffs a small
+head of the upload bytes by calling the existing ``can_parse_*`` detectors
+from :mod:`dbsprout.schema.parsers` in the documented priority order
+(DBML → Mermaid → PlantUML → Prisma) before falling back to ``.sql`` (DDL).
+The sniffers themselves are not reimplemented — they live on the parser modules
+and are reused verbatim. An explicit ``parser`` form-field **always** wins over
+both filename suffix and content sniff (S-113 contract preserved).
 
 This module owns its own :class:`~fastapi.APIRouter` (``schema_load_router``),
 registered by ``create_app`` inside a delimited region. It stays import-light:
@@ -59,6 +69,12 @@ _MAX_UPLOAD_BYTES = 5 * 1024 * 1024  # 5 MB
 #: Chunk size for the streamed size-capped read.
 _CHUNK_BYTES = 64 * 1024  # 64 KB
 
+#: Head-slice size for content sniffing. Every ``can_parse_*`` detector matches
+#: on keywords near the file head (DBML ``Table``, Mermaid ``erDiagram``,
+#: PlantUML ``@startuml``, Prisma ``model``/``datasource``/``generator``), so a
+#: few KB is generous without copying multi-MB payloads on every upload.
+_SNIFF_HEAD_BYTES = 8 * 1024  # 8 KB
+
 #: Canonical ``parser`` override values → the file suffix understood by
 #: ``parse_schema_file``. Keys are matched case-insensitively.
 _PARSER_SUFFIXES: dict[str, str] = {
@@ -83,13 +99,56 @@ def _workspace(request: Request) -> Workspace:
     return cast("Workspace", request.app.state.workspace)
 
 
-def _resolve_suffix(filename: str | None, parser: str | None) -> str:
-    """Pick the temp-file suffix: explicit ``parser`` override > filename suffix.
+def _detect_suffix_from_content(head: bytes) -> str | None:
+    """Sniff a head slice and return the canonical suffix, or ``None``.
+
+    Reuses the existing ``can_parse_*`` detectors from
+    :mod:`dbsprout.schema.parsers` (DBML → Mermaid → PlantUML → Prisma). Priority
+    order matters: each detector matches on a *unique* keyword for its format
+    (DBML ``table {``, Mermaid ``erDiagram``, PlantUML ``@startuml``,
+    Prisma ``model``/``datasource``/``generator``), so overlap is rare; if it
+    happens, the first match wins. DDL has no sniffer — it is the final
+    fallback (matches ``parse_schema_file``'s behaviour).
+
+    Decoding is best-effort UTF-8 with ``errors="ignore"`` for the sniff only;
+    the parser sees the original bytes via the temp file, so non-UTF-8 schemas
+    still work end-to-end when the user provides an explicit ``parser`` override.
+    """
+    from dbsprout.schema.parsers import (  # noqa: PLC0415 — lazy for startup
+        can_parse_dbml,
+        can_parse_mermaid,
+        can_parse_plantuml,
+        can_parse_prisma,
+    )
+
+    text = head.decode("utf-8", errors="ignore")
+    if not text.strip():
+        return None
+    if can_parse_dbml(text):
+        return ".dbml"
+    if can_parse_mermaid(text):
+        return ".mermaid"
+    if can_parse_plantuml(text):
+        return ".puml"
+    if can_parse_prisma(text):
+        return ".prisma"
+    return None
+
+
+def _resolve_suffix(
+    filename: str | None,
+    parser: str | None,
+    *,
+    content_head: bytes | None = None,
+) -> str:
+    """Pick the temp-file suffix: explicit ``parser`` > filename > content sniff.
 
     A blank/whitespace ``parser`` is treated as "not provided". An unknown
-    explicit parser value raises ``HTTPException(400)``. With no override and an
-    unknown/absent filename suffix, returns ``.sql`` to match
-    ``parse_schema_file``'s DDL fallback.
+    explicit parser value raises ``HTTPException(400)``. With no override:
+    first tries the filename suffix; if unknown/absent and ``content_head`` is
+    given, sniffs the head bytes via the existing ``can_parse_*`` detectors
+    (see :func:`_detect_suffix_from_content`); otherwise falls back to ``.sql``
+    to match ``parse_schema_file``'s DDL behaviour.
     """
     if parser is not None and parser.strip():
         suffix = _PARSER_SUFFIXES.get(parser.strip().lower())
@@ -106,6 +165,10 @@ def _resolve_suffix(filename: str | None, parser: str | None) -> str:
     file_suffix = PurePosixPath(filename or "").suffix.lower()
     if file_suffix in _KNOWN_SUFFIXES:
         return file_suffix
+    if content_head is not None:
+        sniffed = _detect_suffix_from_content(content_head)
+        if sniffed is not None:
+            return sniffed
     return ".sql"
 
 
@@ -194,11 +257,14 @@ async def load_schema_upload(
     formats or empty uploads with ``400`` — always as a friendly JSON ``detail``,
     never a traceback.
     """
-    suffix = _resolve_suffix(file.filename, parser)
     content = await _read_capped(file)
     if not content.strip():
         raise HTTPException(status_code=400, detail="Uploaded file is empty.")
 
+    # Resolve the suffix *after* reading so content sniffing has bytes to work
+    # with when the filename suffix is unknown/absent. Explicit ``parser`` and
+    # known filename suffixes never read ``content_head``.
+    suffix = _resolve_suffix(file.filename, parser, content_head=content[:_SNIFF_HEAD_BYTES])
     schema = _parse_upload(content, suffix)
     source = f"upload:{file.filename}" if file.filename else "upload:<unnamed>"
 
