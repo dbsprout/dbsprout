@@ -259,6 +259,50 @@ def test_update_snapshot_before_mount_is_a_noop() -> None:
     assert screen.snapshot.is_empty
 
 
+def test_mount_is_idempotent_and_does_not_duplicate_rows() -> None:
+    # Root cause of the duplicate-row failures: on Textual 8.x the mount
+    # handler can fire more than once. Without a guard, the second pass
+    # re-adds the columns and re-runs the initial render, so a two-table
+    # snapshot is rendered into 4 rows instead of 2 (the assert 4 == 2 /
+    # assert 2 == 1 regression). Mount setup must be idempotent: exactly five
+    # columns, and rendering a snapshot must yield one row per table no matter
+    # how many times the mount/setup path fires.
+    snap = snapshot_from_run(
+        _run_record(
+            started_at=_NOW - timedelta(seconds=10),
+            completed_at=_NOW,
+            total_rows=300,
+            total_tables=2,
+            duration_ms=10_000,
+            table_stats=[
+                TableStats(
+                    table_name="users", row_count=100, generation_ms=1000, rows_per_sec=100.0
+                ),
+                TableStats(
+                    table_name="orders", row_count=200, generation_ms=4000, rows_per_sec=50.0
+                ),
+            ],
+        ),
+        now=_NOW,
+    )
+
+    async def _scenario() -> None:
+        app = _Harness()
+        async with app.run_test() as pilot:
+            screen = pilot.app.query_one(ProgressScreen)
+            # Simulate a second mount-handler firing (the version-delta bug).
+            screen.on_mount()
+            await pilot.pause()
+            screen.update_snapshot(snap)
+            await pilot.pause()
+            table = screen.query_one(DataTable)
+            assert len(table.columns) == 5
+            assert len(screen._column_keys) == 5
+            assert table.row_count == 2  # one row per table, no duplicates
+
+    _run(_scenario())
+
+
 def test_widget_renders_one_row_per_table_with_status_color() -> None:
     snap = snapshot_from_run(
         _run_record(
