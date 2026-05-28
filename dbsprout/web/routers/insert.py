@@ -70,7 +70,7 @@ import json
 import os
 import secrets
 import time
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 from fastapi import APIRouter, FastAPI, HTTPException, Request, status
 from pydantic import BaseModel, ConfigDict, Field
@@ -455,17 +455,31 @@ async def insert_preview_endpoint(request: Request, body: PreviewRequest) -> dic
 class InsertRequest(BaseModel):
     """Request body for ``POST /api/insert``.
 
-    Both fields are optional. ``tables`` selects a subset (``None`` or
+    All three fields are optional. ``tables`` selects a subset (``None`` or
     empty list ⇒ insert all tables in FK-safe order); ``confirmation_token``
-    is the S-137 forward-handoff seam (S-136 enforces *presence*; S-137
-    lands the real HMAC validation). ``extra='forbid'`` rejects unexpected
-    keys with ``422`` (mirrors ``GenerateRequest`` / ``ConnectRequest``).
+    is the S-137 HMAC scope-bound token; ``method`` (S-141) pins the writer
+    strategy:
+
+    * ``"auto"`` (default) — preserves the S-136 dispatch byte-for-byte
+      (PG → ``PgCopyWriter`` if ``psycopg`` is installed else ``SaBatchWriter``;
+      MySQL → ``MysqlLoadDataWriter`` if ``pymysql`` is installed else
+      ``SaBatchWriter``; everything else → ``SaBatchWriter``).
+    * ``"batch"`` — forces ``SaBatchWriter`` regardless of dialect (universal
+      SQLAlchemy executemany — works on every supported DB).
+    * ``"copy"`` — forces COPY / LOAD DATA on PostgreSQL / MySQL; any other
+      dialect (sqlite / mssql / oracle / …) **or** PG/MySQL without the
+      optional driver → ``409 METHOD_UNSUPPORTED`` (we never silently
+      downgrade an explicit copy request — that would be a footgun).
+
+    ``extra='forbid'`` rejects unexpected keys with ``422`` (mirrors
+    ``GenerateRequest`` / ``ConnectRequest``).
     """
 
     model_config = ConfigDict(extra="forbid")
 
     tables: list[str] | None = Field(default=None)
     confirmation_token: str | None = Field(default=None)
+    method: Literal["auto", "batch", "copy"] = Field(default="auto")
 
 
 def _workspace(request: Request) -> Workspace:
@@ -534,6 +548,165 @@ def _select_writer(url: str) -> tuple[Any, str]:
         except ImportError:
             return SaBatchWriter(), "SaBatchWriter"
     return SaBatchWriter(), "SaBatchWriter"
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# region: insert method select (S-141)
+# ─────────────────────────────────────────────────────────────────────────
+# S-141 layers an explicit ``method ∈ {auto, batch, copy}`` choice on top
+# of the S-136 auto-dispatch policy. The Studio modal exposes a small
+# ``<select>`` so the user can pin the strategy (e.g. when COPY is blocked
+# by an RDS policy → pick ``batch``).
+#
+# Design contract:
+#
+#   * ``method="auto"`` re-uses :func:`_select_writer` byte-for-byte. The
+#     S-136 happy-path tests stay green without modification.
+#   * ``method="batch"`` returns :class:`~dbsprout.output.sa_batch.SaBatchWriter`
+#     for every dialect. SaBatch is universal — no guard fires.
+#   * ``method="copy"`` returns the dialect-specific COPY / LOAD DATA writer
+#     for postgresql / mysql ONLY when the optional driver is installed.
+#     Any other dialect, or a missing optional driver, raises a typed
+#     :class:`fastapi.HTTPException` with the
+#     :class:`~dbsprout.web.errors.WebErrorCode.METHOD_UNSUPPORTED` envelope
+#     (status 409; carries ``dialect`` / ``method`` / ``supported`` at the
+#     top of ``detail``).
+#
+# The Wave 2 story (S-139 — multi-format export) also extends ``insert.py``
+# in *its own* region (``# region: multi-format export (S-139)``); the two
+# regions never collide because (a) S-139 adds a sibling endpoint, not a
+# new dispatch branch, and (b) the conflict-avoidance rule keeps every
+# edit inside its named region.
+# ─────────────────────────────────────────────────────────────────────────
+
+
+#: Supported writer strategies the Studio offers. Ordered: ``auto`` is the
+#: default, ``batch`` is the universal fallback, ``copy`` is the fast path.
+_METHOD_AUTO = "auto"
+_METHOD_BATCH = "batch"
+_METHOD_COPY = "copy"
+
+#: Dialects that support the COPY / LOAD DATA fast path (when their
+#: respective optional drivers are installed). The list is intentionally
+#: closed — adding a dialect needs both a writer module under
+#: ``dbsprout/output/`` and an entry here.
+_COPY_SUPPORTED_DIALECTS: frozenset[str] = frozenset({"postgresql", "mysql"})
+
+
+def _supported_methods_for(dialect: str) -> list[str]:
+    """Return the methods the *dialect* can serve.
+
+    ``auto`` is always supported (it picks SaBatch as a universal
+    fallback). ``batch`` is always supported (SaBatch is universal).
+    ``copy`` is only supported on dialects listed in
+    :data:`_COPY_SUPPORTED_DIALECTS`. The list is returned in stable order
+    so the envelope shape doesn't depend on set iteration order.
+    """
+    supported = [_METHOD_AUTO, _METHOD_BATCH]
+    if dialect in _COPY_SUPPORTED_DIALECTS:
+        supported.append(_METHOD_COPY)
+    return supported
+
+
+def _raise_method_unsupported(
+    *,
+    dialect: str,
+    method: str,
+    hint: str | None = None,
+) -> None:
+    """Raise the typed :class:`HTTPException` for METHOD_UNSUPPORTED.
+
+    Lazy-imports :mod:`dbsprout.web.errors` to keep the module's import
+    surface unchanged for the S-136 happy path (the import only fires on
+    the failure branch).
+    """
+    from dbsprout.web.errors import (  # noqa: PLC0415
+        web_error_method_unsupported,
+    )
+
+    err = web_error_method_unsupported(
+        dialect=dialect,
+        method=method,
+        supported=_supported_methods_for(dialect),
+        hint=hint,
+    )
+    raise HTTPException(status_code=err.status_code, detail=err.to_dict())
+
+
+def _resolve_writer(
+    dialect: str,
+    method: str,
+    *,
+    url: str,
+) -> tuple[Any, str]:
+    """Resolve ``(writer_instance, writer_class_name)`` from *dialect* + *method*.
+
+    Branches:
+
+    * ``method="auto"`` ⇒ delegate to :func:`_select_writer` (S-136 policy).
+    * ``method="batch"`` ⇒ ``SaBatchWriter`` (universal — no dialect check).
+    * ``method="copy"`` + ``dialect="postgresql"`` ⇒ try
+      ``import psycopg``; success ⇒ ``PgCopyWriter``; ImportError ⇒
+      :func:`_raise_method_unsupported` with a driver-install hint.
+    * ``method="copy"`` + ``dialect="mysql"`` ⇒ try ``import pymysql``;
+      success ⇒ ``MysqlLoadDataWriter``; ImportError ⇒
+      :func:`_raise_method_unsupported` with a driver-install hint.
+    * ``method="copy"`` + any other dialect ⇒
+      :func:`_raise_method_unsupported` (wrong-dialect path).
+
+    *url* is forwarded to :func:`_select_writer` only when ``method="auto"``;
+    on the explicit branches the URL is unused (the dialect + driver
+    presence fully determine the choice).
+    """
+    from dbsprout.output.sa_batch import SaBatchWriter  # noqa: PLC0415
+
+    if method == _METHOD_AUTO:
+        return _select_writer(url)
+    if method == _METHOD_BATCH:
+        return SaBatchWriter(), "SaBatchWriter"
+    # Remaining branch: the method is "copy" (validated by InsertRequest).
+    if dialect == "postgresql":
+        try:
+            import psycopg  # noqa: F401, PLC0415
+
+            from dbsprout.output.pg_copy import PgCopyWriter  # noqa: PLC0415
+
+            return PgCopyWriter(), "PgCopyWriter"
+        except ImportError:
+            _raise_method_unsupported(
+                dialect=dialect,
+                method=method,
+                hint=(
+                    "Install the PostgreSQL driver (pip install psycopg) to "
+                    "use method='copy', or pick method='batch'."
+                ),
+            )
+    if dialect == "mysql":
+        try:
+            import pymysql  # noqa: F401, PLC0415
+
+            from dbsprout.output.mysql_load_data import (  # noqa: PLC0415
+                MysqlLoadDataWriter,
+            )
+
+            return MysqlLoadDataWriter(), "MysqlLoadDataWriter"
+        except ImportError:
+            _raise_method_unsupported(
+                dialect=dialect,
+                method=method,
+                hint=(
+                    "Install the MySQL driver (pip install pymysql) to use "
+                    "method='copy', or pick method='batch'."
+                ),
+            )
+    # Wrong-dialect path — sqlite / mssql / oracle / unknown.
+    _raise_method_unsupported(dialect=dialect, method=method)
+    # _raise_method_unsupported always raises; the line below is unreachable
+    # but keeps mypy happy on the return-type contract.
+    raise AssertionError("unreachable")  # pragma: no cover
+
+
+# endregion insert method select
 
 
 def _resolve_scope(
@@ -777,8 +950,11 @@ async def insert_endpoint(request: Request, body: InsertRequest) -> dict[str, An
         row_counts={t: len(result.tables_data.get(t, [])) for t in insertion_order_scope},
     )
 
-    # 6. Select writer (lifted CLI policy — no new writer code).
-    writer, writer_name = _select_writer(raw_target)
+    # 6. Select writer. S-141 layers an explicit method-pin on top of the
+    #    S-136 auto-dispatch policy; ``method="auto"`` re-uses the original
+    #    ``_select_writer`` policy byte-for-byte.
+    dialect = _detect_direct_dialect(raw_target)
+    writer, writer_name = _resolve_writer(dialect, body.method, url=raw_target)
 
     # 7. Build the job closure + submit (single-active — JobManager raises
     # ``JobError`` on a second concurrent submit, mapped to 409 below).
@@ -818,6 +994,9 @@ async def insert_endpoint(request: Request, body: InsertRequest) -> dict[str, An
         ],
         "total_rows": sum(len(result.tables_data.get(t, [])) for t in insertion_order_scope),
         "writer": writer_name,
+        # S-141: echo the resolved method so the Studio can render a
+        # "you picked X, server ran X" confirmation badge.
+        "method": body.method,
         "scope_warnings": scope_warnings,
     }
 

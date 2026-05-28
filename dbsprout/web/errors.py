@@ -113,6 +113,11 @@ class WebErrorCode(str, Enum):
     NO_SPEC = "NO_SPEC"
     CONSTRAINT_VIOLATION = "CONSTRAINT_VIOLATION"
     NOT_FOUND = "NOT_FOUND"
+    # S-141 insert-route method select (auto/batch/copy). Raised when the
+    # caller pins ``method="copy"`` against a dialect that has no COPY /
+    # LOAD DATA equivalent (sqlite, mssql, oracle, …) or when the optional
+    # driver for COPY is not installed (psycopg / pymysql).
+    METHOD_UNSUPPORTED = "METHOD_UNSUPPORTED"
 
 
 @dataclass(frozen=True)
@@ -122,6 +127,13 @@ class WebError:
     The class is frozen — every classifier returns a fresh instance, and the
     correlation id is generated at construction time so callers cannot
     accidentally share one across responses.
+
+    ``extras`` carries code-specific structured fields that need to land
+    *at the top of* the envelope payload alongside ``code`` / ``message``
+    (e.g. S-141's ``METHOD_UNSUPPORTED`` carries ``dialect`` / ``method`` /
+    ``supported`` so the Studio JS can render an actionable picker without
+    re-parsing the message). The default empty dict keeps the envelope
+    backward-compatible with every existing factory.
     """
 
     code: WebErrorCode
@@ -129,16 +141,31 @@ class WebError:
     status_code: int
     hint: str | None = None
     correlation_id: str = field(default_factory=lambda: uuid.uuid4().hex)
+    extras: dict[str, object] = field(default_factory=dict)
 
-    def to_dict(self) -> dict[str, str]:
-        """Render the envelope payload, omitting an unset ``hint``."""
-        payload: dict[str, str] = {
+    def to_dict(self) -> dict[str, object]:
+        """Render the envelope payload, omitting an unset ``hint``.
+
+        Code-specific ``extras`` are merged at the top of the payload —
+        existing callers that pass no extras see the historical shape
+        (``code`` / ``message`` / ``correlation_id`` [/ ``hint``]) unchanged.
+        """
+        payload: dict[str, object] = {
             "code": self.code.value,
             "message": self.message,
             "correlation_id": self.correlation_id,
         }
         if self.hint is not None:
             payload["hint"] = self.hint
+        # Merge extras last so a malicious factory can't accidentally
+        # override the closed ``code`` / ``correlation_id`` keys — those
+        # are stamped first, ``extras`` simply adds siblings. We DO allow
+        # overriding ``message`` / ``hint`` if a factory explicitly wants
+        # to render a structured message inline (none do today).
+        for key, value in self.extras.items():
+            if key in {"code", "correlation_id"}:
+                continue
+            payload[key] = value
         return payload
 
 
@@ -282,6 +309,12 @@ _CODE_HINTS: dict[WebErrorCode, str] = {
     ),
     WebErrorCode.NOT_FOUND: (
         "Check the schema and re-issue the request with a valid table / column name."
+    ),
+    # S-141 default hint — most callers will pass a more specific hint
+    # explaining *why* the method is unsupported (wrong dialect vs. missing
+    # driver). This generic fallback is correct for the wrong-dialect case.
+    WebErrorCode.METHOD_UNSUPPORTED: (
+        "Pick one of the supported methods listed in 'supported' (commonly 'auto' or 'batch')."
     ),
 }
 
@@ -550,6 +583,51 @@ def web_error_not_found(*, table: str, column: str | None = None) -> WebError:
 
 
 # ---------------------------------------------------------------------------
+# S-141 insert-method-select factory helper.
+# ---------------------------------------------------------------------------
+
+
+def web_error_method_unsupported(
+    *,
+    dialect: str,
+    method: str,
+    supported: list[str],
+    hint: str | None = None,
+) -> WebError:
+    """Surfaced when the caller pins a *method* the *dialect* cannot serve.
+
+    Two trigger paths:
+
+    1. **Wrong dialect** — e.g. ``method="copy"`` against sqlite / mssql /
+       oracle (no COPY equivalent). The default hint is fine here.
+    2. **Missing optional driver** — e.g. ``method="copy"`` against PG with
+       ``psycopg`` not installed (or MySQL with ``pymysql`` missing). The
+       caller passes a tailored *hint* mentioning the pip install.
+
+    The envelope carries ``dialect`` / ``method`` / ``supported`` at the top
+    of the payload (alongside ``code``) so the Studio JS can render a
+    self-contained "this method isn't available here, pick one of: …"
+    message without re-parsing the human-readable ``message``.
+    """
+    supported_list = ", ".join(supported) or "(none)"
+    message = (
+        f"Method {method!r} is not supported for dialect {dialect!r}. "
+        f"Supported methods: {supported_list}."
+    )
+    return WebError(
+        code=WebErrorCode.METHOD_UNSUPPORTED,
+        message=message,
+        status_code=409,
+        hint=hint if hint is not None else _CODE_HINTS[WebErrorCode.METHOD_UNSUPPORTED],
+        extras={
+            "dialect": dialect,
+            "method": method,
+            "supported": list(supported),
+        },
+    )
+
+
+# ---------------------------------------------------------------------------
 # Renderer: HTMX-aware response, plus logging hook.
 # ---------------------------------------------------------------------------
 
@@ -629,6 +707,7 @@ __all__ = [
     "web_error_empty_file",
     "web_error_file_too_large",
     "web_error_internal",
+    "web_error_method_unsupported",
     "web_error_no_connection",
     "web_error_no_run",
     "web_error_no_schema",

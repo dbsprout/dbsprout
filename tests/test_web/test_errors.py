@@ -62,6 +62,8 @@ def test_web_error_code_enum_is_closed_set() -> None:
         "NO_SPEC",
         "CONSTRAINT_VIOLATION",
         "NOT_FOUND",
+        # S-141 insert-method-select guard.
+        "METHOD_UNSUPPORTED",
     }
     assert {m.name for m in WebErrorCode} == expected
     # Each code is a plain string so it round-trips through JSON unchanged.
