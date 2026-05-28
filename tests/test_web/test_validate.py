@@ -183,8 +183,12 @@ def test_validate_clean_dataset_returns_zero_violations(tmp_path: Path) -> None:
     assert resp.status_code == 200, resp.text
     body = resp.json()
 
-    # envelope shape
-    assert set(body) == {"summary", "by_table", "details"}
+    # envelope shape — ``summary``/``by_table``/``details`` come from S-133;
+    # S-134 additionally guarantees ``fidelity`` + ``detection`` keys (both
+    # ``None`` here — no reference rows seeded).
+    assert {"summary", "by_table", "details"} <= set(body)
+    assert body.get("fidelity") is None
+    assert body.get("detection") is None
     assert set(body["summary"]) == {"tables", "rows", "violations"}
     assert body["summary"]["tables"] == 2
     assert body["summary"]["rows"] == 6
