@@ -13,3 +13,30 @@
 .table th {
   white-space: nowrap;
 }
+
+/* ── S-135: drill-down flash highlight ──────────────────────────────────
+ * Applied for ~3 s to the spec-grid row matching the violation the user
+ * clicked in the integrity report panel. Uses a coloured background that
+ * fades back to the row's natural background so the user's eye is drawn
+ * to the row without obscuring the row's content.
+ */
+@keyframes studio-focus-flash {
+  0% {
+    background-color: hsl(var(--wa, 38 92% 50%) / 0.55);
+  }
+  100% {
+    background-color: transparent;
+  }
+}
+
+.studio-focus-flash {
+  animation: studio-focus-flash 3s ease-out 1;
+}
+
+/* Persistent marker so a later focus event can find the previously-focused
+ * row even after the flash animation has finished. Subtle border keeps the
+ * row visually distinct without being noisy. */
+[data-focused="true"] {
+  outline: 1px solid hsl(var(--p, 259 94% 51%) / 0.45);
+  outline-offset: -1px;
+}

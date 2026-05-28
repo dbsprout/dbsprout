@@ -65,3 +65,15 @@
     {% endfor %}
   {% endif %}
 </div>
+{# ── S-135 boot: install ``studio:focus-cell`` listener on the grid so the
+   violation drill-down can scroll + highlight the matching column row.
+   The fragment self-bootstraps so HTMX swaps (full grid refresh after
+   schema load) re-install the listener idempotently. #}
+<script>
+  (function () {
+    var grid = document.getElementById('spec-grid');
+    if (grid && typeof window.installFocusCell === 'function') {
+      window.installFocusCell(grid);
+    }
+  })();
+</script>
