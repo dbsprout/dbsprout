@@ -38,6 +38,7 @@ from dbsprout.web.jobs import JobManager
 from dbsprout.web.progress import ProgressHub, progress_ws_router
 from dbsprout.web.routers.connect import connect_router
 from dbsprout.web.routers.generate import generate_router
+from dbsprout.web.routers.preview import preview_router
 from dbsprout.web.routers.schema import schema_router
 from dbsprout.web.routers.schema_load import schema_load_router
 from dbsprout.web.routes import router
@@ -160,6 +161,12 @@ def create_app(
     # over the schema in app.state.workspace (S-111); returns {job_id} at once.
     app.include_router(generate_router)
     # ── end S-124 ──
+    # ── S-147 preview route ──
+    # GET /api/preview/{table}?limit=N — bounded JSON sample of generated rows
+    # from app.state.workspace.last_result (populated by POST /api/generate,
+    # S-124). Read-only; powers the Studio grid's preview/regen feedback loop.
+    app.include_router(preview_router)
+    # ── end S-147 ──
     # ── S-115 schema view ──
     # Read-only workspace review: GET /api/schema (tree JSON) + GET
     # /api/schema/erd (HTMX ERD fragment, reusing build_erd_mermaid). Distinct
