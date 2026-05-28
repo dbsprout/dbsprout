@@ -188,3 +188,81 @@ def record_generation_run(  # noqa: PLR0913
             exc,
         )
         return None
+
+
+def build_run_record_from_job(  # noqa: PLR0913
+    result: GenerateResult,
+    *,
+    engine: str,
+    seed: int,
+    started_at: datetime,
+    completed_at: datetime | None = None,
+    config_json: str | None = None,
+    llm_call: LLMCall | None = None,
+) -> RunRecord:
+    """Assemble a :class:`RunRecord` for a completed *web* job.
+
+    The web path runs :func:`dbsprout.core.service.generate` only (no
+    integrity validation, by design — S-124 returns immediately and the
+    background job calls just the generator), so we do **not** synthesize
+    fake :class:`~dbsprout.state.models.QualityResult` rows. The mapping
+    therefore mirrors :func:`build_run_record` minus the ``report``
+    argument and writes an empty ``quality_results`` list.
+    """
+    duration_ms: int | None = None
+    if completed_at is not None:
+        duration_ms = int((completed_at - started_at).total_seconds() * 1000)
+
+    llm_calls = [llm_call] if llm_call is not None else []
+    return RunRecord(
+        started_at=started_at,
+        completed_at=completed_at,
+        duration_ms=duration_ms,
+        engine=engine,
+        llm_provider=llm_call.provider if llm_call is not None else None,
+        llm_model=llm_call.model if llm_call is not None else None,
+        total_rows=result.total_rows,
+        total_tables=result.total_tables,
+        seed=seed,
+        config_json=config_json,
+        table_stats=_table_stats(result),
+        quality_results=[],
+        llm_calls=llm_calls,
+    )
+
+
+def record_job_run(  # noqa: PLR0913
+    result: GenerateResult,
+    *,
+    engine: str,
+    seed: int,
+    started_at: datetime,
+    completed_at: datetime | None = None,
+    config_json: str | None = None,
+    llm_call: LLMCall | None = None,
+    db_path: Path | str = _DEFAULT_DB_PATH,
+) -> int | None:
+    """Persist a completed *web* job run to the state DB; never raise.
+
+    Web-path analogue of :func:`record_generation_run`. Returns the new
+    ``runs.id`` on success, ``None`` on any failure (logged warning).
+    State telemetry is best-effort and never blocks the caller.
+    """
+    try:
+        run = build_run_record_from_job(
+            result,
+            engine=engine,
+            seed=seed,
+            started_at=started_at,
+            completed_at=completed_at,
+            config_json=config_json,
+            llm_call=llm_call,
+        )
+        return StateDB(db_path).record_run(run)
+    except Exception as exc:
+        logger.warning(
+            "Could not record web job run to state DB (%s); "
+            "continuing — state telemetry is optional.",
+            exc,
+        )
+        return None

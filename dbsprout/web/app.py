@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
@@ -34,7 +35,7 @@ from fastapi.templating import Jinja2Templates
 
 from dbsprout.migrate.snapshot import SnapshotStore
 from dbsprout.state.db import StateDB
-from dbsprout.web.jobs import JobManager
+from dbsprout.web.jobs import JobManager, JobRecord
 from dbsprout.web.progress import ProgressHub, progress_ws_router
 from dbsprout.web.routers.connect import connect_router
 from dbsprout.web.routers.generate import generate_router
@@ -47,6 +48,9 @@ from dbsprout.web.views.erd import erd_router
 from dbsprout.web.views.insights import insights_router
 from dbsprout.web.views.progress import progress_router
 from dbsprout.web.workspace import Workspace
+
+if TYPE_CHECKING:
+    from dbsprout.state.models import RunRecord
 
 _PACKAGE_DIR = Path(__file__).resolve().parent
 _TEMPLATES_DIR = _PACKAGE_DIR / "templates"
@@ -127,9 +131,40 @@ def create_app(
     # thread reach GET /ws/jobs/{job_id}.
     progress_hub = ProgressHub()
     app.state.progress_hub = progress_hub
-    app.state.job_manager = JobManager(progress_hub=progress_hub)
+
+    # ── S-110 state-write hook ──
+    # On SUCCEEDED completion the JobManager calls this closure with the
+    # final JobRecord; we lazy-import the writer (preserving the
+    # ``dbsprout serve`` lazy-import contract for the manager module
+    # itself) and persist a RunRecord against the resolved state DB.
+    # FAILED / CANCELLED jobs are NOT written (the manager guards). A
+    # raise from the writer is swallowed (best-effort telemetry).
+    def _persist_completed_job(record: JobRecord) -> None:
+        from dbsprout.generate.orchestrator import GenerateResult  # noqa: PLC0415
+        from dbsprout.state.writer import record_job_run  # noqa: PLC0415
+
+        if not isinstance(record.result, GenerateResult):
+            return  # opaque/non-generate result — nothing meaningful to persist
+        record_job_run(
+            record.result,
+            engine=record.engine or "heuristic",
+            seed=record.seed if record.seed is not None else 0,
+            started_at=record.started_at,
+            completed_at=record.finished_at,
+            db_path=resolved,
+        )
+
+    def _read_persisted_runs() -> list[RunRecord]:
+        return StateDB(resolved).get_runs()
+
+    app.state.job_manager = JobManager(
+        progress_hub=progress_hub,
+        state_writer=_persist_completed_job,
+        state_reader=_read_persisted_runs,
+    )
     app.include_router(progress_ws_router)
     # ── end S-109 ──
+    # ── end S-110 ──
     app.mount("/static", StaticFiles(directory=str(_STATIC_DIR)), name="static")
     app.include_router(router)
     # ─── S-091 ERD region ───

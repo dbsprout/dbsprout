@@ -314,3 +314,81 @@ def test_generate_router_has_no_eager_heavy_imports() -> None:
     assert result.stdout.strip() == "[]", (
         f"generate router eagerly imported heavy modules: {result.stdout.strip()}"
     )
+
+
+# ── S-110: completed runs persist via StateDB; job_history reads them ──
+
+
+@pytest.mark.anyio
+async def test_generate_job_persists_completed_run(tmp_path: Path) -> None:
+    """Happy path: a finished /api/generate run lands in the wired state DB and
+    is readable via app.state.get_state_db().get_runs() and JobManager.job_history()."""
+    import httpx  # noqa: PLC0415
+    from httpx import ASGITransport  # noqa: PLC0415
+
+    from dbsprout.web.jobs import JobStatus  # noqa: PLC0415
+
+    db_path = tmp_path / "state.db"
+    app = _make_app(db_path)
+    _load_schema(app, tmp_path)
+
+    transport = ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        resp = await client.post("/api/generate", json={"seed": 11, "engine": "heuristic"})
+        assert resp.status_code == 200, resp.text
+        job_id = resp.json()["job_id"]
+
+    await app.state.job_manager.wait(job_id)
+    record = app.state.job_manager.get(job_id)
+    assert record.status is JobStatus.SUCCEEDED, record.error
+
+    runs = app.state.get_state_db().get_runs()
+    assert len(runs) == 1
+    persisted = runs[0]
+    assert persisted.engine == "heuristic"
+    assert persisted.seed == 11
+    assert persisted.total_rows >= 0
+    assert persisted.total_tables == 2  # users, posts
+    # table_stats present for each generated table
+    stat_names = {s.table_name for s in persisted.table_stats}
+    assert stat_names == {"users", "posts"}
+
+    # The wired job_history() accessor reads the same DB.
+    history = app.state.job_manager.job_history()
+    assert len(history) == 1
+    assert history[0].engine == "heuristic"
+
+
+@pytest.mark.anyio
+async def test_generate_failure_is_not_persisted(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A failed generation does NOT leave a run row in state.db."""
+    import httpx  # noqa: PLC0415
+    from httpx import ASGITransport  # noqa: PLC0415
+
+    from dbsprout.core import service  # noqa: PLC0415
+    from dbsprout.web.jobs import JobStatus  # noqa: PLC0415
+
+    db_path = tmp_path / "state.db"
+    app = _make_app(db_path)
+    _load_schema(app, tmp_path)
+
+    def boom(*_args: object, **_kwargs: object) -> object:
+        raise RuntimeError("pipeline failed")
+
+    monkeypatch.setattr(service, "generate", boom)
+
+    transport = ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        resp = await client.post("/api/generate", json={})
+        assert resp.status_code == 200, resp.text
+        job_id = resp.json()["job_id"]
+
+    await app.state.job_manager.wait(job_id)
+    record = app.state.job_manager.get(job_id)
+    assert record.status is JobStatus.FAILED
+
+    runs = app.state.get_state_db().get_runs()
+    assert runs == []  # no fake-success row
+    assert app.state.job_manager.job_history() == []

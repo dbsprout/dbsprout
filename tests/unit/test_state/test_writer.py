@@ -13,8 +13,10 @@ from dbsprout.state.db import StateDB
 from dbsprout.state.models import LLMCall
 from dbsprout.state.writer import (
     build_run_record,
+    build_run_record_from_job,
     llm_call_for,
     record_generation_run,
+    record_job_run,
 )
 
 if TYPE_CHECKING:
@@ -210,6 +212,104 @@ class TestRecordGenerationRun:
             result = writer.record_generation_run(
                 _result(),
                 _report(),
+                engine="heuristic",
+                seed=1,
+                started_at=_T0,
+                db_path=tmp_path / "state.db",
+            )
+
+        assert result is None
+        assert any("state" in r.message.lower() for r in caplog.records)
+
+
+# ── S-110: job-completion helpers (no IntegrityReport in the web path) ─
+
+
+class TestBuildRunRecordFromJob:
+    """The web path runs ``service.generate`` only (no integrity), so the
+    state-mapping for a completed job is :class:`GenerateResult` + metadata —
+    no :class:`IntegrityReport` is synthesized."""
+
+    def test_maps_run_metadata(self) -> None:
+        run = build_run_record_from_job(
+            _result(),
+            engine="heuristic",
+            seed=42,
+            started_at=_T0,
+            completed_at=_T1,
+        )
+
+        assert run.engine == "heuristic"
+        assert run.seed == 42
+        assert run.started_at == _T0
+        assert run.completed_at == _T1
+        assert run.total_rows == 3
+        assert run.total_tables == 2
+        assert run.duration_ms == 1000  # _T1 - _T0 == 1s
+
+    def test_maps_per_table_stats(self) -> None:
+        run = build_run_record_from_job(
+            _result(), engine="heuristic", seed=1, started_at=_T0, completed_at=_T1
+        )
+        names = {s.table_name for s in run.table_stats}
+        assert names == {"users", "orders"}
+
+    def test_quality_results_empty(self) -> None:
+        """No integrity check is run in the web path → no quality results recorded."""
+        run = build_run_record_from_job(
+            _result(), engine="heuristic", seed=1, started_at=_T0, completed_at=_T1
+        )
+        assert run.quality_results == []
+
+    def test_llm_calls_empty_by_default(self) -> None:
+        run = build_run_record_from_job(
+            _result(), engine="heuristic", seed=1, started_at=_T0, completed_at=_T1
+        )
+        assert run.llm_calls == []
+
+    def test_no_completed_at_means_no_duration(self) -> None:
+        run = build_run_record_from_job(_result(), engine="heuristic", seed=1, started_at=_T0)
+        assert run.completed_at is None
+        assert run.duration_ms is None
+
+
+class TestRecordJobRun:
+    """``record_job_run`` persists a :class:`JobRecord`-style completion."""
+
+    def test_persists_run_and_returns_id(self, tmp_path: Path) -> None:
+        db_path = tmp_path / "state.db"
+        run_id = record_job_run(
+            _result(),
+            engine="heuristic",
+            seed=7,
+            started_at=_T0,
+            completed_at=_T1,
+            db_path=db_path,
+        )
+
+        assert run_id is not None
+        assert run_id > 0
+        runs = StateDB(db_path).get_runs()
+        assert len(runs) == 1
+        assert runs[0].total_rows == 3
+        assert runs[0].seed == 7
+        assert runs[0].engine == "heuristic"
+        assert runs[0].quality_results == []
+
+    def test_state_failure_never_raises(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        def _boom(*_args: object, **_kwargs: object) -> None:
+            raise RuntimeError("disk full")
+
+        monkeypatch.setattr(writer, "StateDB", _boom)
+
+        with caplog.at_level(logging.WARNING):
+            result = writer.record_job_run(
+                _result(),
                 engine="heuristic",
                 seed=1,
                 started_at=_T0,
