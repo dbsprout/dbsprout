@@ -49,6 +49,7 @@ if TYPE_CHECKING:
     from fastapi.responses import Response
     from fastapi.templating import Jinja2Templates
 
+    from dbsprout.schema.models import DatabaseSchema
     from dbsprout.spec.models import DataSpec
     from dbsprout.web.workspace import Workspace
 
@@ -153,9 +154,31 @@ async def get_spec(request: Request) -> Response | dict[str, Any]:
         return _templates(request).TemplateResponse(
             request,
             "spec_grid.html",
-            {"spec": spec, "empty_message": None},
+            {
+                "spec": spec,
+                "empty_message": None,
+                # S-120: ship a ``{table: {column: dtype_name}}`` map so the
+                # spec_row.html pill can carry ``data-dtype`` for the method
+                # picker. ``schema`` is the loaded ``DatabaseSchema``; the
+                # template handles a missing entry as ''.
+                "column_dtypes": _column_dtypes_map(schema),
+            },
         )
     return spec.model_dump(mode="json")
+
+
+def _column_dtypes_map(schema: DatabaseSchema) -> dict[str, dict[str, str]]:
+    """Return a ``{table_name: {column_name: dtype_name}}`` map.
+
+    Sourced from the loaded :class:`~dbsprout.schema.models.DatabaseSchema`;
+    ``dtype_name`` is the upper-case :class:`ColumnType.name` so the
+    method-picker can match it against ``GET /api/generators?dtype=...``
+    1:1 without a client-side lookup.
+    """
+    return {
+        table.name: {col.name: col.data_type.name for col in table.columns}
+        for table in schema.tables
+    }
 
 
 # region: PUT table row_count (S-121)
@@ -448,10 +471,24 @@ async def put_column_config(
 
     # 4. Shape the response — HTMX fragment vs. JSON.
     if _wants_html_or_htmx(request):
+        # S-120: resolve the dtype for the pill so the rendered fragment
+        # still carries ``data-dtype`` after the swap. The schema lookup
+        # is already done above (``check_column_update``) so this is free.
+        col_dtype = ""
+        table_obj = schema.get_table(table)
+        if table_obj is not None:
+            col_obj = table_obj.get_column(column)
+            if col_obj is not None:
+                col_dtype = col_obj.data_type.name
         return _templates(request).TemplateResponse(
             request,
             "spec_row.html",
-            {"table_name": table, "col_name": column, "col_cfg": stored},
+            {
+                "table_name": table,
+                "col_name": column,
+                "col_cfg": stored,
+                "col_dtype": col_dtype,
+            },
         )
     return stored.model_dump(mode="json")
 

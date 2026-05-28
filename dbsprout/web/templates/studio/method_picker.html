@@ -1,0 +1,220 @@
+{#
+  Method-picker Alpine component (S-120).
+
+  Mounted once at the Studio page level (see ``studio.html``). Listens for
+  ``studio:open-method-picker`` window events dispatched by the column
+  method pill (rendered in ``spec_row.html``) and renders a modal showing
+  the catalogue methods that apply to the column's dtype.
+
+  Event payload:
+      {table, column, method, provider, dtype}
+
+  Behaviour:
+    * On open: fetches ``/api/generators?dtype=<dtype>`` once (or the full
+      catalogue when dtype is unknown), groups by provider, renders
+      buttons. The currently-selected ``(provider, method)`` is shown
+      highlighted.
+    * On select: ``PUT /api/spec/tables/{t}/columns/{c}`` with
+      ``HX-Request: true`` so the server returns the re-rendered
+      ``spec_row.html`` fragment; the picker swaps the matching
+      ``[data-column="<t>.<c>"]`` row in place via outerHTML.
+    * On dismiss: closes the modal; clicking outside content closes too.
+
+  Failure paths are intentionally non-fatal — fetch errors surface a
+  human-readable line and keep the existing row untouched.
+#}
+<div
+  id="method-picker"
+  data-method-picker
+  x-data="methodPicker()"
+  x-init="init()"
+  @keydown.escape.window="close()"
+  @studio:open-method-picker.window="open($event.detail)"
+>
+  <div
+    x-show="visible"
+    x-cloak
+    class="fixed inset-0 z-50 flex items-start justify-center bg-base-300/70 backdrop-blur-sm pt-20"
+    role="dialog"
+    aria-modal="true"
+    aria-labelledby="method-picker-title"
+    @click.self="close()"
+  >
+    <div class="card bg-base-100 shadow-xl w-full max-w-2xl max-h-[70vh] overflow-y-auto p-4">
+      <header class="flex items-center justify-between mb-3">
+        <h2 id="method-picker-title" class="font-semibold text-sm">
+          <span x-text="title()"></span>
+        </h2>
+        <button
+          type="button"
+          class="btn btn-ghost btn-xs"
+          aria-label="Close method picker"
+          @click="close()"
+        >
+          ✕
+        </button>
+      </header>
+
+      <p x-show="dtype" class="text-xs opacity-70 mb-3">
+        Showing methods compatible with dtype
+        <code class="text-xs" x-text="dtype"></code>.
+      </p>
+
+      <div x-show="loading" class="text-xs opacity-70 py-6 text-center">
+        Loading generator catalogue…
+      </div>
+
+      <div x-show="error" x-cloak class="alert alert-error text-xs mb-3">
+        <span x-text="error"></span>
+      </div>
+
+      <template x-for="(group, provider) in grouped()" :key="provider">
+        <section class="mb-3" :data-provider="provider">
+          <h3 class="text-xs uppercase tracking-wide opacity-60 mb-1" x-text="provider"></h3>
+          <div class="flex flex-wrap gap-1">
+            <template x-for="entry in group" :key="entry.provider + '.' + entry.method">
+              <button
+                type="button"
+                class="badge badge-outline cursor-pointer text-xs"
+                :class="{ 'badge-primary': isSelected(entry) }"
+                :data-provider="entry.provider"
+                :data-method="entry.method"
+                :title="entry.description"
+                @click="apply(entry)"
+              >
+                <span x-text="entry.method"></span>
+              </button>
+            </template>
+          </div>
+        </section>
+      </template>
+
+      <p x-show="!loading && !error && allEntries.length === 0" class="text-xs opacity-70 py-4">
+        No methods available for this column's dtype.
+      </p>
+    </div>
+  </div>
+</div>
+
+<script>
+  /*
+   * Alpine factory for the method picker (S-120). Kept inline alongside
+   * the template so the component is self-contained — the studio page
+   * doesn't need a separate <script> include.
+   */
+  window.methodPicker = function () {
+    return {
+      visible: false,
+      loading: false,
+      error: '',
+      target: null, // {table, column, method, provider, dtype}
+      allEntries: [],
+
+      init() {
+        // Nothing to do on mount; data fetch is deferred to open() so we
+        // re-fetch with the column dtype each time.
+      },
+
+      open(detail) {
+        this.target = {
+          table: detail.table || '',
+          column: detail.column || '',
+          method: detail.method || '',
+          provider: detail.provider || '',
+          dtype: detail.dtype || '',
+        };
+        this.visible = true;
+        this.error = '';
+        this.fetchCatalogue();
+      },
+
+      close() {
+        this.visible = false;
+        this.target = null;
+      },
+
+      title() {
+        if (!this.target) return 'Choose a generator';
+        return 'Method · ' + this.target.table + '.' + this.target.column;
+      },
+
+      get dtype() {
+        return this.target ? this.target.dtype : '';
+      },
+
+      fetchCatalogue() {
+        this.loading = true;
+        this.allEntries = [];
+        const url = this.dtype
+          ? '/api/generators?dtype=' + encodeURIComponent(this.dtype)
+          : '/api/generators';
+        fetch(url, { headers: { Accept: 'application/json' } })
+          .then((resp) => {
+            if (!resp.ok) {
+              throw new Error('Catalogue unavailable (' + resp.status + ')');
+            }
+            return resp.json();
+          })
+          .then((data) => {
+            this.allEntries = Array.isArray(data.methods) ? data.methods : [];
+            this.loading = false;
+          })
+          .catch((err) => {
+            this.error = err && err.message ? err.message : 'Failed to load catalogue.';
+            this.loading = false;
+          });
+      },
+
+      grouped() {
+        const out = {};
+        for (const entry of this.allEntries) {
+          if (!out[entry.provider]) out[entry.provider] = [];
+          out[entry.provider].push(entry);
+        }
+        return out;
+      },
+
+      isSelected(entry) {
+        if (!this.target) return false;
+        return entry.provider === this.target.provider && entry.method === this.target.method;
+      },
+
+      apply(entry) {
+        if (!this.target) return;
+        const body = JSON.stringify({ provider: entry.provider, method: entry.method, params: {} });
+        const url =
+          '/api/spec/tables/' +
+          encodeURIComponent(this.target.table) +
+          '/columns/' +
+          encodeURIComponent(this.target.column);
+        fetch(url, {
+          method: 'PUT',
+          headers: {
+            'Content-Type': 'application/json',
+            'HX-Request': 'true',
+            Accept: 'text/html',
+          },
+          body: body,
+        })
+          .then((resp) => {
+            if (!resp.ok) {
+              throw new Error('Update failed (' + resp.status + ')');
+            }
+            return resp.text();
+          })
+          .then((html) => {
+            const selector =
+              '[data-column="' + this.target.table + '.' + this.target.column + '"]';
+            const target = document.querySelector(selector);
+            if (target) {
+              target.outerHTML = html;
+            }
+            this.close();
+          })
+          .catch((err) => {
+            this.error = err && err.message ? err.message : 'Update failed.';
+          });
+      },
+    };
+  };
+</script>
