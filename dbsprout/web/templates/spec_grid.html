@@ -46,28 +46,9 @@
         </header>
         <div class="divide-y divide-base-200">
           {% for col_name, col_cfg in table.columns.items() %}
-            <div
-              class="grid grid-cols-12 gap-2 items-center py-1"
-              data-column="{{ table.table_name }}.{{ col_name }}"
-              title="{{ col_name }}"
-            >
-              <span class="col-span-7 text-sm truncate" title="{{ col_name }}">
-                {{ col_name }}
-              </span>
-              <button
-                type="button"
-                class="col-span-5 badge badge-outline text-xs justify-start truncate cursor-pointer"
-                data-table="{{ table.table_name }}"
-                data-column="{{ col_name }}"
-                data-method="{{ col_cfg.method or '' }}"
-                data-provider="{{ col_cfg.provider }}"
-                aria-label="Edit generator for {{ table.table_name }}.{{ col_name }} (coming in S-119)"
-              >
-                <span class="truncate">
-                  {{ col_cfg.provider }}{% if col_cfg.method %} · {{ col_cfg.method }}{% endif %}
-                </span>
-              </button>
-            </div>
+            {% with table_name=table.table_name %}
+              {% include "spec_row.html" %}
+            {% endwith %}
           {% endfor %}
         </div>
       </section>

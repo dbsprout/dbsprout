@@ -40,6 +40,9 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any, cast
 
 from fastapi import APIRouter, HTTPException, Request, status
+from pydantic import ValidationError
+
+from dbsprout.spec.models import GeneratorConfig
 
 if TYPE_CHECKING:
     from fastapi import FastAPI
@@ -309,3 +312,138 @@ async def put_table_row_count(
 
 
 # endregion: PUT table row_count (S-121)
+
+
+# region: PUT column (S-119) -------------------------------------------------
+# Sibling S-121 owns the row-count PUT and edits the same module — keep this
+# block self-contained so the wave merge can union the two regions cleanly.
+
+
+def _wants_html_or_htmx(request: Request) -> bool:
+    """Return ``True`` when the client carries ``Accept: text/html`` *or* ``HX-Request: true``.
+
+    HTMX-driven edits commonly send ``Accept: */*`` and signal their intent via
+    the ``HX-Request`` header instead; we accept both.
+    """
+    if _wants_html(request):
+        return True
+    hx = request.headers.get("hx-request", "").lower()
+    return hx == "true"
+
+
+@spec_router.put(
+    "/api/spec/tables/{table}/columns/{column}",
+    response_model=None,
+)
+async def put_column_config(
+    table: str,
+    column: str,
+    request: Request,
+) -> Response | dict[str, Any]:
+    """Replace one column's ``GeneratorConfig`` on the workspace spec.
+
+    Request body is validated against :class:`~dbsprout.spec.models.GeneratorConfig`
+    via :meth:`pydantic.BaseModel.model_validate`; malformed input yields ``422``
+    with Pydantic-native field-level errors. A referential-integrity guard
+    (:func:`dbsprout.spec.constraints.check_column_update`) rejects PK / FK-
+    target downgrades with ``409 CONSTRAINT_VIOLATION``. Missing schema is
+    ``409 NO_SCHEMA`` (the same envelope ``GET /api/spec`` raises). Unknown
+    table / column is ``404 NOT_FOUND``.
+
+    Response shape:
+
+    * JSON branch (default ``Accept``) — the new ``GeneratorConfig`` as JSON.
+    * HTML branch (``Accept: text/html`` or ``HX-Request: true``) — the
+      single-row HTMX fragment from ``spec_row.html`` so the studio grid can
+      hot-swap one row without rebuilding the whole grid.
+    """
+    workspace = _workspace(request)
+    schema = workspace.get_schema()
+    if schema is None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=_NO_SCHEMA_DETAIL,
+        )
+
+    # 1. Pydantic validation at the boundary — closed by ``extra='forbid'``.
+    try:
+        raw = await request.json()
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=[{"loc": ["body"], "msg": str(exc), "type": "value_error.jsondecode"}],
+        ) from exc
+    try:
+        new_config = GeneratorConfig.model_validate(raw)
+    except ValidationError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=exc.errors(),
+        ) from exc
+
+    # 2. Referential-integrity guard against the *loaded schema*.
+    from dbsprout.spec.constraints import check_column_update  # noqa: PLC0415
+
+    reason = check_column_update(schema, table, column, new_config)
+    if reason is not None:
+        # Distinguish "you can't change this" (409) from "this doesn't exist"
+        # (404). When the column / table doesn't exist on the *schema* but the
+        # spec also won't know about it, surface 404; otherwise 409.
+        table_obj = schema.get_table(table)
+        if table_obj is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail={
+                    "code": "NOT_FOUND",
+                    "message": reason,
+                    "table": table,
+                    "column": column,
+                },
+            )
+        if table_obj.get_column(column) is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail={
+                    "code": "NOT_FOUND",
+                    "message": reason,
+                    "table": table,
+                    "column": column,
+                },
+            )
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "code": "CONSTRAINT_VIOLATION",
+                "message": reason,
+                "table": table,
+                "column": column,
+            },
+        )
+
+    # 3. Apply the immutable swap on the workspace; LookupError → 404.
+    if workspace.get_spec() is None:
+        _build_or_get_spec(workspace)
+    try:
+        stored = workspace.update_column(table, column, new_config)
+    except LookupError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={
+                "code": "NOT_FOUND",
+                "message": str(exc),
+                "table": table,
+                "column": column,
+            },
+        ) from exc
+
+    # 4. Shape the response — HTMX fragment vs. JSON.
+    if _wants_html_or_htmx(request):
+        return _templates(request).TemplateResponse(
+            request,
+            "spec_row.html",
+            {"table_name": table, "col_name": column, "col_cfg": stored},
+        )
+    return stored.model_dump(mode="json")
+
+
+# endregion -----------------------------------------------------------------
