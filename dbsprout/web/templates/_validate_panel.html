@@ -14,6 +14,8 @@
      * ``by_table`` (list[dict]) — per-table counters.
      * ``details`` (list[dict]) — capped at ``max_detail_rows`` failed checks.
      * ``max_detail_rows`` (int) — cap echoed in the header when truncated.
+     * ``fidelity`` (dict | None) — ``{overall_score, passed, metrics}`` (S-134); omit when ``None``.
+     * ``detection`` (dict | None) — ``{overall_score, passed, metrics}`` (S-134); omit when ``None``.
 #}
 <div id="validate-panel" class="space-y-4">
   {% if no_run %}
@@ -100,6 +102,80 @@
             </tbody>
           </table>
         </div>
+      </div>
+    {% endif %}
+
+    {# S-134: Fidelity block — only rendered when source-data reference rows are available. #}
+    {% if fidelity %}
+      <div data-fidelity-panel>
+        <div class="flex items-center justify-between">
+          <h3 class="font-semibold">Fidelity</h3>
+          {% if fidelity.passed %}
+            <span class="badge badge-success">overall {{ "%.3f"|format(fidelity.overall_score) }}</span>
+          {% else %}
+            <span class="badge badge-warning">overall {{ "%.3f"|format(fidelity.overall_score) }}</span>
+          {% endif %}
+        </div>
+        {% if fidelity.metrics %}
+          <div class="overflow-x-auto">
+            <table class="table table-sm">
+              <thead>
+                <tr>
+                  <th>Metric</th>
+                  <th>Table</th>
+                  <th>Column</th>
+                  <th>Score</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for m in fidelity.metrics %}
+                  <tr data-fidelity-metric data-table="{{ m.table }}" data-column="{{ m.column }}">
+                    <td><span class="badge badge-outline">{{ m.metric }}</span></td>
+                    <td><code>{{ m.table }}</code></td>
+                    <td><code>{{ m.column }}</code></td>
+                    <td>{{ "%.3f"|format(m.score) }}</td>
+                  </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        {% endif %}
+      </div>
+    {% endif %}
+
+    {# S-134: Detection block — C2ST classifier accuracy per table. Lower = better. #}
+    {% if detection %}
+      <div data-detection-panel>
+        <div class="flex items-center justify-between">
+          <h3 class="font-semibold">Detection</h3>
+          {% if detection.passed %}
+            <span class="badge badge-success">overall {{ "%.3f"|format(detection.overall_score) }}</span>
+          {% else %}
+            <span class="badge badge-warning">overall {{ "%.3f"|format(detection.overall_score) }}</span>
+          {% endif %}
+        </div>
+        {% if detection.metrics %}
+          <div class="overflow-x-auto">
+            <table class="table table-sm">
+              <thead>
+                <tr>
+                  <th>Metric</th>
+                  <th>Table</th>
+                  <th>Accuracy</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for m in detection.metrics %}
+                  <tr data-detection-metric data-table="{{ m.table }}">
+                    <td><span class="badge badge-outline">{{ m.metric }}</span></td>
+                    <td><code>{{ m.table }}</code></td>
+                    <td>{{ "%.3f"|format(m.accuracy) }}</td>
+                  </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        {% endif %}
       </div>
     {% endif %}
   {% endif %}

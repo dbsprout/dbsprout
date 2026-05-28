@@ -1,4 +1,4 @@
-"""``POST /api/validate`` — integrity report over the last generation run (S-133).
+"""``POST /api/validate`` — integrity + fidelity + detection report (S-133, S-134).
 
 After a generation run finishes (``POST /api/generate``, S-124), the rows live in
 ``app.state.workspace.last_result`` (S-111) and the schema lives in
@@ -6,6 +6,19 @@ After a generation run finishes (``POST /api/generate``, S-124), the rows live i
 last run by reusing the existing :func:`dbsprout.quality.integrity.validate_integrity`
 validator (FK satisfaction, PK / UNIQUE, NOT NULL); the CHECK-constraint slot is
 preserved in the envelope for future quality work (currently always ``0``).
+
+S-134 additionally surfaces two distribution-quality blocks in the same
+envelope: ``fidelity`` (KS / TV / cardinality / correlation similarity, via
+:func:`dbsprout.quality.fidelity.validate_fidelity`) and ``detection`` (C2ST
+classifier accuracy, via :func:`dbsprout.quality.detection.validate_detection`).
+Both blocks are computed only when reference rows are available on
+``app.state.workspace`` (see :meth:`~dbsprout.web.workspace.Workspace.get_reference_data`);
+otherwise both keys are present in the envelope but ``None`` — the contract is
+"keys always present, payload null when not computable", which keeps the JSON
+shape stable for clients. The optional ``[stats]`` extra (``scipy`` for
+fidelity, ``scikit-learn`` for detection) is handled the same way: if the
+helper raises ``ImportError``, the affected block degrades to ``None`` and the
+endpoint still returns ``200``.
 
 The endpoint content-negotiates on the ``HX-Request`` header:
 
@@ -36,6 +49,7 @@ lazy-import contract — see
 
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING, Any, cast
 
 from fastapi import APIRouter, HTTPException, Request, status
@@ -45,7 +59,10 @@ if TYPE_CHECKING:
     from fastapi.templating import Jinja2Templates
 
     from dbsprout.quality.integrity import IntegrityReport
+    from dbsprout.schema.models import DatabaseSchema
     from dbsprout.web.workspace import Workspace
+
+_log = logging.getLogger(__name__)
 
 validate_router = APIRouter()
 
@@ -157,6 +174,85 @@ def _aggregate_report(
     }
 
 
+# region: fidelity+detection (S-134) ────────────────────────────────────
+
+
+def _serialise_fidelity(
+    synthetic: dict[str, list[dict[str, Any]]],
+    reference: dict[str, list[dict[str, Any]]],
+    schema: DatabaseSchema,
+) -> dict[str, Any] | None:
+    """Run :func:`validate_fidelity` and shape its report into a JSON-safe dict.
+
+    Returns ``None`` when the optional ``[stats]`` extra (``scipy``) is absent —
+    the route uses that to set ``body['fidelity'] = None`` without 500'ing.
+    Lazy-imported so the router import stays cheap (preserves the
+    ``dbsprout serve`` lazy-import contract).
+    """
+    try:
+        from dbsprout.quality.fidelity import validate_fidelity  # noqa: PLC0415
+    except ImportError:  # pragma: no cover — defensive: helper is always importable
+        return None
+    try:
+        report = validate_fidelity(synthetic, reference, schema)
+    except ImportError:
+        # scipy missing → graceful-degrade to ``None``. Logged at WARNING so
+        # operators notice the missing extra without an HTTP 500.
+        _log.warning("fidelity skipped: scipy missing ([stats] extra)")
+        return None
+    return {
+        "overall_score": report.overall_score,
+        "passed": report.passed,
+        "metrics": [
+            {
+                "metric": m.metric,
+                "table": m.table,
+                "column": m.column,
+                "score": m.score,
+                "details": m.details,
+            }
+            for m in report.metrics
+        ],
+    }
+
+
+def _serialise_detection(
+    synthetic: dict[str, list[dict[str, Any]]],
+    reference: dict[str, list[dict[str, Any]]],
+    schema: DatabaseSchema,
+) -> dict[str, Any] | None:
+    """Run :func:`validate_detection` and shape its report into a JSON-safe dict.
+
+    Returns ``None`` when the optional ``[stats]`` extra (``scikit-learn``) is
+    absent — same graceful-degrade pattern as :func:`_serialise_fidelity`.
+    """
+    try:
+        from dbsprout.quality.detection import validate_detection  # noqa: PLC0415
+    except ImportError:  # pragma: no cover — defensive: helper is always importable
+        return None
+    try:
+        report = validate_detection(synthetic, reference, schema)
+    except ImportError:
+        _log.warning("detection skipped: scikit-learn missing ([stats] extra)")
+        return None
+    return {
+        "overall_score": report.overall_score,
+        "passed": report.passed,
+        "metrics": [
+            {
+                "metric": m.metric,
+                "table": m.table,
+                "accuracy": m.accuracy,
+                "details": m.details,
+            }
+            for m in report.metrics
+        ],
+    }
+
+
+# endregion: fidelity+detection (S-134) ──────────────────────────────────
+
+
 # ── handler ────────────────────────────────────────────────────────────
 
 
@@ -206,6 +302,18 @@ async def validate_run(request: Request) -> Response | dict[str, Any]:
     report = validate_integrity(tables_data, schema)
     envelope = _aggregate_report(report, tables_data, table_names)
 
+    # S-134: fidelity + detection — keys always present (``None`` when no
+    # reference rows are seeded, ``None`` when the optional ``[stats]`` extra
+    # is missing). Both helpers are lazy-imported inside ``_serialise_*``.
+    reference_data = workspace.get_reference_data()
+    fidelity_block: dict[str, Any] | None = None
+    detection_block: dict[str, Any] | None = None
+    if reference_data is not None:
+        fidelity_block = _serialise_fidelity(tables_data, reference_data, schema)
+        detection_block = _serialise_detection(tables_data, reference_data, schema)
+    envelope["fidelity"] = fidelity_block
+    envelope["detection"] = detection_block
+
     if wants_htmx:
         return _templates(request).TemplateResponse(
             request,
@@ -217,6 +325,8 @@ async def validate_run(request: Request) -> Response | dict[str, Any]:
                 "by_table": envelope["by_table"],
                 "details": envelope["details"],
                 "max_detail_rows": _MAX_DETAIL_ROWS,
+                "fidelity": fidelity_block,
+                "detection": detection_block,
             },
         )
     return envelope

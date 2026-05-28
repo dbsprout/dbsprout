@@ -235,3 +235,30 @@ def test_peek_target_url_returns_raw_then_redacted_property_masks() -> None:
     ws.set_target_url(raw)
     assert ws.peek_target_url() == raw  # raw, for internal scrubbing only
     assert "s3cretpw" not in (ws.redacted_target or "")  # public accessor still masks
+
+
+# ── reference-data seam (S-134) ───────────────────────────────────────
+
+
+def test_reference_data_default_is_none() -> None:
+    """A fresh workspace has no reference data; the fidelity/detection blocks
+    in ``POST /api/validate`` rely on this default to degrade gracefully."""
+    ws = Workspace()
+    assert ws.get_reference_data() is None
+
+
+def test_reference_data_round_trip() -> None:
+    """``set_reference_data`` / ``get_reference_data`` round-trip the mapping
+    that ``validate_fidelity`` / ``validate_detection`` consume."""
+    ws = Workspace()
+    payload = {"users": [{"id": 1, "email": "a@x"}, {"id": 2, "email": "b@x"}]}
+    ws.set_reference_data(payload)
+    assert ws.get_reference_data() == payload
+
+
+def test_reset_clears_reference_data() -> None:
+    """``reset()`` must clear reference data along with the rest of session state."""
+    ws = Workspace()
+    ws.set_reference_data({"users": [{"id": 1}]})
+    ws.reset()
+    assert ws.get_reference_data() is None

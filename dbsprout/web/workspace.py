@@ -24,7 +24,7 @@ not import CLI code, and the CLI must never import it at startup.
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 from urllib.parse import urlsplit
 
 if TYPE_CHECKING:
@@ -87,6 +87,12 @@ class Workspace:
         self.last_seed: int | None = None
         self.source: str | None = None
         self._target_url: str | None = None
+        # S-134: per-table reference rows (real source-data sample) used by the
+        # ``POST /api/validate`` fidelity + detection blocks. Default ``None`` so
+        # both blocks degrade gracefully to ``null`` when no reference has been
+        # seeded; the wiring from a live connection is left for a follow-up
+        # story to keep S-134 within its 3-pt budget.
+        self._reference_data: dict[str, list[dict[str, Any]]] | None = None
         # S-122: optional disk-backed spec cache. Default is ``None`` here so the
         # cache module is only imported (and the ``.dbsprout/cache`` directory only
         # created) on first persist/hydrate — tests that never touch persistence
@@ -335,6 +341,30 @@ class Workspace:
             return None
         return _redact_url(self._target_url)
 
+    # ── reference data (S-134) ─────────────────────────────────────────
+    def get_reference_data(self) -> dict[str, list[dict[str, Any]]] | None:
+        """Return the per-table reference rows, or ``None`` when unseeded.
+
+        Consumed by :mod:`dbsprout.web.routers.validate` (S-134) to compute the
+        fidelity + detection blocks via the existing helpers in
+        :mod:`dbsprout.quality.fidelity` / :mod:`dbsprout.quality.detection`.
+        Returning ``None`` is the documented "graceful degrade" path: the
+        route still returns ``200`` with both blocks set to ``null``.
+        """
+        return self._reference_data
+
+    def set_reference_data(
+        self,
+        data: dict[str, list[dict[str, Any]]] | None,
+    ) -> None:
+        """Stash the per-table reference rows used by the validate route.
+
+        Pass ``None`` to clear. The mapping must mirror the synthetic
+        ``GenerateResult.tables_data`` shape (``{table: [{column: value, ...}, ...]}``)
+        — the quality helpers consume both maps positionally.
+        """
+        self._reference_data = data
+
     # ── lifecycle ──────────────────────────────────────────────────────
     def reset(self) -> None:
         """Clear all session state back to empty."""
@@ -344,6 +374,7 @@ class Workspace:
         self.last_seed = None
         self.source = None
         self._target_url = None
+        self._reference_data = None
 
     def __repr__(self) -> str:
         """Safe repr — the target URL appears redacted, never in clear.
