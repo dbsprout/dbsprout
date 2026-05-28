@@ -1,0 +1,55 @@
+{#
+  ── S-142 wizard step body wrapper ──────────────────────────────────────
+  Common scaffolding for all six step bodies. Inputs:
+
+    * ``step``         — int 1..6 of the step being rendered.
+    * ``step_labels``  — tuple[str, ...] (so the header reads from the same
+                         constant as the rail).
+    * ``has_back``     — bool, suppress the Back button on step 1.
+    * ``has_next``     — bool, suppress the Next button on step 6.
+
+  Step body content (the ``content`` block) is the only seam S-143 needs to
+  override — the navigation form below stays untouched so flows always
+  POST to ``/wizard/step/{step}`` with the right HTMX swap target.
+
+  The form posts to the body slot via HTMX so the rail + URL stay stable.
+── #}
+<section data-panel="wizard-step"
+         data-step="{{ step }}"
+         class="card bg-base-100 shadow p-6 flex flex-col gap-4">
+  <header class="flex items-center gap-2">
+    <span class="badge badge-primary">Step {{ step }}</span>
+    <h2 class="text-xl font-semibold">{{ step_labels[step - 1] }}</h2>
+  </header>
+
+  <div class="prose max-w-none">
+    {% block content %}{% endblock %}
+  </div>
+
+  <form method="post" action="/wizard/step/{{ step }}"
+        hx-post="/wizard/step/{{ step }}"
+        hx-target="#wizard-body" hx-swap="innerHTML"
+        class="flex justify-between mt-4 gap-2">
+    {% block extra_fields %}{% endblock %}
+    <div class="flex gap-2">
+      {% if has_back %}
+        <button type="submit" name="action" value="back"
+                class="btn btn-ghost"
+                aria-label="Back to step {{ step - 1 }}">← Back</button>
+      {% else %}
+        <span aria-hidden="true"></span>
+      {% endif %}
+    </div>
+    <div class="flex gap-2">
+      {% if has_next %}
+        <button type="submit" name="action" value="next"
+                class="btn btn-primary"
+                aria-label="Next, go to step {{ step + 1 }}">Next →</button>
+      {% else %}
+        <button type="submit" name="action" value="next"
+                class="btn btn-primary"
+                aria-label="Finish">Finish ✓</button>
+      {% endif %}
+    </div>
+  </form>
+</section>
