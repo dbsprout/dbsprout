@@ -7,36 +7,49 @@ stores the resulting :class:`~dbsprout.schema.models.DatabaseSchema` plus the
 wired on ``app.state.workspace``, and returns a JSON summary (table count, table
 names, dialect).
 
-Friendly errors (FR-009)
-------------------------
+Friendly errors (FR-009 / S-116)
+--------------------------------
 Connection / introspection / unsupported-dialect / malformed-URL / missing-driver
-failures are translated into a clean ``4xx`` JSON body
-(``{"detail": "<message>"}``) — never a raw traceback. Credentials are
-**redacted** in any echoed URL or message: the raw ``user:password`` never
-appears in a response. The workspace is mutated only on success, so a failed
-connect can never leave half-loaded state behind.
+failures are translated into a typed envelope via
+:func:`dbsprout.web.errors.classify_connect_error` and surfaced through
+:func:`dbsprout.web.errors.raise_web_error` — never a raw traceback. The handler
+keeps **two** failure paths:
+
+* the *known* exception set (driver / SQLAlchemy / ``ImportError`` /
+  ``ValueError``) → the classifier returns the right code + 400; and
+* an ``except Exception`` final guard that downgrades any *unexpected*
+  exception to :class:`~dbsprout.web.errors.WebErrorCode.INTERNAL` (500) with
+  the original exception logged at ``ERROR`` (with traceback) and a correlation
+  id surfaced to the user.
+
+Credentials are redacted in any echoed URL or message via
+:func:`dbsprout.web.workspace._redact_url`, and the workspace is mutated only
+on success — a failed connect can never leave half-loaded state behind.
 
 This module is imported only by :mod:`dbsprout.web.app` (itself lazy-imported by
 ``dbsprout serve``); it adds nothing to the CLI import path. Heavy / CLI-adjacent
 imports (the ``SchemaSource`` dataclass, SQLAlchemy, the service facade) are done
-lazily inside the handler so importing the router stays cheap. Credential masking
-reuses :func:`dbsprout.web.workspace._redact_url` (SQLAlchemy
-``hide_password=True`` with a never-raising stdlib fallback) — the CLI scrubber is
-intentionally NOT imported.
+lazily inside the handler so importing the router stays cheap.
 """
 
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, cast
 
-from fastapi import APIRouter, HTTPException, Request, status
+from fastapi import APIRouter, Request
 from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+from dbsprout.web.errors import classify_connect_error, raise_web_error, web_error_internal
 
 if TYPE_CHECKING:
     from dbsprout.schema.models import DatabaseSchema
     from dbsprout.web.workspace import Workspace
 
 connect_router = APIRouter()
+
+# Imported lazily by the handler — kept as a module-level reference so tests can
+# monkey-patch ``dbsprout.web.routers.connect.load_schema``.
+load_schema: Any = None
 
 
 class ConnectRequest(BaseModel):
@@ -45,7 +58,8 @@ class ConnectRequest(BaseModel):
     Validated at the boundary: a missing, blank, or whitespace-only ``url`` (or
     any unexpected field) yields FastAPI's ``422``. The URL *shape* is not
     pre-validated here — :func:`dbsprout.core.service.load_schema` is the single
-    authority and turns a bad URL into a friendly ``4xx``.
+    authority and turns a bad URL into a friendly typed envelope via the S-116
+    error layer.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -76,55 +90,48 @@ def _summary(schema: DatabaseSchema) -> dict[str, Any]:
     }
 
 
-def _friendly_error(exc: Exception, url: str) -> str:
-    """Build a clear, credential-scrubbed one-line error message.
+def _known_connect_exceptions() -> tuple[type[BaseException], ...]:
+    """Exception types the connect path classifies as caller-actionable.
 
-    Most loader exceptions already embed the password-masked URL, but some
-    (driver ``ImportError``, arbitrary ``ValueError``) may not — so the raw
-    password and raw URL are defensively stripped from the message before it is
-    returned to the client.
+    Anything outside this tuple flows into the ``INTERNAL`` catch-all in the
+    handler. SQLAlchemy's base error is appended at the seam (instead of being
+    constructed inline) to keep the ``except`` clause readable and to keep
+    ``sqlalchemy`` lazy-imported (the handler only imports it on first call).
     """
-    from dbsprout.web.workspace import _redact_url  # noqa: PLC0415
+    import sqlalchemy as sa  # noqa: PLC0415 — lazy at first-failure call
 
-    message = str(exc) or type(exc).__name__
-    redacted = _redact_url(url)
-    message = message.replace(url, redacted)
-    try:
-        import sqlalchemy as sa  # noqa: PLC0415
-
-        password = sa.engine.make_url(url).password
-    except Exception:  # never let credential scrubbing raise
-        password = None
-    if password:
-        message = message.replace(password, "***")
-    return f"Could not connect to the database: {message}"
+    return (ValueError, OSError, ImportError, sa.exc.SQLAlchemyError)
 
 
 @connect_router.post("/api/connect")
-async def connect(request: Request, body: ConnectRequest) -> dict[str, Any]:
+async def connect(request: Request, body: ConnectRequest) -> Any:
     """Introspect a live database and start a workspace session.
 
     On success, stores the schema + redacted target on ``app.state.workspace``
-    and returns ``{"table_count", "tables", "dialect"}``. On failure, raises a
-    friendly ``400`` (no traceback, credentials redacted).
+    and returns ``{"table_count", "tables", "dialect"}``. On failure, surfaces a
+    typed S-116 envelope: ``4xx`` for caller-actionable errors (bad creds / bad
+    URL / missing driver) and ``5xx`` only for genuine server faults (with the
+    real exception logged server-side and a correlation id surfaced to the user).
     """
-    import sqlalchemy as sa  # noqa: PLC0415
-
     from dbsprout.cli.sources import SchemaSource  # noqa: PLC0415
-    from dbsprout.core.service import load_schema  # noqa: PLC0415
+    from dbsprout.core.service import load_schema as _load_schema  # noqa: PLC0415
     from dbsprout.web.workspace import _redact_url  # noqa: PLC0415
 
     url = body.url
     redacted = _redact_url(url)
     source = SchemaSource(kind="db", raw_value=url, display_value=redacted)
 
+    # Allow tests to monkey-patch ``dbsprout.web.routers.connect.load_schema`` —
+    # they set the module-level reference; the handler honours that override
+    # when present, otherwise it uses the freshly lazy-imported service facade.
+    loader = load_schema or _load_schema
+
     try:
-        schema = load_schema(source)
-    except (ValueError, OSError, ImportError, sa.exc.SQLAlchemyError) as exc:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=_friendly_error(exc, url),
-        ) from None
+        schema = loader(source)
+    except _known_connect_exceptions() as exc:
+        return raise_web_error(request, classify_connect_error(exc, url), original=exc)
+    except Exception as exc:
+        return raise_web_error(request, web_error_internal(), original=exc)
 
     workspace = _workspace(request)
     workspace.set_schema(schema)

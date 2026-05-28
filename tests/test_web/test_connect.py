@@ -117,7 +117,10 @@ def test_connect_unsupported_dialect_returns_friendly_4xx(tmp_path: Path) -> Non
     )
     assert 400 <= resp.status_code < 500
     detail = resp.json()["detail"]
-    assert "redis" in detail.lower() or "supported" in detail.lower()
+    # S-116: envelope shape — {code, message, correlation_id, hint?}.
+    assert isinstance(detail, dict)
+    assert detail["code"] == "UNKNOWN_DIALECT"
+    assert "correlation_id" in detail
     # JSON error envelope, never an HTML traceback page.
     assert "Traceback" not in resp.text
 
@@ -130,8 +133,12 @@ def test_connect_malformed_url_returns_friendly_4xx(tmp_path: Path) -> None:
     # error from an accidental 404 (missing route) or 422 (validation).
     assert resp.status_code == 400, resp.text
     detail = resp.json()["detail"]
-    assert isinstance(detail, str)
-    assert detail.startswith("Could not connect")
+    assert isinstance(detail, dict)
+    # SQLAlchemy raises ArgumentError for unparseable URLs → MALFORMED_URL;
+    # but if the URL parses but the dialect is unknown we land on UNKNOWN_DIALECT.
+    # Either way it's a caller-actionable 400 with the new envelope.
+    assert detail["code"] in {"MALFORMED_URL", "UNKNOWN_DIALECT", "CONN_REFUSED"}
+    assert "correlation_id" in detail
     assert "Traceback" not in resp.text
 
 
@@ -147,6 +154,10 @@ def test_connect_error_redacts_credentials(tmp_path: Path) -> None:
     assert resp.status_code == 400, resp.text
     assert "s3cretpw" not in resp.text
     assert "Traceback" not in resp.text
+    detail = resp.json()["detail"]
+    assert isinstance(detail, dict)
+    assert "code" in detail
+    assert "correlation_id" in detail
 
 
 def test_connect_failure_leaves_workspace_clean(tmp_path: Path) -> None:
@@ -176,3 +187,64 @@ def test_connect_route_registered_on_app(tmp_path: Path) -> None:
     app = _make_app(tmp_path / "state.db")
     paths = {getattr(r, "path", "") for r in app.routes}
     assert "/api/connect" in paths
+
+
+# ── S-116: typed envelope + HTMX + INTERNAL ─────────────────────────────
+
+
+def test_connect_returns_typed_envelope_on_failure(tmp_path: Path) -> None:
+    """S-116: every failure carries ``{code, message, correlation_id}``."""
+    resp = TestClient(_make_app(tmp_path / "state.db")).post(
+        "/api/connect", json={"url": "postgresql://u:p@unreachable.invalid:5432/db"}
+    )
+    assert resp.status_code == 400
+    detail = resp.json()["detail"]
+    assert detail["code"] in {"CONN_REFUSED", "MISSING_DRIVER"}
+    assert detail["message"]
+    assert detail["correlation_id"]
+    assert "Traceback" not in resp.text
+
+
+def test_connect_htmx_request_returns_html_fragment(tmp_path: Path) -> None:
+    """S-116 AC: HTMX swap target receives an HTML fragment, never JSON."""
+    resp = TestClient(_make_app(tmp_path / "state.db")).post(
+        "/api/connect",
+        json={"url": "redis://localhost:6379/0"},
+        headers={"HX-Request": "true"},
+    )
+    assert resp.status_code == 400
+    assert resp.headers["content-type"].startswith("text/html")
+    # Code, message, and correlation id all rendered into the fragment.
+    body = resp.text
+    assert "UNKNOWN_DIALECT" in body
+    assert 'data-code="UNKNOWN_DIALECT"' in body
+    assert "Correlation ID" in body
+    # No stack frame leaks into the HTML.
+    assert "Traceback" not in body
+    assert 'File "' not in body
+
+
+def test_connect_unexpected_exception_returns_internal_500(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """S-116 AC: unclassified exceptions become INTERNAL/500 with correlation id."""
+
+    def _boom(_source: object) -> object:
+        raise RuntimeError("simulated catastrophic failure")
+
+    monkeypatch.setattr("dbsprout.web.routers.connect.load_schema", _boom, raising=False)
+    # Lazy-imported in the handler — also patch its source module just in case.
+    monkeypatch.setattr("dbsprout.core.service.load_schema", _boom)
+
+    resp = TestClient(_make_app(tmp_path / "state.db")).post(
+        "/api/connect", json={"url": "sqlite:///:memory:"}
+    )
+    assert resp.status_code == 500
+    detail = resp.json()["detail"]
+    assert detail["code"] == "INTERNAL"
+    assert detail["message"] == "Unexpected error"
+    assert detail["correlation_id"]
+    # The real exception text must NOT appear in the user-facing body.
+    assert "simulated catastrophic failure" not in resp.text
+    assert "Traceback" not in resp.text

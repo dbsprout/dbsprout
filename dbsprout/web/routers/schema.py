@@ -115,9 +115,8 @@ async def schema_erd_fragment(request: Request) -> Response:
 
     Reuses :func:`dbsprout.report.erd.build_erd_mermaid` and
     :func:`dbsprout.web.views.erd._build_table_details` so ERD generation is not
-    duplicated. Returns ``200`` with a graceful
-    empty-state fragment when no schema is loaded (so an HTMX swap shows a
-    message rather than an error).
+    duplicated. Returns ``200`` with a graceful empty-state fragment when no
+    schema is loaded (so an HTMX swap shows a message rather than an error).
     """
     import json  # noqa: PLC0415 — stdlib, lazy for startup speed
 
