@@ -143,3 +143,48 @@ def test_studio_picker_template_uses_aria_describedby(tmp_path: Path) -> None:
     # ``field_descriptions()`` helper. We render them as a Jinja-embedded
     # JSON dict the Alpine component can read.
     assert "field-descriptions" in body or "fieldDescriptions" in body, body
+
+
+# ── S-146: per-entry example value on picker ──────────────────────────────
+
+
+def test_studio_picker_renders_per_entry_example_slot(tmp_path: Path) -> None:
+    """Each picker button carries an ``example`` value slot (S-146).
+
+    The Studio picker template is server-rendered as the Alpine
+    component shell — the per-entry ``entry.example`` binding must
+    appear in the markup so the example value renders next to each
+    method button at runtime.
+    """
+    app = _make_app(tmp_path)
+    with TestClient(app) as client:
+        resp = client.get("/studio")
+    body = resp.text
+    # Alpine binding for the example slot.
+    assert 'x-text="entry.example"' in body, body
+    # Data attribute for picker-side selectors / tests.
+    assert "data-method-example-for" in body, body
+
+
+def test_studio_picker_footer_mentions_example_label(tmp_path: Path) -> None:
+    """The picker footer shows a labelled example as the user hovers (S-146)."""
+    app = _make_app(tmp_path)
+    with TestClient(app) as client:
+        resp = client.get("/studio")
+    body = resp.text
+    # Footer label + Alpine binding for the live example mirror.
+    assert "Example:" in body, body
+    assert "hoveredExample" in body, body
+
+
+def test_spec_row_uses_shared_tooltip_macro_id_prefix(tmp_path: Path) -> None:
+    """The pill row consumes the shared tooltip macro (S-146)."""
+    app = _make_app(tmp_path)
+    _seed_workspace(app)
+    with TestClient(app) as client:
+        resp = client.get("/api/spec", headers={"Accept": "text/html"})
+    body = resp.text
+    # The shared macro renders an id_prefix of ``spec-<table>-<col>`` —
+    # confirm at least one of those appears for the seeded ``users.email``
+    # column so we know spec_row went through the macro.
+    assert "spec-users-email" in body, body

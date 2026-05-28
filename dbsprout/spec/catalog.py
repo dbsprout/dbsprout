@@ -286,6 +286,108 @@ def _describe(provider: str, method: str) -> str:
     return f"{provider.capitalize()} {method.replace('_', ' ')}"
 
 
+# ── per-method example value ──────────────────────────────────────────────
+
+#: Curated illustrative example values surfaced on the Studio method
+#: picker under each method button (S-146). Keyed by **method name only**
+#: — providers are interchangeable for the user-facing example. Missing
+#: entries fall back to :func:`_describe`'s first sentence so plugin-
+#: supplied methods still show *something*.
+_METHOD_EXAMPLES: dict[str, str] = {
+    # Numeric.
+    "random_int": "42",
+    "random_float": "3.14",
+    "random_decimal": "12.34",
+    "age": "29",
+    "latitude": "37.7749",
+    "longitude": "-122.4194",
+    "price": "19.99",
+    "version": "1.4.2",
+    # Bool.
+    "random_bool": "True",
+    # Strings.
+    "random_string": "Xk7p2Q",
+    "random_text": "Lorem ipsum dolor sit amet.",
+    "text": "The quick brown fox jumps over the lazy dog.",
+    "title": "Quarterly Report",
+    "slug": "hello-world",
+    "word": "horizon",
+    "username": "ada.lovelace",
+    "password": "S3cure!Pa55",  # nosec B105 - example string, not a credential
+    "first_name": "Ada",
+    "last_name": "Lovelace",
+    "full_name": "Ada Lovelace",
+    "email": "ada@example.com",
+    "phone": "+1-555-0100",
+    "url": "https://example.com/path",
+    "address": "742 Evergreen Terrace, Springfield",
+    "street_address": "742 Evergreen Terrace",
+    "city": "Springfield",
+    "state": "California",
+    "zip_code": "94105",
+    "country": "United States",
+    "country_code": "US",
+    "currency_code": "USD",
+    "credit_card": "4111 1111 1111 1111",
+    "credit_card_expiry": "07/29",
+    "cvv": "123",
+    "ssn": "123-45-6789",
+    "national_id": "AB1234567",
+    "avatar_url": "https://i.pravatar.cc/150?u=42",
+    "image_url": "https://placehold.co/600x400",
+    "filename": "report-2026.pdf",
+    "mime_type": "application/json",
+    "ip_address": "192.0.2.42",
+    "mac_address": "02:42:ac:11:00:02",
+    "user_agent": "Mozilla/5.0 (X11; Linux x86_64)",
+    "hex_color": "#1aff4d",
+    "locale": "en_US",
+    "timezone": "Europe/London",
+    "gender": "female",
+    "category": "books",
+    "role": "admin",
+    "status": "active",
+    "priority": "high",
+    "sku": "SKU-00042",
+    "reference_code": "REF-9F2A",
+    "token": "tk_8f3a2b91cc04",  # nosec B105 - example string, not a credential
+    "hash": "a3f5c8e9b1d2",
+    # Temporal.
+    "random_date": "2026-04-12",
+    "random_datetime": "2026-04-12T14:30:00",
+    "random_time": "14:30:00",
+    "datetime": "2026-04-12T14:30:00",
+    "date_of_birth": "1994-08-23",
+    # Special.
+    "uuid4": "f47ac10b-58cc-4372-a567-0e02b2c3d479",
+    "random_choice": "(one value from enum_values)",
+    # Structured fallbacks.
+    "random_json": '{"key": "value"}',
+    "random_bytes": "b'\\x00\\xff...'",
+    "random_list": "[1, 2, 3]",
+}
+
+
+def _example_for(provider: str, method: str) -> str:
+    """Return an illustrative example value for ``provider.method`` (S-146).
+
+    Looks up :data:`_METHOD_EXAMPLES` first (curated copy). Falls back to
+    the first sentence of the method's description so plugin-supplied
+    methods or any catalogue row missing a curated example still show
+    *something* under the picker button. ``provider`` is accepted but
+    not used by the curated map (examples are provider-agnostic in
+    practice); it is forwarded to ``_describe`` for the fallback.
+    """
+    curated = _METHOD_EXAMPLES.get(method)
+    if curated:
+        return curated
+    desc = _describe(provider, method)
+    # First sentence — keeps the fallback short enough for the picker's
+    # one-line slot.
+    head, sep, _ = desc.partition(".")
+    return (head + sep).strip() if head else desc
+
+
 # ── public API ────────────────────────────────────────────────────────────
 
 
@@ -304,6 +406,11 @@ class MethodEntry:
             invariants (PK / FK uniqueness) but does **not** re-validate
             dtype, so the UI is the source of truth for this dimension.
         params: param-keys the user can set on this method.
+        example: illustrative example value (S-146) shown next to each
+            method on the Studio picker so users can recognise the
+            generator's output at a glance. Curated for high-traffic
+            methods, falls back to the description's first sentence for
+            plugin / uncurated methods.
     """
 
     provider: str
@@ -311,6 +418,7 @@ class MethodEntry:
     description: str
     dtypes: frozenset[ColumnType] = field(default_factory=frozenset)
     params: frozenset[str] = field(default_factory=frozenset)
+    example: str = ""
 
 
 def _dtypes_for_method(method: str) -> frozenset[ColumnType]:
@@ -347,6 +455,7 @@ def iter_methods() -> list[MethodEntry]:
                 description=_describe(provider, method),
                 dtypes=_dtypes_for_method(method),
                 params=_METHOD_PARAMS.get(method, frozenset()),
+                example=_example_for(provider, method),
             )
         )
 
@@ -382,6 +491,10 @@ def providers() -> list[str]:
 
 __all__ = [
     "MethodEntry",
+    # S-146 — re-export for tests + downstream code that needs the picker
+    # example fallback. Underscored to mark "internal" but stable.
+    "_describe",
+    "_example_for",
     "applies_to",
     "iter_methods",
     "param_keys_for",

@@ -139,6 +139,54 @@ def test_wizard_rail_marks_current_step(tmp_path: Path) -> None:
     assert 'data-current="4"' in body
 
 
+# ── S-146 rail `?` help icons ────────────────────────────────────────────
+
+
+def test_wizard_rail_has_help_trigger_per_step(tmp_path: Path) -> None:
+    """Each rail item carries a `?` help popover (S-146)."""
+    body = TestClient(_make_app(tmp_path)).get("/wizard").text
+    for n in range(1, 7):
+        # Stable selector from the shared step_help macro.
+        assert f'data-help-step="{n}"' in body, (
+            f"missing help popover for step {n} in:\n{body[:1000]}"
+        )
+
+
+def test_wizard_rail_help_uses_native_details(tmp_path: Path) -> None:
+    """Native ``<details>`` keeps keyboard accessibility for free (S-146)."""
+    body = TestClient(_make_app(tmp_path)).get("/wizard").text
+    # Six <details data-help-step=...> blocks, one per step.
+    assert body.count("data-help-step=") >= 6, body[:500]
+    # The summary glyph is the visible ``?`` trigger.
+    assert ">?</summary>" in body
+
+
+def test_wizard_rail_help_mentions_relevant_generator_on_configure(
+    tmp_path: Path,
+) -> None:
+    """Step 3 (Configure) lists at least one relevant generator from the catalog."""
+    body = TestClient(_make_app(tmp_path)).get("/wizard").text
+    # Drop the body content after the first `data-help-step="3"` marker
+    # and look for a generator from the S-120 catalog (``email`` or
+    # ``random_int``).
+    marker = 'data-help-step="3"'
+    idx = body.find(marker)
+    assert idx != -1, body[:500]
+    window = body[idx : idx + 1500]
+    assert "email" in window or "random_int" in window, window
+
+
+def test_wizard_rail_help_trigger_has_accessible_label(tmp_path: Path) -> None:
+    """Each `?` trigger has an ``aria-label`` for screen readers."""
+    body = TestClient(_make_app(tmp_path)).get("/wizard").text
+    # The macro renders ``aria-label="Help for step N: <label>"``.
+    for n, label in enumerate(
+        ("Connect", "Review", "Configure", "Generate", "Validate", "Insert / Export"),
+        start=1,
+    ):
+        assert f"Help for step {n}: {label}" in body, f"missing accessible label for step {n}"
+
+
 # ── GET /wizard/step/{n} — fragments ─────────────────────────────────────
 
 

@@ -184,3 +184,78 @@ def test_every_catalogue_entry_has_non_empty_description() -> None:
         assert entry.description.strip(), (
             f"{entry.provider}.{entry.method} whitespace-only description"
         )
+
+
+# ── S-146: per-method example values ──────────────────────────────────────
+
+
+def test_method_entry_carries_example_field() -> None:
+    """Every catalogue row exposes an ``example`` string field.
+
+    The Studio method-picker (S-120) surfaces a single illustrative value
+    next to each method button so the user can recognise the generator's
+    output at a glance — closing the "what does this method actually
+    produce?" gap S-146 fills.
+    """
+    sample = next(iter(iter_methods()))
+    assert hasattr(sample, "example"), "MethodEntry.example missing"
+    assert isinstance(sample.example, str), type(sample.example)
+
+
+def test_every_catalogue_entry_has_non_empty_example() -> None:
+    """No row should ship a blank example — picker tooltip relies on it."""
+    for entry in iter_methods():
+        assert entry.example, f"{entry.provider}.{entry.method} blank example"
+        assert entry.example.strip(), f"{entry.provider}.{entry.method} whitespace-only example"
+
+
+@pytest.mark.parametrize(
+    ("provider", "method", "needle"),
+    [
+        # Curated examples — high-traffic methods get hand-rolled values
+        # so the picker UI shows something readable rather than a verbatim
+        # docstring sentence.
+        ("mimesis", "email", "@"),
+        ("builtin", "random_int", "4"),
+        ("builtin", "uuid4", "-"),
+        ("mimesis", "first_name", ""),  # any non-empty curated name
+    ],
+)
+def test_curated_examples_present_for_high_traffic_methods(
+    provider: str,
+    method: str,
+    needle: str,
+) -> None:
+    """High-traffic methods carry curated example values."""
+    entry = _entry(provider, method)
+    if needle:
+        assert needle in entry.example, (
+            f"{provider}.{method} example {entry.example!r} missing {needle!r}"
+        )
+    else:
+        assert entry.example.strip(), f"{provider}.{method} blank example"
+
+
+def test_uncurated_methods_fall_back_to_description() -> None:
+    """Methods without a curated example fall back to the description.
+
+    The fallback path keeps plugin-supplied methods (or any catalogue row
+    that hasn't been hand-curated) from shipping a blank example. The
+    fallback is the curated description so the picker always has *some*
+    user-facing copy under the method button.
+    """
+    from dbsprout.spec.catalog import _example_for  # noqa: PLC0415
+
+    # Force an unknown method through the helper directly — the public
+    # ``iter_methods`` doesn't expose plugin methods, but the helper is
+    # the single fallback edge any new entry would hit.
+    out = _example_for("plugin", "shiny_new_method")
+    assert out
+    assert isinstance(out, str)
+
+
+def test_example_field_is_immutable_on_method_entry() -> None:
+    """``MethodEntry`` stays frozen — the ``example`` field is read-only."""
+    sample = next(iter(iter_methods()))
+    with pytest.raises((AttributeError, Exception)):
+        sample.example = "mutated"  # type: ignore[misc]

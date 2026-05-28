@@ -73,31 +73,50 @@
           <h3 class="text-xs uppercase tracking-wide opacity-60 mb-1" x-text="provider"></h3>
           <div class="flex flex-wrap gap-1">
             <template x-for="entry in group" :key="entry.provider + '.' + entry.method">
-              <button
-                type="button"
-                class="badge badge-outline cursor-pointer text-xs"
-                :class="{ 'badge-primary': isSelected(entry) }"
-                :data-provider="entry.provider"
-                :data-method="entry.method"
-                :title="entry.description"
-                :aria-describedby="'method-desc-' + entry.provider + '-' + entry.method"
-                @focus="hoveredDescription = entry.description"
-                @mouseenter="hoveredDescription = entry.description"
-                @click="apply(entry)"
-              >
-                <span x-text="entry.method"></span>
+              <div class="flex flex-col gap-0.5" :data-entry="entry.provider + '.' + entry.method">
+                <button
+                  type="button"
+                  class="badge badge-outline cursor-pointer text-xs"
+                  :class="{ 'badge-primary': isSelected(entry) }"
+                  :data-provider="entry.provider"
+                  :data-method="entry.method"
+                  :data-example="entry.example"
+                  :title="entry.description"
+                  :aria-describedby="'method-desc-' + entry.provider + '-' + entry.method"
+                  @focus="hoveredDescription = entry.description; hoveredExample = entry.example"
+                  @mouseenter="hoveredDescription = entry.description; hoveredExample = entry.example"
+                  @click="apply(entry)"
+                >
+                  <span x-text="entry.method"></span>
+                  {#
+                    Off-screen description used by ``aria-describedby``. The
+                    same text is duplicated into the ``title=`` attribute for
+                    hover-based UAs; this span keeps assistive tech happy
+                    without pushing the visual layout (sr-only).
+                  #}
+                  <span
+                    class="sr-only"
+                    :id="'method-desc-' + entry.provider + '-' + entry.method"
+                    x-text="entry.description"
+                  ></span>
+                </button>
                 {#
-                  Off-screen description used by ``aria-describedby``. The
-                  same text is duplicated into the ``title=`` attribute for
-                  hover-based UAs; this span keeps assistive tech happy
-                  without pushing the visual layout (sr-only).
+                  S-146 — per-entry example value. Shown as a small
+                  monospace snippet so the user can recognise the
+                  generator's output at a glance without hovering the
+                  description tooltip. Hidden when blank (e.g. unknown
+                  plugin methods that fall through to the description
+                  fallback already use the description as the example,
+                  but we still render the slot for layout stability).
                 #}
-                <span
-                  class="sr-only"
-                  :id="'method-desc-' + entry.provider + '-' + entry.method"
-                  x-text="entry.description"
-                ></span>
-              </button>
+                <code
+                  class="text-[10px] opacity-60 truncate"
+                  x-show="entry.example"
+                  x-text="entry.example"
+                  :data-method-example-for="entry.provider + '.' + entry.method"
+                  aria-label="Example output"
+                ></code>
+              </div>
             </template>
           </div>
         </section>
@@ -126,6 +145,19 @@
         aria-live="polite"
         x-text="hoveredDescription"
       ></p>
+      {# S-146 — hovered / focused entry's example value, mirrored next
+         to the description so sighted users see *both* lines without
+         hovering the native ``title`` tooltip. ``aria-live`` keeps it
+         polite so screen readers announce changes without preempting. #}
+      <p
+        x-show="hoveredExample"
+        x-cloak
+        class="text-[11px] opacity-80 font-mono mt-1"
+        aria-live="polite"
+      >
+        Example:
+        <code x-text="hoveredExample"></code>
+      </p>
       <script
         id="field-descriptions"
         type="application/json"
@@ -151,6 +183,10 @@
       // footer can show it as a quiet visual reinforcement of the native
       // ``title`` tooltip. Reset on open/close.
       hoveredDescription: '',
+      // S-146: mirrors the hovered / focused entry's example value so
+      // sighted users see a single illustrative output next to the
+      // description footer. Reset on open / close.
+      hoveredExample: '',
       // S-123: parsed map of ``GeneratorConfig`` field tooltips, loaded
       // once from the ``#field-descriptions`` JSON island.
       fieldDescriptions: {},
@@ -179,6 +215,7 @@
         this.visible = true;
         this.error = '';
         this.hoveredDescription = '';
+        this.hoveredExample = '';
         this.fetchCatalogue();
       },
 
@@ -186,6 +223,7 @@
         this.visible = false;
         this.target = null;
         this.hoveredDescription = '';
+        this.hoveredExample = '';
       },
 
       title() {

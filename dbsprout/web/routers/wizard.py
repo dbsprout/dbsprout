@@ -56,6 +56,69 @@ STEP_LABELS: tuple[str, ...] = (
     "Insert / Export",
 )
 
+#: ── S-146 step-level help ────────────────────────────────────────────────
+#: Per-step orientation blurb + the catalog-sourced generators worth
+#: mentioning on that step. Aligned by index with :data:`STEP_LABELS`.
+#: Generators are referenced as ``(provider, method)`` pairs and must
+#: exist in :mod:`dbsprout.spec.catalog`; the rail renderer surfaces them
+#: as ``provider.method`` literals inside the `?` popover so users can
+#: cross-reference them on the picker.
+STEP_HELP: tuple[tuple[str, tuple[tuple[str, str], ...]], ...] = (
+    (
+        # 1 — Connect
+        "Pick a live database (Postgres / MySQL / SQLite / MSSQL) or upload a "
+        "schema file (SQL DDL, DBML, Mermaid, PlantUML, Prisma, Django). DBSprout "
+        "introspects the schema and lets the rest of the wizard build a DataSpec "
+        "from it.",
+        (),
+    ),
+    (
+        # 2 — Review
+        "Verify the loaded schema. The table list, primary keys, and foreign "
+        "key edges all come from introspection — fix any wrong typing or missing "
+        "tables before moving on, because every following step assumes this "
+        "schema is correct.",
+        (),
+    ),
+    (
+        # 3 — Configure
+        "Edit per-column generator choices. The heuristic baseline auto-picks "
+        "a generator per column (e.g. ``mimesis.email`` for an email column, "
+        "``builtin.random_int`` for an INTEGER column); use the picker to swap "
+        "any column to a different method. Switch to LLM-driven specs when the "
+        "heuristic baseline isn't a good fit.",
+        (
+            ("mimesis", "email"),
+            ("builtin", "random_int"),
+            ("builtin", "uuid4"),
+            ("mimesis", "first_name"),
+            ("mimesis", "datetime"),
+        ),
+    ),
+    (
+        # 4 — Generate
+        "Run the data pipeline. DBSprout topologically sorts tables by FK "
+        "dependencies, picks deterministic seeds per cell, and streams rows in "
+        "batches. Live progress shows per-table row counts as they materialise.",
+        (),
+    ),
+    (
+        # 5 — Validate
+        "Inspect the integrity report: foreign key coverage, uniqueness, NOT "
+        "NULL conformance, CHECK constraints. A clean report is required before "
+        "you can insert into a live database; tick the validated checkbox "
+        "to advance.",
+        (),
+    ),
+    (
+        # 6 — Insert / Export
+        "Pick an output: write rows to the connected database (UPSERT / COPY / "
+        "LOAD DATA) or export to SQL, CSV, JSON, or Parquet. Direct DB writes "
+        "honour the deterministic seed so repeat runs are idempotent.",
+        (),
+    ),
+)
+
 _MIN_STEP = 1
 _MAX_STEP = len(STEP_LABELS)
 
@@ -107,6 +170,11 @@ def _shell_context(request: Request) -> dict[str, object]:
     state = ws.wizard_state
     return {
         "step_labels": STEP_LABELS,
+        # S-146 — per-step help (blurb + generator list) consumed by the
+        # shared ``step_help`` macro on the wizard left rail. Keyed under
+        # ``step_help_entries`` so it doesn't shadow the imported macro
+        # of the same name inside the rail template.
+        "step_help_entries": STEP_HELP,
         "min_step": _MIN_STEP,
         "max_step": _MAX_STEP,
         "current_step": state.current_step,
