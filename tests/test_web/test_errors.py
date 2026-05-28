@@ -30,8 +30,11 @@ from dbsprout.web.errors import (
     classify_parse_error,
     raise_web_error,
     web_error_empty_file,
+    web_error_export_dependency_missing,
+    web_error_export_multi_table_unsupported,
     web_error_file_too_large,
     web_error_internal,
+    web_error_not_found_tables,
     web_error_unknown_parser,
 )
 
@@ -64,6 +67,9 @@ def test_web_error_code_enum_is_closed_set() -> None:
         "NOT_FOUND",
         # S-141 insert-method-select guard.
         "METHOD_UNSUPPORTED",
+        # S-140 export-route guards.
+        "EXPORT_MULTI_TABLE_UNSUPPORTED",
+        "EXPORT_DEPENDENCY_MISSING",
     }
     assert {m.name for m in WebErrorCode} == expected
     # Each code is a plain string so it round-trips through JSON unchanged.
@@ -384,3 +390,40 @@ def test_web_error_write_guard_required_factory() -> None:
     assert err.status_code == 403
     assert "token" in err.message.lower()
     assert err.hint is not None
+
+
+# ---------------------------------------------------------------------------
+# S-140 export-route factory helpers.
+# ---------------------------------------------------------------------------
+
+
+def test_web_error_not_found_tables_envelope() -> None:
+    """Surfaces missing-table names via the existing ``NOT_FOUND`` code (404)."""
+    err = web_error_not_found_tables(["users", "orders"])
+    assert err.code is WebErrorCode.NOT_FOUND
+    assert err.status_code == 404
+    assert "users" in err.message
+    assert "orders" in err.message
+    payload = err.to_dict()
+    assert payload["code"] == "NOT_FOUND"
+    assert "correlation_id" in payload
+
+
+def test_web_error_export_multi_table_unsupported_envelope() -> None:
+    """422 with hint that mentions a single-element ``tables`` subset."""
+    err = web_error_export_multi_table_unsupported("csv")
+    assert err.code is WebErrorCode.EXPORT_MULTI_TABLE_UNSUPPORTED
+    assert err.status_code == 422
+    assert "csv" in err.message
+    assert err.hint is not None
+    assert "tables" in err.hint
+
+
+def test_web_error_export_dependency_missing_envelope() -> None:
+    """422 with a ``pip install`` hint that mentions the missing extra."""
+    err = web_error_export_dependency_missing("parquet", "data")
+    assert err.code is WebErrorCode.EXPORT_DEPENDENCY_MISSING
+    assert err.status_code == 422
+    assert "parquet" in err.message
+    assert err.hint is not None
+    assert "dbsprout[data]" in err.hint

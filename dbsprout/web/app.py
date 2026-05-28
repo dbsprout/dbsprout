@@ -38,6 +38,7 @@ from dbsprout.state.db import StateDB
 from dbsprout.web.jobs import JobManager, JobRecord
 from dbsprout.web.progress import ProgressHub, progress_ws_router
 from dbsprout.web.routers.connect import connect_router
+from dbsprout.web.routers.export import export_router
 from dbsprout.web.routers.generate import generate_router
 from dbsprout.web.routers.generators import generators_router
 from dbsprout.web.routers.insert import insert_router
@@ -297,6 +298,15 @@ def create_app(
     # without restructuring the shell or the navigation contract.
     app.include_router(wizard_router)
     # ── end S-142 ──
+    # ── S-140 export route ──
+    # POST /api/export — stream the workspace's last GenerateResult (S-111 / S-124)
+    # back to the browser as a single file download. Resolves the writer through
+    # dbsprout/plugins/dispatch::resolve_writer (same path the CLI uses) and
+    # cleans the per-request temp dir from within the streaming generator. The
+    # mount lives inside a delimited region block so S-142 (wizard) can mount
+    # alongside without colliding on the same line.
+    app.include_router(export_router)
+    # ── end S-140 ──
     return app
 
 
