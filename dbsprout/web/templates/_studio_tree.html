@@ -1,0 +1,59 @@
+{# ── S-117 tree panel default content ──
+   Renders the workspace schema as a clickable table list when ``tree`` is
+   populated; otherwise shows an empty state with quick-action links to the
+   S-112 connect endpoint and the S-113 schema-load endpoint. Later stories
+   (S-118+) can override the parent ``tree`` block to customise this entirely. #}
+{% if tree %}
+  <div class="space-y-2" x-data="{ filter: '' }">
+    <div class="flex items-center justify-between text-xs uppercase opacity-60 px-1">
+      <span>Tables</span>
+      <span class="badge badge-sm">{{ tree.table_count }}</span>
+    </div>
+    <input
+      type="text"
+      placeholder="filter…"
+      x-model="filter"
+      class="input input-bordered input-xs w-full"
+      aria-label="Filter tables by name"
+      id="studio-tree-filter"
+    />
+    <ul class="menu menu-sm bg-base-200 rounded-box" id="studio-tree-list">
+      {% for table in tree.tables %}
+        <li
+          x-show="!filter || '{{ table.name|e }}'.toLowerCase().includes(filter.toLowerCase())"
+          data-table="{{ table.name|e }}"
+        >
+          <a
+            href="#"
+            class="flex justify-between items-center"
+            data-studio-table="{{ table.name|e }}"
+            tabindex="0"
+          >
+            <span class="font-mono">{{ table.name }}</span>
+            <span class="opacity-50 text-xs">{{ table.columns|length }} cols</span>
+          </a>
+        </li>
+      {% endfor %}
+    </ul>
+    {% if tree.source %}
+      <p class="text-xs opacity-50 px-1 break-all" id="studio-tree-source">
+        <span class="font-semibold">Source:</span> {{ tree.source }}
+      </p>
+    {% endif %}
+  </div>
+{% else %}
+  <div class="alert alert-info text-sm" id="studio-tree-empty" role="status">
+    <div>
+      <p class="font-semibold mb-2">No schema loaded.</p>
+      <p class="mb-3 opacity-80">Connect to a live database or upload a schema file to get started.</p>
+      <ul class="list-disc list-inside text-xs opacity-80 space-y-1">
+        <li>
+          <code>POST /api/connect</code> — connect to a live database
+        </li>
+        <li>
+          <code>POST /api/schema/load</code> — upload a SQL / DBML / Mermaid file
+        </li>
+      </ul>
+    </div>
+  </div>
+{% endif %}
