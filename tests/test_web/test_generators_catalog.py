@@ -185,3 +185,39 @@ def test_known_methods_have_human_descriptions(tmp_path: Path) -> None:
     # ``random_int`` should reference integers.
     int_desc = by_key[("builtin", "random_int")]
     assert "integer" in int_desc.lower(), int_desc
+
+
+# ── S-146: per-method example value ───────────────────────────────────────
+
+
+def test_every_method_has_example_field(tmp_path: Path) -> None:
+    """Each method in the catalogue exposes an ``example`` string field.
+
+    The Studio picker uses the example as a single illustrative value
+    shown under the method button so users can recognise the generator's
+    output at a glance.
+    """
+    app = _make_app(tmp_path)
+    with TestClient(app) as client:
+        resp = client.get("/api/generators")
+    assert resp.status_code == 200
+    methods = resp.json()["methods"]
+    assert methods, "catalogue must not be empty"
+    for entry in methods:
+        assert "example" in entry, f"missing example on {entry}"
+        assert isinstance(entry["example"], str)
+        assert entry["example"].strip(), f"blank example on {entry}"
+
+
+def test_known_methods_have_curated_examples(tmp_path: Path) -> None:
+    """High-traffic methods echo curated example values to the picker."""
+    app = _make_app(tmp_path)
+    with TestClient(app) as client:
+        resp = client.get("/api/generators")
+    by_key = {(m["provider"], m["method"]): m["example"] for m in resp.json()["methods"]}
+    # email contains @
+    assert "@" in by_key[("mimesis", "email")]
+    # random_int is a digit
+    assert any(ch.isdigit() for ch in by_key[("builtin", "random_int")])
+    # uuid4 has dashes in its example
+    assert "-" in by_key[("builtin", "uuid4")]

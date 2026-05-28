@@ -17,7 +17,8 @@ Endpoint
       {
         "provider": "mimesis",
         "method": "email",
-        "description": "Mimesis email",
+        "description": "Valid-looking email address (e.g. 'user@example.com').",
+        "example": "ada@example.com",
         "dtypes": ["VARCHAR", "TEXT"],
         "params": []
       },
@@ -93,6 +94,9 @@ async def get_generators(
                 "provider": entry.provider,
                 "method": entry.method,
                 "description": entry.description,
+                # S-146 — single illustrative value the Studio picker
+                # surfaces under each method button.
+                "example": entry.example,
                 "dtypes": _serialize_dtypes(entry.dtypes),
                 "params": sorted(entry.params),
             }
