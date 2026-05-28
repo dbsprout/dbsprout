@@ -218,7 +218,7 @@ _METHOD_DESCRIPTIONS: dict[str, str] = {
     "slug": "URL-safe slug derived from words (lowercase, hyphenated).",
     "word": "Single lowercase word from the locale dictionary.",
     "username": "Plausible username (letters, digits, dots/underscores).",
-    "password": "Random password (mixed case + digits + symbols).",
+    "password": "Random password (mixed case + digits + symbols).",  # nosec B105 - description string, not a credential
     "first_name": "Person's first / given name.",
     "last_name": "Person's last / family name.",
     "full_name": "Person's full name (first + last).",
@@ -255,7 +255,7 @@ _METHOD_DESCRIPTIONS: dict[str, str] = {
     "priority": "Priority label (e.g. 'low', 'high').",
     "sku": "Stock Keeping Unit identifier.",
     "reference_code": "Generic reference / tracking code.",
-    "token": "Opaque random token (URL-safe).",
+    "token": "Opaque random token (URL-safe).",  # nosec B105 - description string, not a credential
     "hash": "Random hex hash digest.",
     # Temporal.
     "random_date": "Random calendar date.",
