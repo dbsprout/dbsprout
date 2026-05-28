@@ -42,6 +42,7 @@ from dbsprout.web.routers.generate import generate_router
 from dbsprout.web.routers.preview import preview_router
 from dbsprout.web.routers.schema import schema_router
 from dbsprout.web.routers.schema_load import schema_load_router
+from dbsprout.web.routers.spec import spec_router
 from dbsprout.web.routers.studio import studio_router
 from dbsprout.web.routes import router
 from dbsprout.web.views.erd import erd_router
@@ -209,6 +210,13 @@ def create_app(
     # from the snapshot-backed GET /schema view; full Studio layout is S-117.
     app.include_router(schema_router)
     # ── end S-115 ──
+    # ── S-118 spec router ──
+    # GET /api/spec — DataSpec read endpoint over app.state.workspace (S-111),
+    # building a heuristic spec lazily via spec.analyzer.heuristic_fallback
+    # when no spec is cached. Content-negotiates: JSON by default, HTMX grid
+    # fragment on ``Accept: text/html``. No persistence; no LLM.
+    app.include_router(spec_router)
+    # ── end S-118 ──
     # ── S-117 studio shell ──
     # GET /studio — single-page workspace shell with four named-slot panels
     # (tree · grid · context · console). Later Phase-C stories (S-118 spec

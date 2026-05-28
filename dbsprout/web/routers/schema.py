@@ -17,9 +17,11 @@ Reuse, not reimplementation
 The ERD is **not** re-derived here. The tree body reuses
 :func:`dbsprout.web.views.erd._build_table_details` (so the tree and the ERD
 click-detail panel show identical column metadata), and the ERD fragment reuses
-:func:`dbsprout.web.views.erd._build_erd_with_clicks` (which itself calls the
-S-082 :func:`dbsprout.report.erd.build_erd_mermaid`). The only new behaviour is
-reading the schema from the *workspace* rather than the SnapshotStore.
+S-082 :func:`dbsprout.report.erd.build_erd_mermaid` directly (PR #143 dropped the
+intermediate ``_build_erd_with_clicks`` helper — Mermaid 10.9.x erDiagram does
+not accept ``click`` directives; clicks are bound in JS post-render). The only
+new behaviour here is reading the schema from the *workspace* rather than the
+SnapshotStore.
 
 Two read surfaces, one builder
 ------------------------------
@@ -45,7 +47,8 @@ from typing import TYPE_CHECKING, Any, cast
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import Response
 
-from dbsprout.web.views.erd import _build_erd_with_clicks, _build_table_details
+from dbsprout.report.erd import build_erd_mermaid
+from dbsprout.web.views.erd import _build_table_details
 
 if TYPE_CHECKING:
     from fastapi.templating import Jinja2Templates
@@ -110,9 +113,9 @@ async def get_schema(request: Request) -> dict[str, Any]:
 async def schema_erd_fragment(request: Request) -> Response:
     """Render the loaded workspace schema as an HTMX ERD fragment.
 
-    Reuses :func:`dbsprout.web.views.erd._build_erd_with_clicks` (→
-    :func:`dbsprout.report.erd.build_erd_mermaid`) and ``_build_table_details``
-    so ERD generation is not duplicated. Returns ``200`` with a graceful
+    Reuses :func:`dbsprout.report.erd.build_erd_mermaid` and
+    :func:`dbsprout.web.views.erd._build_table_details` so ERD generation is not
+    duplicated. Returns ``200`` with a graceful
     empty-state fragment when no schema is loaded (so an HTMX swap shows a
     message rather than an error).
     """
@@ -123,7 +126,7 @@ async def schema_erd_fragment(request: Request) -> Response:
     table_details_json: str | None = None
 
     if schema is not None:
-        erd_mermaid = _build_erd_with_clicks(schema)
+        erd_mermaid = build_erd_mermaid(schema)
         table_details_json = json.dumps(_build_table_details(schema), separators=(",", ":"))
 
     return _templates(request).TemplateResponse(
