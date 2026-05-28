@@ -17,6 +17,30 @@
       swaps generator methods inline; the spec persists to <code>.dbsprout/cache</code>
       so reloading the page keeps your edits.
     </p>
+    {# S-145: Use-LLM opt-in. The heuristic spec is already in place from the
+       GET-side entry hook so the grid below renders immediately; this button
+       lets the user trade time for a (potentially) richer LLM-built spec and
+       swap the body in place when the request returns. #}
+    <div class="flex items-center gap-2">
+      <button
+        type="button"
+        class="btn btn-sm btn-outline"
+        hx-post="/wizard/step/3/llm-spec"
+        hx-target="#wizard-body"
+        hx-swap="innerHTML"
+        hx-indicator="#llm-spinner"
+      >
+        Use LLM (slower, optional)
+      </button>
+      <span
+        id="llm-spinner"
+        class="htmx-indicator loading loading-spinner loading-xs"
+        aria-hidden="true"
+      ></span>
+      <span class="text-xs opacity-60">
+        Replaces the heuristic spec with one built by the local LLM provider.
+      </span>
+    </div>
     <div
       id="wizard-spec-grid-slot"
       class="card bg-base-100 shadow p-3"

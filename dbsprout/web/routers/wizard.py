@@ -33,7 +33,12 @@ from typing import TYPE_CHECKING, cast
 from fastapi import APIRouter, Form, HTTPException, Request
 from fastapi.responses import RedirectResponse, Response
 
-from dbsprout.web.errors import raise_web_error, web_error_step_gate_blocked
+from dbsprout.web.errors import (
+    raise_web_error,
+    web_error_llm_unavailable,
+    web_error_no_schema,
+    web_error_step_gate_blocked,
+)
 
 if TYPE_CHECKING:
     from fastapi.templating import Jinja2Templates
@@ -136,10 +141,53 @@ async def wizard_shell(request: Request) -> Response:
 # ── GET /wizard/step/{n} — body fragment ─────────────────────────────────
 
 
+#: Step number that owns the auto-heuristic spec entry hook (S-145). Named
+#: rather than inlined so future re-ordering of the rail surfaces a single
+#: edit point.
+_CONFIGURE_STEP = 3
+
+
+def _ensure_step3_spec(ws: Workspace) -> None:
+    """Pre-populate ``workspace.spec`` for Step 3 (Configure) — S-145.
+
+    Order of preference (each step is best-effort, never raises into the
+    request path):
+
+    1. ``workspace.spec`` already set → noop (the LLM opt-in path, a prior
+       hydrate, or a Studio edit already filled it in).
+    2. ``workspace.hydrate_from_cache(schema.schema_hash())`` — re-use the
+       S-122 disk cache when available.
+    3. ``heuristic_fallback(schema)`` — the existing Sprint-2 mapping,
+       same code path ``GET /api/spec`` (S-118) uses on demand.
+
+    No schema on the workspace → noop. The lazy import keeps the wizard
+    router import-light: importing the heuristic analyzer pulls in the
+    Sprint-2 ``map_columns`` graph but never the LLM provider stack.
+    """
+    if ws.get_spec() is not None:
+        return
+    schema = ws.get_schema()
+    if schema is None:
+        return
+    # Step 2: cache hit short-circuits the build.
+    if ws.hydrate_from_cache(schema.schema_hash()):
+        return
+    # Step 3: build via the existing offline / no-LLM path.
+    from dbsprout.spec.analyzer import heuristic_fallback  # noqa: PLC0415
+
+    ws.set_spec(heuristic_fallback(schema))
+
+
 @wizard_router.get("/wizard/step/{n}", response_class=Response)
 async def wizard_step_body(request: Request, n: int) -> Response:
     """Return the HTMX-friendly body fragment for step ``n``."""
     _validate_step_in_url(n)
+    # S-145: when the user lands on Step 3 (Configure), make sure a spec is
+    # already on the workspace so the grid renders immediately — no spinner
+    # waiting on heuristic generation. The helper is a no-op when the spec
+    # is already populated or when no schema is loaded yet.
+    if n == _CONFIGURE_STEP:
+        _ensure_step3_spec(_workspace(request))
     ctx = _step_context(request, n)
     return _templates(request).TemplateResponse(request, f"wizard/step_{n}.html", ctx)
 
@@ -261,3 +309,78 @@ async def wizard_step_submit(
     if _is_htmx(request):
         return await wizard_step_body(request, new_current)
     return RedirectResponse(url="/wizard", status_code=303)
+
+
+# ── POST /wizard/step/3/llm-spec — opt-in LLM path (S-145) ───────────────
+
+
+#: Construction-time failures we translate to ``LLM_UNAVAILABLE`` (503).
+#: ``ImportError`` covers ``llama-cpp-python`` missing, ``RuntimeError`` covers
+#: "no GGUF model on disk", ``OSError`` covers cache-dir / file permission
+#: issues — none of them are caller-actionable input errors, so they get the
+#: capability-gap envelope rather than a 4xx.
+_LLM_BOOT_ERRORS: tuple[type[BaseException], ...] = (
+    ImportError,
+    RuntimeError,
+    OSError,
+)
+
+
+@wizard_router.post("/wizard/step/3/llm-spec", response_model=None)
+async def wizard_step3_llm_spec(request: Request) -> Response | dict[str, object]:
+    """Opt-in LLM spec build for Step 3 (Configure) — S-145.
+
+    The heuristic spec is already in place from the GET-side entry hook
+    (:func:`_ensure_step3_spec`); this endpoint lets the user trade time for
+    a (potentially) richer spec by invoking the existing embedded LLM
+    provider chain (``EmbeddedProvider`` → ``SpecAnalyzer`` → ``analyze``).
+    The new spec replaces the heuristic one on the workspace and is also
+    persisted to the disk cache so a page refresh keeps the LLM result.
+
+    Failure modes:
+
+    * No schema loaded → 409 ``NO_SCHEMA`` envelope.
+    * Provider construction fails (``llama-cpp-python`` missing, no GGUF
+      model, …) → 503 ``LLM_UNAVAILABLE`` envelope; the heuristic spec on
+      the workspace is left untouched.
+
+    Response shape:
+
+    * HTMX caller (``HX-Request: true``) → 200 with the re-rendered Step 3
+      body fragment so the swap target gets the fresh grid.
+    * JSON caller → 200 ``{"ok": true, "schema_hash": "<hash>"}``.
+
+    No model-selection UI is surfaced here (out of scope, see Story
+    S-145 § Technical Notes); the existing single embedded-provider chain
+    is used as-is.
+    """
+    ws = _workspace(request)
+    schema = ws.get_schema()
+    if schema is None:
+        return raise_web_error(request, web_error_no_schema())
+
+    # Lazy imports keep the wizard router import-light — the LLM stack is only
+    # paid for when the user explicitly opts into the slower path.
+    try:
+        from dbsprout.spec.analyzer import SpecAnalyzer  # noqa: PLC0415
+        from dbsprout.spec.providers.embedded import (  # noqa: PLC0415
+            EmbeddedProvider,
+        )
+
+        provider = EmbeddedProvider()
+        analyzer = SpecAnalyzer(provider)
+        new_spec = analyzer.analyze(schema)
+    except _LLM_BOOT_ERRORS as exc:
+        return raise_web_error(
+            request,
+            web_error_llm_unavailable(str(exc) or type(exc).__name__),
+            original=exc,
+        )
+
+    ws.set_spec(new_spec)
+    # S-122: persist the LLM-built spec so a reload short-circuits to it.
+    ws.persist_spec()
+
+    if _is_htmx(request):
+        return await wizard_step_body(request, _CONFIGURE_STEP)
+    return {"ok": True, "schema_hash": schema.schema_hash()}
