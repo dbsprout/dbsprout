@@ -302,6 +302,11 @@ async def put_table_row_count(
             },
         ) from exc
 
+    # S-122: persist the freshly-updated spec to the disk cache so it survives
+    # a server restart. Failures here are swallowed inside ``persist_spec`` —
+    # cache I/O must never bubble up and fail the user's edit.
+    workspace.persist_spec()
+
     if _wants_html_response(request):
         return _templates(request).TemplateResponse(
             request,
@@ -435,6 +440,11 @@ async def put_column_config(
                 "column": column,
             },
         ) from exc
+
+    # S-122: persist the freshly-updated spec to the disk cache. ``persist_spec``
+    # swallows cache I/O errors internally so a degraded cache cannot fail the
+    # column edit.
+    workspace.persist_spec()
 
     # 4. Shape the response — HTMX fragment vs. JSON.
     if _wants_html_or_htmx(request):

@@ -23,13 +23,17 @@ not import CLI code, and the CLI must never import it at startup.
 
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING
 from urllib.parse import urlsplit
 
 if TYPE_CHECKING:
     from dbsprout.generate.orchestrator import GenerateResult
     from dbsprout.schema.models import DatabaseSchema
+    from dbsprout.spec.cache import SpecCache
     from dbsprout.spec.models import DataSpec, GeneratorConfig, TableSpec
+
+_log = logging.getLogger(__name__)
 
 
 def _redact_url(url: str) -> str:
@@ -73,12 +77,18 @@ class Workspace:
     :attr:`redacted_target`.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, spec_cache: SpecCache | None = None) -> None:
         self.schema: DatabaseSchema | None = None
         self.spec: DataSpec | None = None
         self.last_result: GenerateResult | None = None
         self.source: str | None = None
         self._target_url: str | None = None
+        # S-122: optional disk-backed spec cache. Default is ``None`` here so the
+        # cache module is only imported (and the ``.dbsprout/cache`` directory only
+        # created) on first persist/hydrate — tests that never touch persistence
+        # pay nothing, and the default location can still be overridden via
+        # :meth:`set_spec_cache` for app-level wiring.
+        self._spec_cache: SpecCache | None = spec_cache
 
     # ── schema ─────────────────────────────────────────────────────────
     def get_schema(self) -> DatabaseSchema | None:
@@ -204,6 +214,70 @@ class Workspace:
 
         self.spec = self.spec.model_copy(update={"tables": new_tables})
         return config
+
+    # ── spec persistence (S-122) ───────────────────────────────────────
+    def set_spec_cache(self, cache: SpecCache | None) -> None:
+        """Override the disk-backed spec cache used by :meth:`persist_spec`
+        and :meth:`hydrate_from_cache`.
+
+        Production code lets :meth:`_get_spec_cache` lazy-initialise the default
+        cache (``.dbsprout/cache``); tests inject a tmp-rooted
+        :class:`~dbsprout.spec.cache.SpecCache` instead to stay hermetic.
+        ``None`` clears the override so the default re-initialises on next use.
+        """
+        self._spec_cache = cache
+
+    def _get_spec_cache(self) -> SpecCache:
+        """Return the active spec cache, lazily creating the default on demand.
+
+        Lazy creation keeps ``Workspace()`` import-cheap — the diskcache
+        directory and the SQLite connection are only opened the first time
+        persist/hydrate actually fires.
+        """
+        if self._spec_cache is None:
+            from dbsprout.spec.cache import SpecCache  # noqa: PLC0415 — lazy
+
+            self._spec_cache = SpecCache()
+        return self._spec_cache
+
+    def persist_spec(self) -> None:
+        """Best-effort write of the current spec to the disk cache.
+
+        No-ops cleanly when either ``schema`` or ``spec`` is unset (nothing to
+        key, or nothing to persist). Any exception from the underlying cache
+        (corrupt file, exhausted disk, permission denied, …) is logged at
+        ``WARNING`` and swallowed — Studio edits must succeed even if
+        persistence fails. The cache write itself is atomic by virtue of
+        :class:`diskcache.Cache`'s SQLite-backed transactional ``set``.
+        """
+        if self.schema is None or self.spec is None:
+            return
+        try:
+            schema_hash = self.schema.schema_hash()
+            self._get_spec_cache().put(schema_hash, self.spec)
+        except Exception:
+            # Persistence is best-effort: a broken cache must never fail a
+            # Studio edit. Log + swallow.
+            _log.warning("spec persistence failed; continuing", exc_info=True)
+
+    def hydrate_from_cache(self, schema_hash: str) -> bool:
+        """Replace ``self.spec`` with the cached spec for *schema_hash* if any.
+
+        Returns ``True`` on a hit (``self.spec`` is now the cached object) and
+        ``False`` on a miss or any cache error (``self.spec`` is left untouched
+        so the existing lazy heuristic build path still applies).
+        """
+        try:
+            cached = self._get_spec_cache().get(schema_hash)
+        except Exception:
+            # Degrade to a clean miss on any cache error so the route can
+            # still fall back to the lazy heuristic build.
+            _log.warning("spec cache hydration failed; falling back", exc_info=True)
+            return False
+        if cached is None:
+            return False
+        self.spec = cached
+        return True
 
     # ── last result ────────────────────────────────────────────────────
     def get_last_result(self) -> GenerateResult | None:

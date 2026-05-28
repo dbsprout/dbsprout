@@ -137,4 +137,9 @@ async def connect(request: Request, body: ConnectRequest) -> Any:
     workspace.set_schema(schema)
     workspace.set_target_url(url)
     workspace.set_source(f"db: {redacted}")
+    # S-122: hydrate the workspace spec from the disk cache when a prior
+    # session edited the spec for this exact schema. A miss leaves
+    # ``workspace.spec`` ``None`` so ``GET /api/spec`` still triggers the
+    # lazy heuristic build (existing S-118 contract preserved).
+    workspace.hydrate_from_cache(schema.schema_hash())
     return _summary(schema)
