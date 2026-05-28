@@ -67,6 +67,7 @@ parquet = "dbsprout.output.parquet_writer:ParquetWriter"
 pg_copy = "dbsprout.output.pg_copy:PgCopyWriter"
 mysql_load_data = "dbsprout.output.mysql_load_data:MysqlLoadDataWriter"
 sa_batch = "dbsprout.output.sa_batch:SaBatchWriter"
+column_update = "dbsprout.output.column_update:ColumnUpdateWriter"
 
 [project.entry-points."dbsprout.llm_providers"]
 embedded = "dbsprout.spec.providers.embedded:EmbeddedProvider"
