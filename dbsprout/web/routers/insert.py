@@ -75,6 +75,8 @@ from typing import TYPE_CHECKING, Any, Literal, cast
 from fastapi import APIRouter, FastAPI, HTTPException, Request, status
 from pydantic import BaseModel, ConfigDict, Field
 
+from dbsprout.output.dialect import detect_direct_dialect as _detect_direct_dialect
+
 if TYPE_CHECKING:
     from collections.abc import Callable
 
@@ -485,25 +487,6 @@ class InsertRequest(BaseModel):
 def _workspace(request: Request) -> Workspace:
     """Typed accessor for the shared session wired in ``app.py``."""
     return cast("Workspace", request.app.state.workspace)
-
-
-def _detect_direct_dialect(url: str) -> str:
-    """Detect database dialect from a connection URL prefix.
-
-    Lifted verbatim from :mod:`dbsprout.cli.commands.generate` so the web
-    layer routes to the same writer the CLI does — single source of truth
-    for the dialect→writer policy.
-    """
-    lower = url.lower()
-    if lower.startswith(("postgresql", "postgres")):
-        return "postgresql"
-    if lower.startswith("mysql"):
-        return "mysql"
-    if lower.startswith("sqlite"):
-        return "sqlite"
-    if lower.startswith("mssql"):
-        return "mssql"
-    return lower.split("://")[0].split("+")[0] if "://" in lower else "unknown"
 
 
 def _select_writer(url: str) -> tuple[Any, str]:
