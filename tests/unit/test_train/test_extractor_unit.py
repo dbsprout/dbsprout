@@ -7,6 +7,7 @@ from unittest.mock import MagicMock, patch
 
 import polars as pl
 import pytest
+import sqlalchemy as sa
 
 from dbsprout.schema.models import (
     ColumnSchema,
@@ -69,7 +70,7 @@ def _patch_engine_internals(
         return mock
 
     return (
-        patch("dbsprout.train.extractor.introspect", return_value=schema),
+        patch("dbsprout.train.extractor.introspect_engine", return_value=schema),
         patch(
             "dbsprout.train.extractor._row_counts",
             return_value={"users": 100, "orders": 100},
@@ -140,7 +141,7 @@ def test_extractor_disposes_engine_on_failure(tmp_path: Path) -> None:
     )
     schema = _two_table_schema()
     with (
-        patch("dbsprout.train.extractor.introspect", return_value=schema),
+        patch("dbsprout.train.extractor.introspect_engine", return_value=schema),
         patch(
             "dbsprout.train.extractor._row_counts",
             side_effect=RuntimeError("boom"),
@@ -152,3 +153,41 @@ def test_extractor_disposes_engine_on_failure(tmp_path: Path) -> None:
         with pytest.raises(RuntimeError, match="boom"):
             SampleExtractor().extract(source="sqlite:///:memory:", config=cfg)
         engine.dispose.assert_called_once()
+
+
+def test_extractor_creates_single_engine(tmp_path: Path) -> None:
+    """extract() must build exactly one engine and dispose it (no leak).
+
+    Uses a real on-disk SQLite database and spies on ``sa.create_engine`` so
+    the schema introspection step reuses the extractor's engine instead of
+    opening a second pool to the same database.
+    """
+    db_path = tmp_path / "src.db"
+    url = f"sqlite:///{db_path}"
+    setup = sa.create_engine(url)
+    with setup.begin() as conn:
+        conn.execute(sa.text("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)"))
+        conn.execute(sa.text("INSERT INTO users (id, name) VALUES (1, 'Alice'), (2, 'Bob')"))
+    setup.dispose()
+
+    created: list[MagicMock] = []
+    real_create_engine = sa.create_engine
+
+    def _spy(*args: object, **kwargs: object) -> object:
+        engine = real_create_engine(*args, **kwargs)  # type: ignore[arg-type]
+        created.append(engine)
+        return engine
+
+    cfg = ExtractorConfig(
+        sample_rows=2,
+        output_dir=tmp_path / "out",
+        seed=1,
+        min_per_table=1,
+        max_per_table=2,
+        quiet=True,
+    )
+    with patch("dbsprout.train.extractor.sa.create_engine", side_effect=_spy):
+        result = SampleExtractor().extract(source=url, config=cfg)
+
+    assert {r.table for r in result.tables} == {"users"}
+    assert len(created) == 1, "extract() must create exactly one engine"

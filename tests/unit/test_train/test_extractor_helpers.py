@@ -112,7 +112,7 @@ def test_extractor_warns_when_target_exceeds_memory_threshold(
         return m
 
     with (
-        patch("dbsprout.train.extractor.introspect", return_value=schema),
+        patch("dbsprout.train.extractor.introspect_engine", return_value=schema),
         patch(
             "dbsprout.train.extractor._row_counts",
             return_value={"users": 10_000_000},
@@ -162,7 +162,7 @@ def test_extractor_skips_table_with_path_traversal_name(
         return m
 
     with (
-        patch("dbsprout.train.extractor.introspect", return_value=schema),
+        patch("dbsprout.train.extractor.introspect_engine", return_value=schema),
         patch("dbsprout.train.extractor._row_counts", return_value={"../escape": 100}),
         patch(
             "dbsprout.train.extractor._fetch_random",

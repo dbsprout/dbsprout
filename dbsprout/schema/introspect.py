@@ -59,6 +59,36 @@ def introspect(url: str) -> DatabaseSchema:
     safe_url = sa.engine.make_url(url).render_as_string(hide_password=True)
     engine = _create_engine(url)
     try:
+        return introspect_engine(engine, safe_url=safe_url)
+    finally:
+        engine.dispose()
+
+
+def introspect_engine(engine: Engine, *, safe_url: str | None = None) -> DatabaseSchema:
+    """Introspect an already-created ``engine`` and return a ``DatabaseSchema``.
+
+    Unlike :func:`introspect`, this does **not** create or dispose the engine —
+    the caller owns its lifecycle. This lets callers that already hold an engine
+    (e.g. the train sample extractor) reuse a single connection pool instead of
+    opening a second one.
+
+    Parameters
+    ----------
+    engine:
+        A SQLAlchemy ``Engine`` connected to the target database.
+    safe_url:
+        Optional credential-sanitized URL used only in error messages. When
+        omitted, the engine's own URL is rendered with the password hidden.
+
+    Raises
+    ------
+    sqlalchemy.exc.SQLAlchemyError
+        If introspection fails (re-raised with credentials sanitized).
+    """
+    display_url = (
+        safe_url if safe_url is not None else engine.url.render_as_string(hide_password=True)
+    )
+    try:
         inspector = inspect(engine)
         dialect_name = engine.dialect.name
         tables = _introspect_tables(inspector, dialect_name)
@@ -70,10 +100,8 @@ def introspect(url: str) -> DatabaseSchema:
             source="introspect",
         )
     except sa.exc.SQLAlchemyError as err:
-        msg = f"Introspection failed for {safe_url}: {type(err).__name__}"
+        msg = f"Introspection failed for {display_url}: {type(err).__name__}"
         raise type(err)(msg) from None
-    finally:
-        engine.dispose()
 
 
 # ── Private helpers ──────────────────────────────────────────────────────
