@@ -41,6 +41,19 @@ def _strip_ansi(text: str) -> str:
     return _ANSI_RE.sub("", text)
 
 
+def _unwrap(text: str) -> str:
+    """Collapse Rich soft-wrap newlines for substring matching.
+
+    Rich hard-wraps long output (e.g. a temp-dir path) at the console
+    width (80 cols by default when stdout is not a TTY), inserting a
+    newline mid-token. CI runs at a wider width so the path stays on one
+    line; locally it splits as ``missin\ng.sql``. Stripping ANSI then
+    removing newlines reconstructs the contiguous path regardless of the
+    rendering width (S-149).
+    """
+    return _strip_ansi(text).replace("\n", "")
+
+
 def _simple_schema_for_diff() -> DatabaseSchema:
     """Minimal schema for diff tests."""
     return DatabaseSchema(
@@ -315,7 +328,7 @@ class TestDiffFilePath:
         assert result.exit_code == 2
         output = _strip_ansi(result.output)
         assert "file not found" in output.lower()
-        assert str(missing) in output
+        assert str(missing) in _unwrap(result.output)
 
     @patch("dbsprout.migrate.snapshot.SnapshotStore")
     def test_file_sql_ddl_parsed(self, mock_store_cls: MagicMock, tmp_path: Path) -> None:
@@ -1828,7 +1841,7 @@ class TestDiffPathValidation:
         assert result.exit_code == 2
         out = _strip_ansi(result.output)
         assert "refusing to read symlink" in out.lower()
-        assert str(link) in out
+        assert str(link) in _unwrap(result.output)
 
     @patch("dbsprout.migrate.snapshot.SnapshotStore")
     def test_missing_file_still_says_file_not_found(
@@ -1843,7 +1856,7 @@ class TestDiffPathValidation:
         assert result.exit_code == 2
         out = _strip_ansi(result.output)
         assert "file not found" in out.lower()
-        assert str(missing) in out
+        assert str(missing) in _unwrap(result.output)
 
     @patch("dbsprout.migrate.snapshot.SnapshotStore")
     def test_parse_error_does_not_echo_file_contents(
