@@ -20,6 +20,23 @@
   <header class="flex items-center gap-2">
     <span class="badge badge-primary">Step {{ step }}</span>
     <h2 class="text-xl font-semibold">{{ step_labels[step - 1] }}</h2>
+    {#
+      ── S-144 Open in Studio handoff ──────────────────────────────────────
+      Pure UI: jump to the full Studio without re-loading state. Both
+      surfaces bind to the same ``app.state.workspace`` singleton, so the
+      schema / spec / last_result the user loaded in the wizard appear in
+      Studio on the very first render — no state transfer payload needed.
+
+      Plain ``<a>`` (progressive enhancement: works without JS). The
+      ``ml-auto`` utility pushes the anchor to the right end of the header
+      flex row, placing it visually top-right of the step body card. The
+      stable ``data-testid`` is the seam parallel sibling stories key off
+      to confirm the affordance is rendered without duplicating it.
+    ── #}
+    <a href="/studio"
+       data-testid="wizard-open-in-studio"
+       class="btn btn-ghost btn-sm ml-auto"
+       aria-label="Open in Studio">Open in Studio →</a>
   </header>
 
   <div class="prose max-w-none">
