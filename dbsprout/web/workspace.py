@@ -81,6 +81,10 @@ class Workspace:
         self.schema: DatabaseSchema | None = None
         self.spec: DataSpec | None = None
         self.last_result: GenerateResult | None = None
+        # S-131: the materialised seed from the most recent generation run, so
+        # downstream regenerate calls can pin to the same RNG state. Set by the
+        # generate-router closure on success; read by the regenerate route.
+        self.last_seed: int | None = None
         self.source: str | None = None
         self._target_url: str | None = None
         # S-122: optional disk-backed spec cache. Default is ``None`` here so the
@@ -286,6 +290,20 @@ class Workspace:
     def set_last_result(self, result: GenerateResult | None) -> None:
         self.last_result = result
 
+    # ── last seed (S-131) ──────────────────────────────────────────────
+    def get_last_seed(self) -> int | None:
+        """Return the seed captured by the most recent generation run, if any.
+
+        Used by the regenerate route (S-131) so a re-roll can pin the global
+        RNG to the same state the original run used. Returns ``None`` when no
+        run has stored a seed yet.
+        """
+        return self.last_seed
+
+    def set_last_seed(self, seed: int | None) -> None:
+        """Stash the materialised seed of the most recent generation run."""
+        self.last_seed = seed
+
     # ── source descriptor ──────────────────────────────────────────────
     def get_source(self) -> str | None:
         return self.source
@@ -323,6 +341,7 @@ class Workspace:
         self.schema = None
         self.spec = None
         self.last_result = None
+        self.last_seed = None
         self.source = None
         self._target_url = None
 

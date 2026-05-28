@@ -184,6 +184,9 @@ def _build_job_fn(
         except Exception as exc:  # scrub creds, then re-raise (manager records str)
             raise RuntimeError(_scrub(str(exc) or type(exc).__name__, raw_target)) from exc
         workspace.set_last_result(result)
+        # S-131: stash the materialised seed so the regenerate route can pin
+        # the per-table RNG to the same state on later re-rolls.
+        workspace.set_last_seed(seed)
         return result
 
     return fn
