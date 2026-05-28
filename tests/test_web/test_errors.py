@@ -70,6 +70,8 @@ def test_web_error_code_enum_is_closed_set() -> None:
         # S-140 export-route guards.
         "EXPORT_MULTI_TABLE_UNSUPPORTED",
         "EXPORT_DEPENDENCY_MISSING",
+        # S-139 update-column-route guard.
+        "NO_REGEN",
     }
     assert {m.name for m in WebErrorCode} == expected
     # Each code is a plain string so it round-trips through JSON unchanged.

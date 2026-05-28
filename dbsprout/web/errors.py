@@ -121,6 +121,11 @@ class WebErrorCode(str, Enum):
     # S-140 export-route guards.
     EXPORT_MULTI_TABLE_UNSUPPORTED = "EXPORT_MULTI_TABLE_UNSUPPORTED"
     EXPORT_DEPENDENCY_MISSING = "EXPORT_DEPENDENCY_MISSING"
+    # S-139 update-column-route guard. Raised by ``POST /api/update-column``
+    # when the workspace has no last-regenerated rows for the requested
+    # ``(table, column)`` pair — the caller must run the regenerate flow
+    # first so there are fresh column values to push.
+    NO_REGEN = "NO_REGEN"
 
 
 @dataclass(frozen=True)
@@ -326,6 +331,11 @@ _CODE_HINTS: dict[WebErrorCode, str] = {
     ),
     WebErrorCode.EXPORT_DEPENDENCY_MISSING: (
         "Install the missing extra and retry, e.g. pip install 'dbsprout[data]'."
+    ),
+    # S-139 update-column-route hint.
+    WebErrorCode.NO_REGEN: (
+        "POST /api/regenerate to produce fresh column values before pushing "
+        "them to the target with POST /api/update-column."
     ),
 }
 
@@ -680,6 +690,24 @@ def web_error_export_multi_table_unsupported(fmt: str) -> WebError:
     )
 
 
+def web_error_no_regen() -> WebError:
+    """Surfaced by ``POST /api/update-column`` when the workspace has no rows
+    for the requested ``(table, column)`` pair.
+
+    The route uses the same in-memory ``Workspace.last_result.tables_data``
+    that the regenerate flow updates — so "no rows for the table" maps to
+    "the user never regenerated a column there yet". Status 409 mirrors the
+    rest of the workspace-state taxonomy (``NO_CONNECTION`` / ``NO_RUN`` /
+    ``NO_SCHEMA``).
+    """
+    return WebError(
+        code=WebErrorCode.NO_REGEN,
+        message=("No regenerated column available; run POST /api/regenerate first."),
+        status_code=409,
+        hint=_CODE_HINTS[WebErrorCode.NO_REGEN],
+    )
+
+
 def web_error_export_dependency_missing(fmt: str, extra: str) -> WebError:
     """The writer for *fmt* needs an optional dependency that is not installed.
 
@@ -779,6 +807,7 @@ __all__ = [
     "web_error_internal",
     "web_error_method_unsupported",
     "web_error_no_connection",
+    "web_error_no_regen",
     "web_error_no_run",
     "web_error_no_schema",
     "web_error_no_spec",
