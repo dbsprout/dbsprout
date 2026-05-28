@@ -19,7 +19,8 @@ carrying ``data-method`` / ``data-provider``.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from types import SimpleNamespace
+from typing import TYPE_CHECKING, cast
 
 import pytest
 
@@ -35,11 +36,12 @@ from dbsprout.schema.models import (
     TableSchema,
 )
 from dbsprout.spec.models import DataSpec, GeneratorConfig, TableSpec
+from dbsprout.web.routers.spec import _wants_html
 
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from fastapi import FastAPI
+    from fastapi import FastAPI, Request
 
 
 # ── fixtures / helpers ────────────────────────────────────────────────
@@ -303,3 +305,24 @@ def test_get_spec_html_accept_with_json_preference_returns_json(tmp_path: Path) 
 
     assert response.headers["content-type"].startswith("application/json")
     assert response.status_code == 200
+
+
+def test_get_spec_unit_wants_html_handles_missing_accept_header() -> None:
+    """``_wants_html`` defaults to JSON when the ``Accept`` header is absent.
+
+    The :class:`fastapi.testclient.TestClient` always injects ``Accept: */*``,
+    which keeps the empty-string branch from being hit through the route. We
+    exercise the helper directly with a tiny stand-in object so the missing-
+    header default-to-JSON behaviour is covered.
+    """
+    # Empty / missing header → not HTML.
+    fake_no_accept = cast(
+        "Request",
+        SimpleNamespace(headers={"accept": ""}),
+    )
+    fake_missing = cast("Request", SimpleNamespace(headers={}))
+    assert _wants_html(fake_no_accept) is False
+    assert _wants_html(fake_missing) is False
+    # ``*/*`` is not an explicit HTML preference either.
+    fake_star = cast("Request", SimpleNamespace(headers={"accept": "*/*"}))
+    assert _wants_html(fake_star) is False
