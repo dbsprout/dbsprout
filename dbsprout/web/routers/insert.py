@@ -439,7 +439,7 @@ async def insert_preview_endpoint(request: Request, body: PreviewRequest) -> dic
 
     return {
         "target": _redact_url(raw_target),
-        "dialect": _detect_direct_dialect(raw_target),
+        "dialect": detect_direct_dialect(raw_target),
         "scope": [{"table": t, "row_count": row_counts[t]} for t in insertion_order_scope],
         "total_rows": sum(row_counts.values()),
         "confirmation_token": token,
@@ -509,7 +509,7 @@ def _select_writer(url: str) -> tuple[Any, str]:
     """
     from dbsprout.output.sa_batch import SaBatchWriter  # noqa: PLC0415
 
-    dialect = _detect_direct_dialect(url)
+    dialect = detect_direct_dialect(url)
     if dialect == "postgresql":
         try:
             import psycopg  # noqa: F401, PLC0415
@@ -936,7 +936,7 @@ async def insert_endpoint(request: Request, body: InsertRequest) -> dict[str, An
     # 6. Select writer. S-141 layers an explicit method-pin on top of the
     #    S-136 auto-dispatch policy; ``method="auto"`` re-uses the original
     #    ``_select_writer`` policy byte-for-byte.
-    dialect = _detect_direct_dialect(raw_target)
+    dialect = detect_direct_dialect(raw_target)
     writer, writer_name = _resolve_writer(dialect, body.method, url=raw_target)
 
     # 7. Build the job closure + submit (single-active — JobManager raises
