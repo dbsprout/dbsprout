@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import os
 import shutil
-import subprocess
+import subprocess  # nosec B404 - list-arg, shell=False (absolute npm path, fixed args)
 from pathlib import Path
 from typing import Any
 
@@ -38,7 +38,10 @@ class CustomBuildHook(BuildHookInterface):
             )
             return
         if built.is_file() and not os.environ.get("DBSPROUT_FORCE_FRONTEND_BUILD"):
-            self.app.display_info("frontend build present; skipping rebuild")
+            self.app.display_info(
+                "frontend build present; skipping rebuild "
+                "(set DBSPROUT_FORCE_FRONTEND_BUILD=1 to force)"
+            )
             return
 
         self.app.display_info("building frontend (npm ci && npm run build)")
