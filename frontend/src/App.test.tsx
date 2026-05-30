@@ -1,28 +1,15 @@
-import { render, screen, waitFor } from "@testing-library/react";
-import { afterEach, beforeEach, expect, test, vi } from "vitest";
+import { screen } from "@testing-library/react";
+import { afterEach, expect, test, vi } from "vitest";
+import { renderWithClient } from "./test/renderWithClient";
 import { App } from "./App";
 
-beforeEach(() => {
+afterEach(() => vi.unstubAllGlobals());
+
+test("renders the Workbench shell", () => {
   vi.stubGlobal(
     "fetch",
-    vi.fn(
-      async () =>
-        new Response(JSON.stringify({ status: "ok" }), {
-          status: 200,
-          headers: { "Content-Type": "application/json" },
-        }),
-    ),
+    vi.fn(async () => new Response(JSON.stringify({ samples: [] }), { status: 200, headers: { "Content-Type": "application/json" } })),
   );
-});
-
-afterEach(() => {
-  vi.unstubAllGlobals();
-});
-
-test("renders heading and reports backend ok", async () => {
-  render(<App />);
+  renderWithClient(<App />);
   expect(screen.getByText("DBSprout Workbench")).toBeInTheDocument();
-  await waitFor(() =>
-    expect(screen.getByTestId("backend-status")).toHaveTextContent("backend: ok"),
-  );
 });
