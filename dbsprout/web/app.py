@@ -52,6 +52,7 @@ from dbsprout.web.routers.studio import studio_router
 from dbsprout.web.routers.validate import validate_router
 from dbsprout.web.routers.wizard import wizard_router
 from dbsprout.web.routes import router
+from dbsprout.web.spa import mount_spa
 from dbsprout.web.views.erd import erd_router
 from dbsprout.web.views.insights import insights_router
 from dbsprout.web.views.progress import progress_router
@@ -186,6 +187,9 @@ def create_app(
     # ── end S-109 ──
     # ── end S-110 ──
     app.mount("/static", StaticFiles(directory=str(_STATIC_DIR)), name="static")
+    # ── Web-SPA P0: serve the React Workbench at /app (placeholder if unbuilt).
+    # Coexists with the legacy dashboard at / until the Phase-1 cutover.
+    mount_spa(app)
     app.include_router(router)
     # ─── S-091 ERD region ───
     app.include_router(erd_router)
