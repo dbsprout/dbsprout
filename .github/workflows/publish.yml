@@ -25,6 +25,10 @@ jobs:
         with:
           python-version: "3.12"
 
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "20"
+
       - name: Build package
         run: uv build
 
@@ -49,6 +53,14 @@ jobs:
 
       - name: Install from wheel
         run: pip install dist/*.whl
+
+      - name: Verify the Workbench SPA shipped in the wheel
+        run: |
+          python -c "import importlib.util, pathlib, sys; \
+          spec = importlib.util.find_spec('dbsprout'); \
+          root = pathlib.Path(spec.origin).parent; \
+          p = root / 'web' / 'spa' / 'index.html'; \
+          sys.exit(0 if p.is_file() else 'SPA index.html missing from installed wheel')"
 
       - name: Verify CLI
         run: dbsprout --help
