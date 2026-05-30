@@ -1,21 +1,17 @@
-import { useEffect, useState } from "react";
-import { fetchHealth } from "./api/health";
-
-type Status = "checking" | "ok" | "error";
+import { AppShell } from "./app/AppShell";
+import { SchemaTree } from "./features/schema/SchemaTree";
+import { SamplePicker } from "./features/start/SamplePicker";
 
 export function App() {
-  const [status, setStatus] = useState<Status>("checking");
-
-  useEffect(() => {
-    fetchHealth()
-      .then((h) => setStatus(h.status === "ok" ? "ok" : "error"))
-      .catch(() => setStatus("error"));
-  }, []);
-
   return (
-    <main>
-      <h1>DBSprout Workbench</h1>
-      <p data-testid="backend-status">backend: {status}</p>
-    </main>
+    <AppShell>
+      <section>
+        <h2>Start</h2>
+        <SamplePicker onLoaded={() => undefined} />
+      </section>
+      <section>
+        <SchemaTree />
+      </section>
+    </AppShell>
   );
 }
