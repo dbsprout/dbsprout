@@ -76,6 +76,6 @@ async def load_sample_schema(request: Request, body: SampleRequest) -> Any:
             "source": source,
             "table_count": len(schema.tables),
             "tables": [t.name for t in schema.tables],
-            "dialect": schema.dialect,
+            "dialect": schema.dialect or "unknown",
         }
     )

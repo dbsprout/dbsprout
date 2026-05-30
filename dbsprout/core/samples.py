@@ -29,7 +29,7 @@ _MANIFEST: dict[str, tuple[str, str, str]] = {
     "saas": (
         "saas.sql",
         "SaaS",
-        "Multi-tenant SaaS: accounts, users, subscriptions, usage.",
+        "Multi-tenant SaaS: tenants, users, teams, projects, tasks, invoices.",
     ),
 }
 
