@@ -103,6 +103,41 @@ def _known_connect_exceptions() -> tuple[type[BaseException], ...]:
     return (ValueError, OSError, ImportError, sa.exc.SQLAlchemyError)
 
 
+@connect_router.post("/api/connect/test")
+async def connect_test(request: Request, body: ConnectRequest) -> Any:
+    """Probe a database connection without mutating the workspace.
+
+    Calls :func:`dbsprout.core.service.probe_connection` for a lightweight
+    dialect/version/table-count check and returns the result as JSON. On
+    failure, routes the exception through the same typed-envelope path used by
+    :func:`connect` — ``classify_connect_error`` + ``raise_web_error`` — so
+    the client receives the same structured error codes regardless of which
+    endpoint they hit.
+
+    The workspace is never written: this handler is a pure read-only probe.
+    """
+    from dbsprout.core.service import probe_connection  # noqa: PLC0415
+
+    try:
+        probe = probe_connection(body.url)
+    except _known_connect_exceptions() as exc:
+        return raise_web_error(request, classify_connect_error(exc, body.url), original=exc)
+    except Exception as exc:
+        return raise_web_error(request, web_error_internal(), original=exc)
+
+    from fastapi.responses import JSONResponse  # noqa: PLC0415
+
+    return JSONResponse(
+        {
+            "ok": True,
+            "dialect": probe.dialect,
+            "server_version": probe.server_version,
+            "table_count": probe.table_count,
+            "latency_ms": probe.latency_ms,
+        }
+    )
+
+
 @connect_router.post("/api/connect")
 async def connect(request: Request, body: ConnectRequest) -> Any:
     """Introspect a live database and start a workspace session.

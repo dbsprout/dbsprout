@@ -45,6 +45,7 @@ from dbsprout.web.routers.insert import insert_router
 from dbsprout.web.routers.jobs import jobs_router
 from dbsprout.web.routers.preview import preview_router
 from dbsprout.web.routers.regenerate import regenerate_router
+from dbsprout.web.routers.samples import samples_router
 from dbsprout.web.routers.schema import schema_router
 from dbsprout.web.routers.schema_load import schema_load_router
 from dbsprout.web.routers.spec import spec_router
@@ -215,6 +216,9 @@ def create_app(
     # result stored on app.state.workspace (S-111).
     app.include_router(schema_load_router)
     # ── end S-113 ──
+    # ── P1a samples ──
+    app.include_router(samples_router)
+    # ── end P1a samples ──
     # ── S-124 generate route ──
     # POST /api/generate — submits the generation pipeline as a background job
     # via app.state.job_manager (S-108), running core.service.generate (S-106)
