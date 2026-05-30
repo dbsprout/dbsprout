@@ -48,16 +48,62 @@ if TYPE_CHECKING:
 _FILE_FORMATS = frozenset({"sql", "csv", "json", "jsonl", "parquet"})
 
 __all__ = [
+    "ConnectionProbe",
     "GenerateResult",
     "IntegrityReport",
     "ValidationOutcome",
     "WriteOutcome",
     "generate",
     "load_schema",
+    "probe_connection",
     "run_validation",
     "validate_integrity",
     "write_output",
 ]
+
+
+@dataclass(frozen=True)
+class ConnectionProbe:
+    """Result of a lightweight connection test (no column introspection)."""
+
+    dialect: str
+    server_version: str
+    table_count: int
+    latency_ms: int
+
+
+def probe_connection(url: str) -> ConnectionProbe:
+    """Open *url*, report dialect/version/table-count/latency, then dispose.
+
+    Reuses the validated engine factory from introspection (dialect allow-list +
+    timeout). Raises the underlying SQLAlchemy/ValueError on failure; the web
+    layer classifies it into a typed envelope.
+    """
+    import time  # noqa: PLC0415
+
+    import sqlalchemy as sa  # noqa: PLC0415
+
+    from dbsprout.schema.introspect import _create_engine, _validate_url  # noqa: PLC0415
+
+    _validate_url(url)
+    start = time.perf_counter()
+    engine = _create_engine(url)
+    try:
+        with engine.connect() as conn:
+            inspector = sa.inspect(conn)
+            table_count = len(inspector.get_table_names())
+            version_info: tuple[object, ...] | None = engine.dialect.server_version_info
+        dialect = engine.dialect.name
+    finally:
+        engine.dispose()
+    latency_ms = int((time.perf_counter() - start) * 1000)
+    server_version = ".".join(str(p) for p in version_info) if version_info else "unknown"
+    return ConnectionProbe(
+        dialect=dialect,
+        server_version=server_version,
+        table_count=table_count,
+        latency_ms=latency_ms,
+    )
 
 
 @dataclass(frozen=True)
