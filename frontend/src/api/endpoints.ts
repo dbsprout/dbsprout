@@ -1,4 +1,4 @@
-import { apiGet, apiPost } from "./client";
+import { apiGet, apiPost, apiUpload } from "./client";
 import type {
   ConnectionProbe,
   SamplesResponse,
@@ -22,3 +22,10 @@ export const connectTest = (url: string) =>
   apiPost<ConnectionProbe>("/api/connect/test", { url });
 export const pasteSchema = (text: string, parser?: string) =>
   apiPost<SchemaSummary>("/api/schema/paste", { text, parser });
+
+export const uploadSchema = (file: File, parser?: string) => {
+  const form = new FormData();
+  form.append("file", file);
+  if (parser) form.append("parser", parser);
+  return apiUpload<SchemaSummary>("/api/schema/load", form);
+};
