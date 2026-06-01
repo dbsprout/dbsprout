@@ -43,6 +43,16 @@ export async function apiPost<T>(path: string, body?: unknown): Promise<T> {
   );
 }
 
+export async function apiPut<T>(path: string, body?: unknown): Promise<T> {
+  return parse<T>(
+    await fetch(path, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    }),
+  );
+}
+
 export async function apiUpload<T>(path: string, form: FormData): Promise<T> {
   // No JSON content-type: the browser sets the multipart boundary itself.
   return parse<T>(await fetch(path, { method: "POST", body: form }));

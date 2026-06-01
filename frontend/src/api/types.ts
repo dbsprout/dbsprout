@@ -64,3 +64,55 @@ export interface SchemaTreeData {
   source: string | null;
   tables: TableNode[];
 }
+
+export interface GeneratorConfig {
+  provider: string;
+  method: string | null;
+  params: Record<string, unknown>;
+  distribution: string | null;
+  distribution_params: Record<string, number>;
+  min_value: number | null;
+  max_value: number | null;
+  enum_values: string[] | null;
+  format_pattern: string | null;
+  unique: boolean;
+  nullable_rate: number;
+  vectorized: boolean;
+}
+
+export interface TableSpec {
+  table_name: string;
+  row_count: number;
+  columns: Record<string, GeneratorConfig>;
+  derived: unknown[];
+  correlations: unknown[];
+  cardinality: Record<string, unknown> | null;
+}
+
+export interface DataSpec {
+  version: string;
+  tables: TableSpec[];
+  global_seed: number;
+  schema_hash: string;
+  model_used: string | null;
+  created_at: string | null;
+}
+
+export interface GeneratorMethod {
+  provider: string;
+  method: string;
+  description: string;
+  example: string;
+  dtypes: string[];
+  params: string[];
+}
+
+export interface GeneratorsResponse {
+  providers: string[];
+  methods: GeneratorMethod[];
+}
+
+export interface RowCountResponse {
+  table_name: string;
+  row_count: number;
+}
