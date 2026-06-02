@@ -1,5 +1,6 @@
 import { AppShell } from "./app/AppShell";
 import { SchemaTree } from "./features/schema/SchemaTree";
+import { ConfigurePanel } from "./features/configure/ConfigurePanel";
 import { SpecPanel } from "./features/configure/SpecPanel";
 import { StartPanel } from "./features/start/StartPanel";
 
@@ -16,6 +17,7 @@ export function App() {
       <section>
         <h2>Configure</h2>
         <SpecPanel />
+        <ConfigurePanel />
       </section>
     </AppShell>
   );

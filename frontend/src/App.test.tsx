@@ -13,3 +13,12 @@ test("renders the Workbench shell", () => {
   renderWithClient(<App />);
   expect(screen.getByText("DBSprout Workbench")).toBeInTheDocument();
 });
+
+test("mounts the Configure surface", () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () => new Response(JSON.stringify({ samples: [] }), { status: 200, headers: { "Content-Type": "application/json" } })),
+  );
+  renderWithClient(<App />);
+  expect(screen.getByRole("heading", { name: "Configure" })).toBeInTheDocument();
+});
