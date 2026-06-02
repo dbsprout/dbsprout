@@ -123,3 +123,35 @@ export interface PreviewResponse {
   total: number;
   rows: Record<string, unknown>[];
 }
+
+// ── Generate (P1b-3) ─────────────────────────────────────────────────────
+// Mirrors POST /api/generate + GET /api/jobs/{id} (backend dbsprout/web/routers/generate.py).
+
+/** The four registered generation engines. */
+export type Engine = "heuristic" | "spec" | "statistical" | "finetuned";
+
+export interface GenerateRequest {
+  engine: Engine;
+  // null / omitted → the server materialises a fresh non-negative 63-bit seed.
+  seed: number | null;
+}
+
+export interface GenerateResponse {
+  job_id: string;
+  // The seed actually used (echoed back, materialised server-side when sent null).
+  seed: number;
+}
+
+/** Terminal states are succeeded / failed / cancelled; running is the only live state. */
+export type JobStatus = "running" | "succeeded" | "failed" | "cancelled";
+
+export interface JobRecordResponse {
+  id: string;
+  kind: string;
+  status: JobStatus;
+  engine: string | null;
+  seed: number | null;
+  started_at: string | null;
+  finished_at: string | null;
+  error: string | null;
+}

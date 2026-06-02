@@ -22,3 +22,12 @@ test("mounts the Configure surface", () => {
   renderWithClient(<App />);
   expect(screen.getByRole("heading", { name: "Configure" })).toBeInTheDocument();
 });
+
+test("mounts the Generate surface", () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () => new Response(JSON.stringify({ samples: [] }), { status: 200, headers: { "Content-Type": "application/json" } })),
+  );
+  renderWithClient(<App />);
+  expect(screen.getByRole("heading", { name: "Generate" })).toBeInTheDocument();
+});

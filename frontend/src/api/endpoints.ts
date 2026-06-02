@@ -2,8 +2,11 @@ import { apiGet, apiPost, apiPut, apiUpload } from "./client";
 import type {
   ConnectionProbe,
   DataSpec,
+  GenerateRequest,
+  GenerateResponse,
   GeneratorConfig,
   GeneratorsResponse,
+  JobRecordResponse,
   PreviewResponse,
   RowCountResponse,
   SamplesResponse,
@@ -17,6 +20,7 @@ export const queryKeys = {
   spec: ["spec"] as const,
   generators: ["generators"] as const,
   preview: (table: string) => ["preview", table] as const,
+  job: (jobId: string) => ["job", jobId] as const,
 };
 
 export const listSamples = () => apiGet<SamplesResponse>("/api/samples");
@@ -50,3 +54,9 @@ export const putColumnSpec = (table: string, column: string, cfg: GeneratorConfi
   );
 export const getPreview = (table: string) =>
   apiGet<PreviewResponse>(`/api/preview/${encodeURIComponent(table)}`);
+
+// ── Generate (P1b-3) ─────────────────────────────────────────────────────
+export const generate = (body: GenerateRequest) =>
+  apiPost<GenerateResponse>("/api/generate", body);
+export const getJob = (jobId: string) =>
+  apiGet<JobRecordResponse>(`/api/jobs/${encodeURIComponent(jobId)}`);

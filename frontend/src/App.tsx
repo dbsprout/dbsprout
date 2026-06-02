@@ -2,6 +2,7 @@ import { AppShell } from "./app/AppShell";
 import { SchemaTree } from "./features/schema/SchemaTree";
 import { ConfigurePanel } from "./features/configure/ConfigurePanel";
 import { SpecPanel } from "./features/configure/SpecPanel";
+import { GenerateSurface } from "./features/generate/GenerateSurface";
 import { StartPanel } from "./features/start/StartPanel";
 
 export function App() {
@@ -18,6 +19,10 @@ export function App() {
         <h2>Configure</h2>
         <SpecPanel />
         <ConfigurePanel />
+      </section>
+      <section>
+        <h2>Generate</h2>
+        <GenerateSurface />
       </section>
     </AppShell>
   );
