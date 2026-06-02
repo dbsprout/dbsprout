@@ -7,7 +7,7 @@ afterEach(() => vi.unstubAllGlobals());
 
 test("Load button is disabled until text is entered, then pastes the schema", async () => {
   const onLoaded = vi.fn();
-  const fetchMock = vi.fn(
+  const fetchMock = vi.fn<typeof fetch>(
     async () =>
       new Response(JSON.stringify({ source: "paste", table_count: 1, tables: ["t"], dialect: "sqlite" }), {
         status: 200,
@@ -28,8 +28,8 @@ test("Load button is disabled until text is entered, then pastes the schema", as
   fireEvent.click(button);
   await waitFor(() => expect(onLoaded).toHaveBeenCalled());
   const [, init] = fetchMock.mock.calls[0];
-  expect((init as RequestInit | undefined)?.method).toBe("POST");
-  expect(JSON.parse(String((init as RequestInit).body))).toMatchObject({
+  expect(init?.method).toBe("POST");
+  expect(JSON.parse(String(init?.body))).toMatchObject({
     text: "CREATE TABLE t (id int);",
   });
 });
