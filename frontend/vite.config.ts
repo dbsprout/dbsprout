@@ -33,6 +33,8 @@ export default defineConfig({
         "src/**/*.test.{ts,tsx}",
         "src/test/**",
         "src/setupTests.ts",
+        // Pure type-declaration module — no executable code to cover.
+        "src/api/types.ts",
       ],
       thresholds: {
         lines: 80,

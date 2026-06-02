@@ -63,4 +63,5 @@ dbsprout.local.toml
 
 # Frontend (React/Vite Workbench)
 frontend/node_modules/
+frontend/coverage/
 dbsprout/web/spa/
