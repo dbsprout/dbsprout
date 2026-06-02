@@ -4,6 +4,7 @@ import type {
   DataSpec,
   GeneratorConfig,
   GeneratorsResponse,
+  PreviewResponse,
   RowCountResponse,
   SamplesResponse,
   SchemaSummary,
@@ -15,6 +16,7 @@ export const queryKeys = {
   schema: ["schema"] as const,
   spec: ["spec"] as const,
   generators: ["generators"] as const,
+  preview: (table: string) => ["preview", table] as const,
 };
 
 export const listSamples = () => apiGet<SamplesResponse>("/api/samples");
@@ -46,3 +48,5 @@ export const putColumnSpec = (table: string, column: string, cfg: GeneratorConfi
     `/api/spec/tables/${encodeURIComponent(table)}/columns/${encodeURIComponent(column)}`,
     cfg,
   );
+export const getPreview = (table: string) =>
+  apiGet<PreviewResponse>(`/api/preview/${encodeURIComponent(table)}`);

@@ -116,3 +116,10 @@ export interface RowCountResponse {
   table_name: string;
   row_count: number;
 }
+
+export interface PreviewResponse {
+  table: string;
+  limit: number;
+  total: number;
+  rows: Record<string, unknown>[];
+}
