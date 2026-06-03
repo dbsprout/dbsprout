@@ -312,6 +312,36 @@ def test_assist_provider_runtime_error_returns_typed_503(
     assert resp.json()["detail"]["code"] == "LLM_UNAVAILABLE"
 
 
+def test_assist_provider_arbitrary_exception_returns_typed_503_never_500(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A missing / invalid cloud API key surfaces as litellm's own
+    ``AuthenticationError`` — a plain ``Exception`` subclass, none of the stdlib
+    types. The route must still fold it into the typed 503 envelope (the AC
+    mandates this path NEVER returns a 500)."""
+
+    class _AuthError(Exception):
+        """Stand-in for litellm.exceptions.AuthenticationError (not a stdlib type)."""
+
+    class _AuthBoom:
+        def __init__(self, *a: object, **k: object) -> None:
+            pass
+
+        def generate_spec(self, schema: DatabaseSchema) -> DataSpec:
+            raise _AuthError("AuthenticationError: no API key provided")
+
+    monkeypatch.setattr("dbsprout.spec.providers.cloud.CloudProvider", _AuthBoom, raising=True)
+    app = _make_app(tmp_path)
+    app.state.workspace.set_schema(_small_schema())
+    client = TestClient(app)
+
+    resp = client.post("/api/spec/assist", json={"provider": "cloud"})
+
+    assert resp.status_code == 503
+    assert resp.json()["detail"]["code"] == "LLM_UNAVAILABLE"
+    assert app.state.workspace.get_spec() is None
+
+
 def test_assist_unknown_provider_value_returns_422(tmp_path: Path) -> None:
     app = _make_app(tmp_path)
     app.state.workspace.set_schema(_small_schema())

@@ -152,13 +152,22 @@ async def assist_spec(request: Request, body: AssistRequest) -> dict[str, Any]:
         # ``raise_web_error`` is ``NoReturn`` — it always raises an HTTPException.
         raise_web_error(request, web_error_no_schema())
 
-    # Construct + call the provider. Any capability failure (missing extra,
-    # missing model/key, bad model output) degrades to a typed 503 envelope —
-    # never a 500, and the existing workspace spec stays in place.
+    # Construct + call the provider. Any capability failure degrades to a typed
+    # 503 envelope — never a 500, and the existing workspace spec stays in place.
+    #
+    # We deliberately catch broad ``Exception`` here, not a narrow tuple: the
+    # providers are opaque third-party stacks (llama-cpp, litellm + instructor,
+    # the cloud SDK underneath) whose failure modes we can't enumerate — a
+    # missing ``[llm]``/``[cloud]`` extra raises ``ImportError``, a missing GGUF
+    # model raises ``RuntimeError``/``OSError``, but a missing / invalid cloud
+    # API key raises litellm's own ``AuthenticationError`` (a subclass of
+    # ``Exception``, none of the stdlib types). The AC mandates this path NEVER
+    # returns a 500, so any failure is folded into the typed envelope; the real
+    # exception is preserved via ``original=exc`` for the server log.
     try:
         provider = _build_provider(body.provider)
         spec = provider.generate_spec(schema)
-    except (ImportError, RuntimeError, OSError, ValueError) as exc:
+    except Exception as exc:  # see comment above; this path must never be a 500
         _log.warning("spec-assist provider %r unavailable: %s", body.provider, exc)
         # ``raise_web_error`` is ``NoReturn``; it re-raises as an HTTPException.
         raise_web_error(
