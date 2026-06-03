@@ -39,6 +39,7 @@ from dbsprout.state.db import StateDB
 from dbsprout.web.jobs import JobManager, JobRecord
 from dbsprout.web.progress import ProgressHub, progress_ws_router
 from dbsprout.web.routers.connect import connect_router
+from dbsprout.web.routers.connections import connections_router
 from dbsprout.web.routers.export import export_router
 from dbsprout.web.routers.generate import generate_router
 from dbsprout.web.routers.generators import generators_router
@@ -276,6 +277,13 @@ def create_app(
     # config_json/secrets; honest empty payloads (200) when the CLI never ran.
     app.include_router(insights_api_router)
     # ─── end P1c-4 region ───
+    # ─── P2a-2 region ───
+    # GET/POST/DELETE /api/connections — saved connections persisted to
+    # .dbsprout/connections.toml via the pure dbsprout/core/connections.py
+    # helper. Passwords are NEVER written: the stored value is empty or an
+    # ${ENV_VAR} reference, resolved only at connect time.
+    app.include_router(connections_router)
+    # ─── end P2a-2 region ───
     # ─── P2b-3 region ───
     # POST /api/spec/assist — let an LLM propose a full DataSpec for the loaded
     # schema (offline EmbeddedProvider by default; opt-in CloudProvider). The

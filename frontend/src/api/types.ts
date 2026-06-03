@@ -404,3 +404,30 @@ export interface ValidateResponse {
   fidelity: FidelityReport | null;
   detection: DetectionReport | null;
 }
+
+// ─── P2a-2 ───
+// Saved connections persisted to .dbsprout/connections.toml
+// (backend dbsprout/web/routers/connections.py). Passwords are NEVER stored —
+// `url` is always password-stripped (empty or an ${ENV_VAR} reference).
+
+/** One saved connection — a name and a password-stripped URL. */
+export interface SavedConnectionInfo {
+  name: string;
+  url: string;
+}
+
+/** Response of GET /api/connections. */
+export interface ConnectionsResponse {
+  connections: SavedConnectionInfo[];
+}
+
+/** Request body for POST /api/connections. */
+export interface SaveConnectionRequest {
+  name: string;
+  url: string;
+}
+
+/** Response of DELETE /api/connections/{name}. */
+export interface DeleteConnectionResponse {
+  deleted: boolean;
+}
