@@ -80,12 +80,45 @@ export interface GeneratorConfig {
   vectorized: boolean;
 }
 
+// ─── P2b-2: advanced packs (correlations + derived) ───
+// Mirrors dbsprout.spec.models.CorrelationRule / DerivedColumn. Persisted via
+// PUT /api/spec/tables/{t}/advanced (backend dbsprout/web/routers/spec.py).
+
+/** A multi-column coherence rule (e.g. city/state/zip lookup, FK fan-out). */
+export interface CorrelationRule {
+  columns: string[];
+  lookup_table: string | null;
+  strategy: string;
+}
+
+/** An expression-based column derived from other columns on the same table. */
+export interface DerivedColumn {
+  column: string;
+  expression: string;
+  depends_on: string[];
+}
+
+/** Request body for the advanced PUT — either list may be omitted (partial update). */
+export interface TableAdvanced {
+  correlations?: CorrelationRule[];
+  derived?: DerivedColumn[];
+}
+
+/** Response of PUT /api/spec/tables/{t}/advanced. */
+export interface TableAdvancedResponse {
+  table_name: string;
+  correlations: CorrelationRule[];
+  derived: DerivedColumn[];
+}
+// ─── end P2b-2 ───
+
 export interface TableSpec {
   table_name: string;
   row_count: number;
   columns: Record<string, GeneratorConfig>;
-  derived: unknown[];
-  correlations: unknown[];
+  // ─── P2b-2 ─── (narrowed from unknown[] to the typed advanced-pack arrays)
+  derived: DerivedColumn[];
+  correlations: CorrelationRule[];
   cardinality: Record<string, unknown> | null;
 }
 
@@ -288,6 +321,23 @@ export interface ExportRequest {
 /** Optional list of table names to scope validation to (server validates the last run). */
 export interface ValidateRequest {
   tables?: string[];
+}
+
+// ─── P2b-3 ───
+// Mirrors POST /api/spec/assist (backend dbsprout/web/routers/spec_assist.py).
+// An LLM proposes a full DataSpec for the loaded schema; the server stores it on
+// the workspace (GET /api/spec then reflects it) and returns this summary.
+
+/** Which provider proposes the spec. `embedded` is offline; `cloud` is opt-in. */
+export type SpecProvider = "embedded" | "cloud";
+
+/** Summary returned by POST /api/spec/assist after a successful proposal. */
+export interface SpecAssistResponse {
+  provider: SpecProvider;
+  model_used: string | null;
+  schema_hash: string;
+  tables: number;
+  total_columns: number;
 }
 
 /** High-level integrity totals across the validated run. */

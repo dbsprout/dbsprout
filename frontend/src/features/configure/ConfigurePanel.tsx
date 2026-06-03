@@ -5,12 +5,27 @@ import {
   getSpec,
   listGenerators,
   putColumnSpec,
+  // ─── P2b-2 ───
+  putTableAdvanced,
+  // ─── end P2b-2 ───
   queryKeys,
 } from "../../api/endpoints";
-import type { GeneratorConfig, TableSpec } from "../../api/types";
+import type {
+  // ─── P2b-2 ───
+  CorrelationRule,
+  DerivedColumn,
+  // ─── end P2b-2 ───
+  GeneratorConfig,
+  TableSpec,
+} from "../../api/types";
 import { ColumnGrid } from "./ColumnGrid";
 import { ColumnInspector } from "./ColumnInspector";
+// ─── P2b-2 ───
+import { CorrelationsEditor } from "./CorrelationsEditor";
+import { DerivedColumns } from "./DerivedColumns";
+// ─── end P2b-2 ───
 import { PreviewTable } from "./PreviewTable";
+import { SpecAssist } from "./SpecAssist";
 
 /**
  * Configure surface: a table picker drives a per-column generator grid, a Column
@@ -46,6 +61,14 @@ export function ConfigurePanel() {
     },
   });
 
+  // ─── P2b-2 ─── advanced packs (correlations + derived) persistence.
+  const advancedMutation = useMutation({
+    mutationFn: (body: { correlations?: CorrelationRule[]; derived?: DerivedColumn[] }) =>
+      putTableAdvanced(table!.table_name, body),
+    onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.spec }),
+  });
+  // ─── end P2b-2 ───
+
   if (spec.isLoading) {
     return <p>Loading spec…</p>;
   }
@@ -58,6 +81,11 @@ export function ConfigurePanel() {
 
   return (
     <div>
+      {/* ═══ P2b-3 ═══ */}
+      {/* AI spec-assist: an LLM proposes a full DataSpec for the loaded schema;
+          on success the spec query is invalidated so this grid repaints. */}
+      <SpecAssist />
+      {/* ═══ end P2b-3 ═══ */}
       <label>
         table
         <select
@@ -93,6 +121,23 @@ export function ConfigurePanel() {
           onSave={(cfg) => mutation.mutate({ column: selectedColumn, cfg })}
         />
       )}
+
+      {/* ═══ P2b-2 ═══ advanced packs: correlations + derived columns */}
+      {advancedMutation.isError && <p role="alert">Failed to save advanced packs.</p>}
+      <CorrelationsEditor
+        table={activeTable.table_name}
+        columns={Object.keys(activeTable.columns)}
+        tables={tables.map((t) => t.table_name)}
+        rules={activeTable.correlations}
+        onSave={(correlations) => advancedMutation.mutate({ correlations })}
+      />
+      <DerivedColumns
+        table={activeTable.table_name}
+        columns={Object.keys(activeTable.columns)}
+        derived={activeTable.derived}
+        onSave={(derived) => advancedMutation.mutate({ derived })}
+      />
+      {/* ═══ end P2b-2 ═══ */}
 
       <PreviewTable table={activeTable.table_name} />
     </div>

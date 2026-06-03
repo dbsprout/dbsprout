@@ -24,6 +24,10 @@ import type {
   SavedConnectionInfo,
   SchemaSummary,
   SchemaTreeData,
+  SpecAssistResponse,
+  SpecProvider,
+  TableAdvanced,
+  TableAdvancedResponse,
   ValidateResponse,
 } from "./types";
 
@@ -71,6 +75,15 @@ export const putColumnSpec = (table: string, column: string, cfg: GeneratorConfi
     `/api/spec/tables/${encodeURIComponent(table)}/columns/${encodeURIComponent(column)}`,
     cfg,
   );
+// ─── P2b-2: advanced packs (correlations + derived) ───
+// Persist a table's correlations / derived lists; either may be omitted (partial
+// update). Invalidate queryKeys.spec on success — no dedicated query key needed.
+export const putTableAdvanced = (table: string, body: TableAdvanced) =>
+  apiPut<TableAdvancedResponse>(
+    `/api/spec/tables/${encodeURIComponent(table)}/advanced`,
+    body,
+  );
+// ─── end P2b-2 ───
 export const getPreview = (table: string) =>
   apiGet<PreviewResponse>(`/api/preview/${encodeURIComponent(table)}`);
 
@@ -154,3 +167,11 @@ export const deleteConnection = async (name: string): Promise<DeleteConnectionRe
   }
   return (await resp.json()) as DeleteConnectionResponse;
 };
+
+// ─── P2b-3 ───
+// POST /api/spec/assist — let an LLM propose a full DataSpec for the loaded
+// schema. Default provider is the offline "embedded" path; "cloud" is opt-in.
+// On success the server stores the proposal on the workspace, so callers
+// invalidate queryKeys.spec to repaint the configure grid (no new query key).
+export const assistSpec = (provider?: SpecProvider) =>
+  apiPost<SpecAssistResponse>("/api/spec/assist", provider ? { provider } : {});

@@ -40,13 +40,14 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any, cast
 
 from fastapi import APIRouter, HTTPException, Request, status
-from pydantic import ValidationError
+from pydantic import BaseModel, ConfigDict, ValidationError
 
-from dbsprout.spec.models import GeneratorConfig
+from dbsprout.spec.models import CorrelationRule, DerivedColumn, GeneratorConfig
 
 if TYPE_CHECKING:
     from fastapi import FastAPI
 
+    from dbsprout.schema.models import DatabaseSchema
     from dbsprout.spec.models import DataSpec
     from dbsprout.web.workspace import Workspace
 
@@ -367,3 +368,182 @@ async def put_column_config(
 
 
 # endregion -----------------------------------------------------------------
+
+
+# ─── P2b-2 region ───────────────────────────────────────────────────────────
+# ``PUT /api/spec/tables/{table_name}/advanced`` — persist a table's *advanced
+# packs*: ``correlations`` (FK fan-out / cross-column coherence rules) and
+# ``derived`` (expression-based derived columns). Sibling stories edit this same
+# module, so this block is self-contained — it touches only the advanced route +
+# the matching ``Workspace.update_table_advanced`` helper, never the row_count or
+# column regions above.
+#
+# Body: JSON object ``{"correlations"?: [CorrelationRule], "derived"?: [DerivedColumn]}``.
+# Either key may be omitted (partial update — the omitted list is left untouched);
+# ``extra='forbid'`` rejects unknown top-level keys.
+#
+# Validation order (fail fast, no spec side effects on bad input):
+#   1. 409 NO_SCHEMA            — no schema loaded.
+#   2. 422 (pydantic .errors()) — malformed JSON / non-object body / bad rule shape.
+#   3. 404 UNKNOWN_TABLE        — table absent from the *loaded schema*.
+#   4. 422 UNKNOWN_COLUMN_REF   — a referenced column is not on that schema table.
+#   5. 422 UNKNOWN_LOOKUP_TABLE — a CorrelationRule.lookup_table is not a real table.
+# On success: persist + return ``{table_name, correlations, derived}`` (JSON-only).
+
+
+class _AdvancedUpdate(BaseModel):
+    """Validated body for the advanced-packs PUT (correlations + derived).
+
+    Both fields are optional so the client can persist correlations and derived
+    columns independently; ``None`` means "leave the existing list unchanged".
+    ``extra='forbid'`` mirrors the rest of the spec models — a typo in a
+    top-level key is a 422, not a silent no-op.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    correlations: list[CorrelationRule] | None = None
+    derived: list[DerivedColumn] | None = None
+
+
+def _unknown_column_ref(table: str, column: str) -> HTTPException:
+    """Build the 422 envelope for a reference to a column not on the schema table."""
+    return HTTPException(
+        status_code=422,
+        detail={
+            "code": "UNKNOWN_COLUMN_REF",
+            "message": (f"Column {column!r} does not exist on table {table!r}."),
+            "table": table,
+            "column": column,
+        },
+    )
+
+
+def _validate_advanced_refs(
+    schema: DatabaseSchema,
+    table: str,
+    update: _AdvancedUpdate,
+) -> None:
+    """Validate that every referenced column / lookup table exists.
+
+    The pydantic model has already enforced the *shape* of each rule; this guard
+    enforces *referential* integrity against the loaded schema:
+
+    * each :class:`~dbsprout.spec.models.CorrelationRule` column,
+    * each :class:`~dbsprout.spec.models.DerivedColumn` target column and every
+      entry of its ``depends_on``,
+
+    must be a real column on ``table``; a ``lookup_table`` (when set) must be a
+    real table. The first offending reference raises a typed ``422``.
+    """
+    table_obj = schema.get_table(table)
+    # The caller guarantees the table exists (checked before us); narrow without
+    # an ``assert`` (ruff flags those in production code).
+    if table_obj is None:  # pragma: no cover — defensive invariant
+        raise _unknown_column_ref(table, "")
+    known_columns = {col.name for col in table_obj.columns}
+    known_tables = set(schema.table_names())
+
+    for rule in update.correlations or []:
+        for column in rule.columns:
+            if column not in known_columns:
+                raise _unknown_column_ref(table, column)
+        if rule.lookup_table is not None and rule.lookup_table not in known_tables:
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "code": "UNKNOWN_LOOKUP_TABLE",
+                    "message": (
+                        f"Lookup table {rule.lookup_table!r} does not exist in the schema."
+                    ),
+                    "table": table,
+                    "lookup_table": rule.lookup_table,
+                },
+            )
+
+    for derived in update.derived or []:
+        for column in (derived.column, *derived.depends_on):
+            if column not in known_columns:
+                raise _unknown_column_ref(table, column)
+
+
+@spec_router.put(
+    "/api/spec/tables/{table_name}/advanced",
+    response_model=None,
+)
+async def put_table_advanced(
+    request: Request,
+    table_name: str,
+) -> dict[str, Any]:
+    """Persist a table's ``correlations`` + ``derived`` advanced packs (P2b-2).
+
+    See the region header above for the full contract. Returns JSON
+    ``{table_name, correlations, derived}``.
+    """
+    workspace = _workspace(request)
+    schema = workspace.get_schema()
+    if schema is None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=_NO_SCHEMA_DETAIL,
+        )
+
+    # 1. Pydantic validation at the boundary (shape + extra='forbid').
+    try:
+        raw = await request.json()
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=[{"loc": ["body"], "msg": str(exc), "type": "value_error.jsondecode"}],
+        ) from exc
+    try:
+        update = _AdvancedUpdate.model_validate(raw)
+    except ValidationError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=exc.errors(),
+        ) from exc
+
+    # 2. Table must exist on the loaded schema.
+    if schema.get_table(table_name) is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={
+                "code": "UNKNOWN_TABLE",
+                "message": f"Table {table_name!r} not found in schema.",
+                "table": table_name,
+            },
+        )
+
+    # 3. Referential-integrity guard against the loaded schema.
+    _validate_advanced_refs(schema, table_name, update)
+
+    # 4. Lazily build/load the spec, then apply the immutable swap.
+    _build_or_get_spec(workspace)
+    try:
+        stored = workspace.update_table_advanced(
+            table_name,
+            correlations=update.correlations,
+            derived=update.derived,
+        )
+    except KeyError as exc:  # pragma: no cover — schema/spec table sets agree
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={
+                "code": "UNKNOWN_TABLE",
+                "message": f"Table {table_name!r} not found in spec.",
+                "table": table_name,
+            },
+        ) from exc
+
+    # Persist to the disk cache (best-effort — never fails the edit).
+    workspace.persist_spec()
+
+    return {
+        "table_name": table_name,
+        "correlations": [rule.model_dump(mode="json") for rule in stored.correlations],
+        "derived": [col.model_dump(mode="json") for col in stored.derived],
+    }
+
+
+# ─── end P2b-2 region ───────────────────────────────────────────────────────

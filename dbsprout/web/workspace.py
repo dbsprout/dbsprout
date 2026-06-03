@@ -33,7 +33,13 @@ if TYPE_CHECKING:
     from dbsprout.generate.orchestrator import GenerateResult
     from dbsprout.schema.models import DatabaseSchema
     from dbsprout.spec.cache import SpecCache
-    from dbsprout.spec.models import DataSpec, GeneratorConfig, TableSpec
+    from dbsprout.spec.models import (
+        CorrelationRule,
+        DataSpec,
+        DerivedColumn,
+        GeneratorConfig,
+        TableSpec,
+    )
 
 _log = logging.getLogger(__name__)
 
@@ -173,6 +179,55 @@ class Workspace:
             raise KeyError(table_name)
         self.spec = self.spec.model_copy(update={"tables": new_tables})
         return row_count
+
+    def update_table_advanced(
+        self,
+        table_name: str,
+        *,
+        correlations: list[CorrelationRule] | None = None,
+        derived: list[DerivedColumn] | None = None,
+    ) -> TableSpec:
+        """Immutably replace a table's ``correlations`` / ``derived`` lists (P2b-2).
+
+        Mirrors :meth:`update_table_row_count`: locates the matching
+        :class:`~dbsprout.spec.models.TableSpec`, swaps in a fresh copy via
+        ``model_copy(update=...)`` for *only* the provided field(s), and stores a
+        new :class:`~dbsprout.spec.models.DataSpec` on the workspace (table order
+        preserved). Passing ``None`` for a field leaves that list unchanged, so a
+        caller can persist correlations and derived columns independently.
+
+        Returns the freshly-stored :class:`~dbsprout.spec.models.TableSpec`.
+
+        Raises:
+            ValueError: if no spec is loaded.
+            KeyError: if ``table_name`` is absent from the spec.
+
+        Like :meth:`update_table_row_count`, ``model_copy`` does not re-run
+        Pydantic validation; the PUT route in
+        :mod:`dbsprout.web.routers.spec` is responsible for validating the lists
+        (and their column references) at the input boundary before calling.
+        """
+        if self.spec is None:
+            msg = "no spec loaded; call set_spec() first"
+            raise ValueError(msg)
+        update: dict[str, object] = {}
+        if correlations is not None:
+            update["correlations"] = correlations
+        if derived is not None:
+            update["derived"] = derived
+
+        new_tables: list[TableSpec] = []
+        stored: TableSpec | None = None
+        for table_spec in self.spec.tables:
+            if table_spec.table_name == table_name:
+                stored = table_spec.model_copy(update=update)
+                new_tables.append(stored)
+            else:
+                new_tables.append(table_spec)
+        if stored is None:
+            raise KeyError(table_name)
+        self.spec = self.spec.model_copy(update={"tables": new_tables})
+        return stored
 
     def update_column(
         self,

@@ -35,3 +35,41 @@ test("Connect introspects and calls onLoaded", async () => {
   await waitFor(() => expect(onLoaded).toHaveBeenCalled());
   expect(fetchMock.mock.calls.some(([u]) => String(u).endsWith("/api/connect"))).toBe(true);
 });
+
+function urlInput(): HTMLInputElement {
+  return screen.getByLabelText(/connection url/i) as HTMLInputElement;
+}
+
+test("selecting an SSL mode folds sslmode into the URL preview", () => {
+  renderWithClient(<ConnectForm onLoaded={() => undefined} />);
+  fireEvent.change(screen.getByLabelText(/ssl mode/i), { target: { value: "require" } });
+  expect(urlInput().value).toContain("sslmode=require");
+});
+
+test("entering a schema folds search_path into the URL preview", () => {
+  renderWithClient(<ConnectForm onLoaded={() => undefined} />);
+  fireEvent.change(screen.getByLabelText(/^schema/i), { target: { value: "analytics" } });
+  expect(urlInput().value).toContain("options=-csearch_path%3Danalytics");
+});
+
+test("entering a connect timeout folds connect_timeout into the URL preview", () => {
+  renderWithClient(<ConnectForm onLoaded={() => undefined} />);
+  fireEvent.change(screen.getByLabelText(/connect timeout/i), { target: { value: "12" } });
+  expect(urlInput().value).toContain("connect_timeout=12");
+});
+
+test("free-form params textarea folds key=value pairs into the URL preview", () => {
+  renderWithClient(<ConnectForm onLoaded={() => undefined} />);
+  fireEvent.change(screen.getByLabelText(/extra parameters/i), {
+    target: { value: "application_name=dbsprout\nkeepalives=1" },
+  });
+  const value = urlInput().value;
+  expect(value).toContain("application_name=dbsprout");
+  expect(value).toContain("keepalives=1");
+});
+
+test("advanced fields are not shown for sqlite", () => {
+  renderWithClient(<ConnectForm onLoaded={() => undefined} />);
+  fireEvent.change(screen.getByLabelText(/database type/i), { target: { value: "sqlite" } });
+  expect(screen.queryByLabelText(/ssl mode/i)).toBeNull();
+});
