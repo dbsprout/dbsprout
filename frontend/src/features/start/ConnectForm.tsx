@@ -4,7 +4,9 @@ import { ApiError } from "../../api/client";
 import {
   buildConnectionUrl,
   defaultPort,
+  SSL_MODES,
   type ConnectionFields,
+  type ConnectionParam,
   type DbType,
 } from "../../api/connectionUrl";
 import { connect, connectTest, queryKeys } from "../../api/endpoints";
@@ -24,11 +26,40 @@ const DEFAULT_FIELDS: ConnectionFields = {
   password: "",
   database: "",
   filePath: "",
+  sslMode: "",
+  sslCa: "",
+  sslCert: "",
+  sslKey: "",
+  schema: "",
+  connectTimeout: "",
+  params: [],
 };
+
+/** Parse a `key=value` per-line textarea into params. Blank lines skipped; first `=` splits. */
+function parseParams(text: string): ConnectionParam[] {
+  const out: ConnectionParam[] = [];
+  for (const raw of text.split("\n")) {
+    const line = raw.trim();
+    if (line.length === 0) {
+      continue;
+    }
+    const eq = line.indexOf("=");
+    if (eq === -1) {
+      out.push({ key: line, value: "" });
+    } else {
+      out.push({ key: line.slice(0, eq).trim(), value: line.slice(eq + 1).trim() });
+    }
+  }
+  return out;
+}
+
+/** String-valued keys of ConnectionFields (everything except `type` and `params`). */
+type StringFieldKey = Exclude<keyof ConnectionFields, "type" | "params">;
 
 export function ConnectForm({ onLoaded }: ConnectFormProps) {
   const [fields, setFields] = useState<ConnectionFields>(DEFAULT_FIELDS);
   const [url, setUrl] = useState<string>(buildConnectionUrl(DEFAULT_FIELDS));
+  const [paramsText, setParamsText] = useState<string>("");
 
   const qc = useQueryClient();
 
@@ -60,9 +91,14 @@ export function ConnectForm({ onLoaded }: ConnectFormProps) {
     updateFields(next);
   }
 
-  function handleFieldChange(key: keyof ConnectionFields, value: string) {
+  function handleFieldChange(key: StringFieldKey, value: string) {
     const next: ConnectionFields = { ...fields, [key]: value };
     updateFields(next);
+  }
+
+  function handleParamsChange(text: string) {
+    setParamsText(text);
+    updateFields({ ...fields, params: parseParams(text) });
   }
 
   function renderProbeResult(data: ConnectionProbe) {
@@ -147,6 +183,79 @@ export function ConnectForm({ onLoaded }: ConnectFormProps) {
               onChange={(e) => handleFieldChange("database", e.target.value)}
             />
           </div>
+
+          <details>
+            <summary>Advanced</summary>
+            <div>
+              <label htmlFor="ssl-mode">SSL mode</label>
+              <select
+                id="ssl-mode"
+                value={fields.sslMode}
+                onChange={(e) => handleFieldChange("sslMode", e.target.value)}
+              >
+                <option value="">(default)</option>
+                {SSL_MODES.map((m) => (
+                  <option key={m} value={m}>
+                    {m}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label htmlFor="ssl-ca">CA certificate path</label>
+              <input
+                id="ssl-ca"
+                type="text"
+                value={fields.sslCa}
+                onChange={(e) => handleFieldChange("sslCa", e.target.value)}
+              />
+            </div>
+            <div>
+              <label htmlFor="ssl-cert">Client certificate path</label>
+              <input
+                id="ssl-cert"
+                type="text"
+                value={fields.sslCert}
+                onChange={(e) => handleFieldChange("sslCert", e.target.value)}
+              />
+            </div>
+            <div>
+              <label htmlFor="ssl-key">Client key path</label>
+              <input
+                id="ssl-key"
+                type="text"
+                value={fields.sslKey}
+                onChange={(e) => handleFieldChange("sslKey", e.target.value)}
+              />
+            </div>
+            <div>
+              <label htmlFor="schema">Schema / search_path</label>
+              <input
+                id="schema"
+                type="text"
+                value={fields.schema}
+                onChange={(e) => handleFieldChange("schema", e.target.value)}
+              />
+            </div>
+            <div>
+              <label htmlFor="connect-timeout">Connect timeout (s)</label>
+              <input
+                id="connect-timeout"
+                type="text"
+                inputMode="numeric"
+                value={fields.connectTimeout}
+                onChange={(e) => handleFieldChange("connectTimeout", e.target.value)}
+              />
+            </div>
+            <div>
+              <label htmlFor="extra-params">Extra parameters (one key=value per line)</label>
+              <textarea
+                id="extra-params"
+                value={paramsText}
+                onChange={(e) => handleParamsChange(e.target.value)}
+              />
+            </div>
+          </details>
         </>
       )}
 
