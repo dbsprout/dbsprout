@@ -1,5 +1,5 @@
 import { fireEvent, render, screen } from "@testing-library/react";
-import { expect, test, vi } from "vitest";
+import { afterEach, expect, test, vi } from "vitest";
 import { ColumnGrid } from "./ColumnGrid";
 import type { GeneratorConfig, GeneratorMethod, TableSpec } from "../../api/types";
 
@@ -111,3 +111,59 @@ test("renders a unique badge for unique columns", () => {
   );
   expect(screen.getByText("unique")).toBeInTheDocument();
 });
+
+// ─── P4-2: virtualization ───
+afterEach(() => {
+  vi.restoreAllMocks();
+});
+
+function wideSpec(columnCount: number): TableSpec {
+  const columns: Record<string, GeneratorConfig> = {};
+  for (let i = 0; i < columnCount; i += 1) {
+    columns[`col_${i}`] = { ...emailCfg };
+  }
+  return { table_name: "wide", row_count: 10, derived: [], correlations: [], cardinality: null, columns };
+}
+
+test("virtualizes large column counts — only a windowed subset of rows is mounted", () => {
+  render(
+    <ColumnGrid
+      spec={wideSpec(200)}
+      methods={methods}
+      previewRow={null}
+      onSelect={() => undefined}
+      onGeneratorChange={() => undefined}
+    />,
+  );
+  const rendered = screen.getAllByRole("button", { name: /^inspect col_/ });
+  // A 480px viewport at ~40px/row windows to ~12 rows plus overscan — far fewer than 200.
+  expect(rendered.length).toBeGreaterThan(0);
+  expect(rendered.length).toBeLessThan(40);
+  // The first column is within the initial window.
+  expect(screen.getByRole("button", { name: "inspect col_0" })).toBeInTheDocument();
+});
+
+test("scrolling the virtualized body mounts later rows and unmounts earlier ones", () => {
+  render(
+    <ColumnGrid
+      spec={wideSpec(200)}
+      methods={methods}
+      previewRow={null}
+      onSelect={() => undefined}
+      onGeneratorChange={() => undefined}
+    />,
+  );
+  // The scroll container is the only `overflow:auto` ancestor of the rows.
+  const grid = screen.getByLabelText("columns of wide");
+  const scroller = grid.querySelector("tbody") as HTMLElement;
+  expect(scroller).toBeTruthy();
+  // Far-down rows are not mounted initially.
+  expect(screen.queryByRole("button", { name: "inspect col_150" })).not.toBeInTheDocument();
+  // Drive a scroll: offset is read from scrollTop, so set it and dispatch the event.
+  Object.defineProperty(scroller, "scrollTop", { value: 150 * 40, configurable: true });
+  fireEvent.scroll(scroller);
+  expect(screen.getByRole("button", { name: "inspect col_150" })).toBeInTheDocument();
+  // The very first row has scrolled out of the window and unmounted.
+  expect(screen.queryByRole("button", { name: "inspect col_0" })).not.toBeInTheDocument();
+});
+// ─── end P4-2 ───
