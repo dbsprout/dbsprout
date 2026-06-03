@@ -155,3 +155,15 @@ export interface JobRecordResponse {
   finished_at: string | null;
   error: string | null;
 }
+
+// ── P1c-1: Export ──
+// Mirrors POST /api/export (backend dbsprout/web/routers/export.py).
+
+/** The four file-format writers offered for export. */
+export type ExportFormat = "sql" | "csv" | "json" | "parquet";
+
+export interface ExportRequest {
+  format: ExportFormat;
+  // Omitted / undefined → every table in the last run (FK-safe order preserved).
+  tables?: string[];
+}
