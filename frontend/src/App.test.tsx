@@ -50,3 +50,12 @@ test("mounts the Validate surface", () => {
   renderWithClient(<App />);
   expect(screen.getByRole("heading", { name: "Validate" })).toBeInTheDocument();
 });
+
+test("mounts the Runs & Quality surface (P1c-4)", () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () => new Response(JSON.stringify({ samples: [] }), { status: 200, headers: { "Content-Type": "application/json" } })),
+  );
+  renderWithClient(<App />);
+  expect(screen.getByRole("heading", { name: "Runs & Quality" })).toBeInTheDocument();
+});

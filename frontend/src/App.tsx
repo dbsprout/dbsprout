@@ -3,6 +3,7 @@ import { SchemaTree } from "./features/schema/SchemaTree";
 import { ConfigurePanel } from "./features/configure/ConfigurePanel";
 import { SpecPanel } from "./features/configure/SpecPanel";
 import { GenerateSurface } from "./features/generate/GenerateSurface";
+import { RunsSurface } from "./features/runs/RunsSurface"; // P1c-4
 import { StartPanel } from "./features/start/StartPanel";
 import { ExportPanel } from "./features/export/ExportPanel"; // P1c-1
 import { InsertPanel } from "./features/insert/InsertPanel"; // P1c-2
@@ -47,6 +48,12 @@ export function App() {
         <ValidatePanel onDrill={() => undefined} />
       </section>
       {/* ═══ /P1c-3 ═══ */}
+      {/* ═══ P1c-4: Runs & Quality ═══ */}
+      <section>
+        <h2>Runs & Quality</h2>
+        <RunsSurface />
+      </section>
+      {/* ═══ /P1c-4 ═══ */}
     </AppShell>
   );
 }
