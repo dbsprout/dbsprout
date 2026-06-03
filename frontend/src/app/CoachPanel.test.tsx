@@ -1,4 +1,5 @@
 import { render, screen } from "@testing-library/react";
+import { useEffect } from "react";
 import { afterEach, beforeEach, expect, test } from "vitest";
 import { ModeProvider, useMode } from "./ModeProvider";
 import { STEP_IDS } from "./steps";
@@ -10,7 +11,7 @@ afterEach(() => localStorage.clear());
 
 function StepSetter({ step }: { step: number }) {
   const { setStep } = useMode();
-  setStep(step);
+  useEffect(() => setStep(step), [setStep, step]);
   return null;
 }
 
