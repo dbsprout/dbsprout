@@ -20,15 +20,13 @@ fidelity, ``scikit-learn`` for detection) is handled the same way: if the
 helper raises ``ImportError``, the affected block degrades to ``None`` and the
 endpoint still returns ``200``.
 
-The endpoint content-negotiates on the ``HX-Request`` header:
-
-* default — JSON envelope ``{summary, by_table, details}``;
-* ``HX-Request: true`` — an HTML fragment rendered from ``_validate_panel.html``
-  with per-violation rows carrying stable ``data-table`` / ``data-column`` /
-  ``data-row`` attributes so S-135 (drill-down) can wire click handlers.
+The endpoint returns a JSON envelope ``{summary, by_table, details, fidelity,
+detection}`` (JSON-only since the P1c-5 cutover; the legacy HTMX
+``_validate_panel.html`` fragment was removed with the rest of the
+server-rendered UI).
 
 When no run has happened yet the endpoint returns ``409`` with
-``{"code": "NO_RUN", "message": ...}`` (or its HTML equivalent under HTMX).
+``{"code": "NO_RUN", "message": ...}``.
 
 ``details`` is capped at :data:`_MAX_DETAIL_ROWS` (500) — the cap protects the
 client from pathological multi-thousand-violation payloads while remaining
@@ -55,9 +53,6 @@ from typing import TYPE_CHECKING, Any, cast
 from fastapi import APIRouter, HTTPException, Request, status
 
 if TYPE_CHECKING:
-    from fastapi.responses import Response
-    from fastapi.templating import Jinja2Templates
-
     from dbsprout.quality.integrity import IntegrityReport
     from dbsprout.schema.models import DatabaseSchema
     from dbsprout.web.workspace import Workspace
@@ -80,21 +75,6 @@ _NO_RUN_DETAIL: dict[str, str] = {
 def _workspace(request: Request) -> Workspace:
     """Typed accessor for the shared session workspace wired in ``app.py``."""
     return cast("Workspace", request.app.state.workspace)
-
-
-def _templates(request: Request) -> Jinja2Templates:
-    """Typed accessor for the shared Jinja2 environment wired in ``app.py``."""
-    return cast("Jinja2Templates", request.app.state.templates)
-
-
-def _wants_htmx(request: Request) -> bool:
-    """Return ``True`` when the request carries ``HX-Request: true``.
-
-    Mirrors :func:`dbsprout.web.errors._wants_htmx` so all routers agree on the
-    same HTMX detection heuristic (case-insensitive header equality).
-    """
-    value = request.headers.get("hx-request", "")
-    return value.lower() == "true"
 
 
 # ── aggregation ────────────────────────────────────────────────────────
@@ -257,37 +237,18 @@ def _serialise_detection(
 
 
 @validate_router.post("/api/validate", response_model=None)
-async def validate_run(request: Request) -> Response | dict[str, Any]:
+async def validate_run(request: Request) -> dict[str, Any]:
     """Validate the last generation run and return an integrity report.
 
-    JSON branch (default): ``200`` with ``{summary, by_table, details}``; ``409``
-    with ``{"code": "NO_RUN", "message": ...}`` when no run is available.
-
-    HTMX branch (``HX-Request: true``): renders ``_validate_panel.html`` with
-    per-violation rows carrying ``data-table`` / ``data-column`` / ``data-row``
-    attributes (S-135 hook); 409 responses render the same template in a NO_RUN
-    state with status ``409``.
+    Returns ``200`` with ``{summary, by_table, details, fidelity, detection}``;
+    ``409`` with ``{"code": "NO_RUN", "message": ...}`` when no run is available.
+    JSON-only since the P1c-5 cutover.
     """
     workspace = _workspace(request)
     last_result = workspace.get_last_result()
     schema = workspace.get_schema()
-    wants_htmx = _wants_htmx(request)
 
     if last_result is None or schema is None:
-        if wants_htmx:
-            return _templates(request).TemplateResponse(
-                request,
-                "_validate_panel.html",
-                {
-                    "no_run": True,
-                    "message": _NO_RUN_DETAIL["message"],
-                    "summary": None,
-                    "by_table": [],
-                    "details": [],
-                    "max_detail_rows": _MAX_DETAIL_ROWS,
-                },
-                status_code=status.HTTP_409_CONFLICT,
-            )
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail=_NO_RUN_DETAIL,
@@ -314,19 +275,4 @@ async def validate_run(request: Request) -> Response | dict[str, Any]:
     envelope["fidelity"] = fidelity_block
     envelope["detection"] = detection_block
 
-    if wants_htmx:
-        return _templates(request).TemplateResponse(
-            request,
-            "_validate_panel.html",
-            {
-                "no_run": False,
-                "message": None,
-                "summary": envelope["summary"],
-                "by_table": envelope["by_table"],
-                "details": envelope["details"],
-                "max_detail_rows": _MAX_DETAIL_ROWS,
-                "fidelity": fidelity_block,
-                "detection": detection_block,
-            },
-        )
     return envelope

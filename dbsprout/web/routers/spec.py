@@ -13,11 +13,13 @@ This module surfaces the *DataSpec* derived from that schema for review:
   ``409 Conflict`` JSON envelope (``{"code": "NO_SCHEMA", "message": ...}``)
   is raised when no schema is loaded — distinct from ``404`` ("URL does not
   exist") so the client can prompt the user to connect first.
-* Same URL with ``Accept: text/html`` — renders ``spec_grid.html`` as an HTMX
-  fragment: a row per column with a method pill (``<button data-method=...
-  data-provider=...>``) carrying the click target shape that S-119 will wire
-  up. The HTML branch returns ``200`` with an empty-state body when no schema
-  is loaded so an HTMX swap shows a friendly message rather than a 4xx.
+* ``PUT /api/spec/tables/{table}`` — set a table's ``row_count`` (JSON).
+* ``PUT /api/spec/tables/{table}/columns/{column}`` — replace one column's
+  ``GeneratorConfig`` (JSON).
+
+JSON-only since the P1c-5 cutover: the React SPA consumes these endpoints; the
+legacy HTMX spec-grid fragments were removed with the rest of the server-rendered
+UI.
 
 Reuse, not reimplementation
 ---------------------------
@@ -30,9 +32,7 @@ shaping.
 
 This module is imported only by :mod:`dbsprout.web.app` (itself lazy-imported
 by ``dbsprout serve``); it stays import-light — the spec analyzer is lazy-
-imported inside the build helper so importing the router stays cheap. The
-edit endpoint (S-119) will live in a sibling router; this module only surfaces
-the read shape.
+imported inside the build helper so importing the router stays cheap.
 """
 
 from __future__ import annotations
@@ -46,10 +46,7 @@ from dbsprout.spec.models import GeneratorConfig
 
 if TYPE_CHECKING:
     from fastapi import FastAPI
-    from fastapi.responses import Response
-    from fastapi.templating import Jinja2Templates
 
-    from dbsprout.schema.models import DatabaseSchema
     from dbsprout.spec.models import DataSpec
     from dbsprout.web.workspace import Workspace
 
@@ -61,39 +58,10 @@ _NO_SCHEMA_DETAIL: dict[str, str] = {
     "message": ("No schema is loaded. Connect to a database or upload a schema file first."),
 }
 
-#: Friendly empty-state message echoed inside the HTML fragment when no
-#: schema is loaded. Kept terse so the Studio grid panel surfaces a tidy nudge
-#: rather than a wall of copy.
-_HTML_NO_SCHEMA_MESSAGE = "Connect to a database or upload a schema file to see the spec grid."
-
 
 def _workspace(request: Request) -> Workspace:
     """Typed accessor for the shared session workspace wired in ``app.py``."""
     return cast("Workspace", request.app.state.workspace)
-
-
-def _templates(request: Request) -> Jinja2Templates:
-    """Typed accessor for the shared Jinja2 environment wired in ``app.py``."""
-    return cast("Jinja2Templates", request.app.state.templates)
-
-
-def _wants_html(request: Request) -> bool:
-    """Return ``True`` when the client prefers ``text/html`` over JSON.
-
-    Content-negotiation heuristic: any explicit ``text/html`` in the ``Accept``
-    header that appears *before* ``application/json`` (or with JSON absent)
-    selects the HTML branch. Empty / missing ``Accept`` defaults to JSON.
-    """
-    accept = request.headers.get("accept", "").lower()
-    if not accept:
-        return False
-    html_idx = accept.find("text/html")
-    if html_idx == -1:
-        return False
-    json_idx = accept.find("application/json")
-    if json_idx == -1:
-        return True
-    return html_idx < json_idx
 
 
 def _build_or_get_spec(workspace: Workspace) -> DataSpec:
@@ -122,63 +90,24 @@ def _build_or_get_spec(workspace: Workspace) -> DataSpec:
 
 
 @spec_router.get("/api/spec", response_model=None)
-async def get_spec(request: Request) -> Response | dict[str, Any]:
-    """Return the active workspace ``DataSpec`` (JSON) or its grid fragment (HTML).
+async def get_spec(request: Request) -> dict[str, Any]:
+    """Return the active workspace ``DataSpec`` as JSON.
 
-    JSON branch (default ``Accept``): raises ``409`` with
-    ``{"code": "NO_SCHEMA", "message": ...}`` when no schema is loaded; else
-    returns ``spec.model_dump(mode="json")``.
-
-    HTML branch (``Accept: text/html``): returns ``200`` with the spec grid
-    template; on missing schema returns the empty-state body (still ``200``)
-    so HTMX swaps cleanly.
+    Raises ``409`` with ``{"code": "NO_SCHEMA", "message": ...}`` when no schema
+    is loaded; else returns ``spec.model_dump(mode="json")`` (building the
+    heuristic spec lazily on first read).
     """
     workspace = _workspace(request)
     schema = workspace.get_schema()
-    wants_html = _wants_html(request)
 
     if schema is None:
-        if wants_html:
-            return _templates(request).TemplateResponse(
-                request,
-                "spec_grid.html",
-                {"spec": None, "empty_message": _HTML_NO_SCHEMA_MESSAGE},
-            )
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail=_NO_SCHEMA_DETAIL,
         )
 
     spec = _build_or_get_spec(workspace)
-    if wants_html:
-        return _templates(request).TemplateResponse(
-            request,
-            "spec_grid.html",
-            {
-                "spec": spec,
-                "empty_message": None,
-                # S-120: ship a ``{table: {column: dtype_name}}`` map so the
-                # spec_row.html pill can carry ``data-dtype`` for the method
-                # picker. ``schema`` is the loaded ``DatabaseSchema``; the
-                # template handles a missing entry as ''.
-                "column_dtypes": _column_dtypes_map(schema),
-            },
-        )
     return spec.model_dump(mode="json")
-
-
-def _column_dtypes_map(schema: DatabaseSchema) -> dict[str, dict[str, str]]:
-    """Return a ``{table_name: {column_name: dtype_name}}`` map.
-
-    Sourced from the loaded :class:`~dbsprout.schema.models.DatabaseSchema`;
-    ``dtype_name`` is the upper-case :class:`ColumnType.name` so the
-    method-picker can match it against ``GET /api/generators?dtype=...``
-    1:1 without a client-side lookup.
-    """
-    return {
-        table.name: {col.name: col.data_type.name for col in table.columns}
-        for table in schema.tables
-    }
 
 
 # region: PUT table row_count (S-121)
@@ -198,11 +127,7 @@ def _column_dtypes_map(schema: DatabaseSchema) -> dict[str, dict[str, str]]:
 # bound is intentionally not surfaced to callers as a separate field — the
 # message embeds it.
 #
-# Content-negotiation: HTMX (``HX-Request: true``) or ``Accept: text/html``
-# returns the re-rendered ``_spec_table_header.html`` partial (200, text/html);
-# default JSON branch returns ``{"table_name": …, "row_count": <new>}``.
-#
-# No cache persistence here — S-122 owns that.
+# JSON-only since the P1c-5 cutover: returns ``{"table_name": …, "row_count": <new>}``.
 
 #: Default upper bound for a single table's row_count. Keep in sync with the
 #: PRD (FR-014) and any explicit config override (see ``_resolve_upper_bound``).
@@ -232,13 +157,6 @@ def _resolve_upper_bound(app: FastAPI) -> int:
     if bound is None:
         return _DEFAULT_UPPER_BOUND
     return int(bound)
-
-
-def _wants_html_response(request: Request) -> bool:
-    """Return ``True`` when an HTMX request OR ``Accept: text/html`` was sent."""
-    if request.headers.get("hx-request", "").lower() == "true":
-        return True
-    return _wants_html(request)
 
 
 def _invalid_row_count(message: str) -> HTTPException:
@@ -287,12 +205,11 @@ def _validate_row_count(payload: Any, upper_bound: int) -> int:
 async def put_table_row_count(
     request: Request,
     table_name: str,
-) -> Response | dict[str, Any]:
+) -> dict[str, Any]:
     """Set the ``row_count`` for one table on the workspace spec (S-121).
 
-    See the region header above for the full contract. On the HTMX / HTML
-    branch, the response body is the ``_spec_table_header.html`` partial so
-    the Studio grid can swap the new value into ``[data-row-count]`` cleanly.
+    See the region header above for the full contract. Returns JSON
+    ``{"table_name": …, "row_count": <new>}``.
     """
     workspace = _workspace(request)
     schema = workspace.get_schema()
@@ -330,12 +247,6 @@ async def put_table_row_count(
     # cache I/O must never bubble up and fail the user's edit.
     workspace.persist_spec()
 
-    if _wants_html_response(request):
-        return _templates(request).TemplateResponse(
-            request,
-            "_spec_table_header.html",
-            {"table_name": table_name, "row_count": new_value},
-        )
     return {"table_name": table_name, "row_count": new_value}
 
 
@@ -347,18 +258,6 @@ async def put_table_row_count(
 # block self-contained so the wave merge can union the two regions cleanly.
 
 
-def _wants_html_or_htmx(request: Request) -> bool:
-    """Return ``True`` when the client carries ``Accept: text/html`` *or* ``HX-Request: true``.
-
-    HTMX-driven edits commonly send ``Accept: */*`` and signal their intent via
-    the ``HX-Request`` header instead; we accept both.
-    """
-    if _wants_html(request):
-        return True
-    hx = request.headers.get("hx-request", "").lower()
-    return hx == "true"
-
-
 @spec_router.put(
     "/api/spec/tables/{table}/columns/{column}",
     response_model=None,
@@ -367,7 +266,7 @@ async def put_column_config(
     table: str,
     column: str,
     request: Request,
-) -> Response | dict[str, Any]:
+) -> dict[str, Any]:
     """Replace one column's ``GeneratorConfig`` on the workspace spec.
 
     Request body is validated against :class:`~dbsprout.spec.models.GeneratorConfig`
@@ -378,12 +277,7 @@ async def put_column_config(
     ``409 NO_SCHEMA`` (the same envelope ``GET /api/spec`` raises). Unknown
     table / column is ``404 NOT_FOUND``.
 
-    Response shape:
-
-    * JSON branch (default ``Accept``) — the new ``GeneratorConfig`` as JSON.
-    * HTML branch (``Accept: text/html`` or ``HX-Request: true``) — the
-      single-row HTMX fragment from ``spec_row.html`` so the studio grid can
-      hot-swap one row without rebuilding the whole grid.
+    Returns the new ``GeneratorConfig`` as JSON (JSON-only since the P1c-5 cutover).
     """
     workspace = _workspace(request)
     schema = workspace.get_schema()
@@ -469,27 +363,6 @@ async def put_column_config(
     # column edit.
     workspace.persist_spec()
 
-    # 4. Shape the response — HTMX fragment vs. JSON.
-    if _wants_html_or_htmx(request):
-        # S-120: resolve the dtype for the pill so the rendered fragment
-        # still carries ``data-dtype`` after the swap. The schema lookup
-        # is already done above (``check_column_update``) so this is free.
-        col_dtype = ""
-        table_obj = schema.get_table(table)
-        if table_obj is not None:
-            col_obj = table_obj.get_column(column)
-            if col_obj is not None:
-                col_dtype = col_obj.data_type.name
-        return _templates(request).TemplateResponse(
-            request,
-            "spec_row.html",
-            {
-                "table_name": table,
-                "col_name": column,
-                "col_cfg": stored,
-                "col_dtype": col_dtype,
-            },
-        )
     return stored.model_dump(mode="json")
 
 

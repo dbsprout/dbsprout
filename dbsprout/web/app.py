@@ -1,26 +1,28 @@
-"""FastAPI web dashboard application factory (S-090).
+"""FastAPI web application factory (S-090; P1c-5 cutover).
 
-The dashboard is a *read-only* surface over the SQLite state layer
-(``.dbsprout/state.db``, S-079). It never imports CLI/generation code and the
-CLI never imports this module at startup — ``dbsprout serve`` lazy-imports it
-(see :mod:`dbsprout.cli.serve`). FastAPI/uvicorn ship in the optional ``[web]``
-extra.
+The web server now exposes exactly two things: the React Workbench SPA at
+``/app`` and the JSON ``/api/*`` data API (plus the progress WebSocket). The
+legacy server-rendered HTMX/Alpine dashboard — wizard, studio, insights views,
+ERD page, progress page, and their Jinja2 templates / static assets — was
+removed in the P1c-5 cutover (design §7). ``GET /`` now redirects to ``/app``.
+
+It never imports CLI/generation code and the CLI never imports this module at
+startup — ``dbsprout serve`` lazy-imports it (see :mod:`dbsprout.cli.serve`).
+FastAPI/uvicorn ship in the optional ``[web]`` extra.
 
 :func:`create_app` is a factory (not a module-global singleton) so tests can
 build isolated apps pointed at a temporary state DB. A module-level
 ``app = create_app()`` is exported too, so ``uvicorn dbsprout.web.app:app``
 works for production serving.
 
-The factory wires three things siblings rely on:
+The factory wires:
 
-* ``app.state.templates`` — the shared :class:`~fastapi.templating.Jinja2Templates`
-  environment (templates live in ``dbsprout/web/templates``).
 * ``app.state.get_state_db`` — a zero-arg factory returning a fresh
   :class:`~dbsprout.state.db.StateDB` per request (cheap; opens a WAL connection).
-* the shared :data:`~dbsprout.web.routes.router`, included via
-  ``app.include_router`` — siblings append their handlers there.
-
-Static assets (``dbsprout/web/static``) are mounted at ``/static``.
+* ``app.state.workspace`` / ``app.state.job_manager`` / ``app.state.progress_hub``
+  — the in-memory session, background-job manager, and live-progress hub.
+* the SPA mount (:func:`~dbsprout.web.spa.mount_spa`), every ``/api/*`` JSON
+  router, and the progress WebSocket router.
 """
 
 from __future__ import annotations
@@ -30,8 +32,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from fastapi import FastAPI
-from fastapi.staticfiles import StaticFiles
-from fastapi.templating import Jinja2Templates
+from fastapi.responses import RedirectResponse
 
 from dbsprout.migrate.snapshot import SnapshotStore
 from dbsprout.state.db import StateDB
@@ -50,22 +51,13 @@ from dbsprout.web.routers.samples import samples_router
 from dbsprout.web.routers.schema import schema_router
 from dbsprout.web.routers.schema_load import schema_load_router
 from dbsprout.web.routers.spec import spec_router
-from dbsprout.web.routers.studio import studio_router
 from dbsprout.web.routers.validate import validate_router
-from dbsprout.web.routers.wizard import wizard_router
 from dbsprout.web.routes import router
 from dbsprout.web.spa import mount_spa
-from dbsprout.web.views.erd import erd_router
-from dbsprout.web.views.insights import insights_router
-from dbsprout.web.views.progress import progress_router
 from dbsprout.web.workspace import Workspace
 
 if TYPE_CHECKING:
     from dbsprout.state.models import RunRecord
-
-_PACKAGE_DIR = Path(__file__).resolve().parent
-_TEMPLATES_DIR = _PACKAGE_DIR / "templates"
-_STATIC_DIR = _PACKAGE_DIR / "static"
 
 #: Environment variable overriding the state-DB location (used by tests and by
 #: anyone running the dashboard from outside the project root).
@@ -118,24 +110,11 @@ def create_app(
     resolved_snapshots = _resolve_snapshot_dir(snapshot_dir)
 
     app = FastAPI(
-        title="DBSprout Dashboard",
+        title="DBSprout Workbench",
         docs_url=None,
         redoc_url=None,
         openapi_url=None,
     )
-    app.state.templates = Jinja2Templates(directory=str(_TEMPLATES_DIR))
-    # ─── S-123 inline tooltips ───
-    # Expose two helpers as Jinja globals so any template can render a
-    # generator's human description or the GeneratorConfig field tooltips
-    # without re-importing the spec module. Single source of truth: the
-    # S-120 catalogue + the Pydantic ``description=`` fields on
-    # ``GeneratorConfig``.
-    from dbsprout.spec.catalog import _describe as _catalog_describe  # noqa: PLC0415
-    from dbsprout.spec.models import field_descriptions  # noqa: PLC0415
-
-    app.state.templates.env.globals["describe_method"] = _catalog_describe
-    app.state.templates.env.globals["field_descriptions"] = field_descriptions
-    # ─── end S-123 ───
     app.state.get_state_db = lambda: StateDB(resolved)
     app.state.get_snapshot_store = lambda: SnapshotStore(base_dir=resolved_snapshots)
     # ─── S-111 in-memory session ───
@@ -186,25 +165,19 @@ def create_app(
         state_reader=_read_persisted_runs,
     )
     app.include_router(progress_ws_router)
+
     # ── end S-109 ──
     # ── end S-110 ──
-    app.mount("/static", StaticFiles(directory=str(_STATIC_DIR)), name="static")
-    # ── Web-SPA P0: serve the React Workbench at /app (placeholder if unbuilt).
-    # Coexists with the legacy dashboard at / until the Phase-1 cutover.
+    # ── P1c-5 cutover: `/` redirects to the SPA; `/app` is the sole front door.
+    @app.get("/", include_in_schema=False)
+    async def _root_redirect() -> RedirectResponse:
+        return RedirectResponse(url="/app", status_code=308)
+
+    # Serve the React Workbench SPA at /app (placeholder page if unbuilt).
     mount_spa(app)
+    # The shared router now carries only the /health probe (the legacy index
+    # dashboard was removed in the P1c-5 cutover).
     app.include_router(router)
-    # ─── S-091 ERD region ───
-    app.include_router(erd_router)
-    # ─── end S-091 ───
-    # ─── S-092 progress region ───
-    app.include_router(progress_router)
-    # ─── end S-092 ───
-    # ─── S-093 views region ───
-    # Real /quality view (S-090's placeholder was removed from routes.py) plus
-    # /preview, /preview/{table}, /costs and /history — all read-only over the
-    # state DB.
-    app.include_router(insights_router)
-    # ─── end S-093 ───
     # ── S-112 connect router ──
     # First read-WRITE JSON API: POST /api/connect introspects a live DB via the
     # core-service facade and stores the schema + redacted target on the
@@ -251,32 +224,24 @@ def create_app(
     # ── end S-136 ──
     # ── S-115 schema view ──
     # Read-only workspace review: GET /api/schema (tree JSON) + GET
-    # /api/schema/erd (HTMX ERD fragment, reusing build_erd_mermaid). Distinct
-    # from the snapshot-backed GET /schema view; full Studio layout is S-117.
+    # /api/schema/erd (ERD JSON — mermaid string + table_details — for the SPA
+    # to render client-side with Mermaid.js).
     app.include_router(schema_router)
     # ── end S-115 ──
     # ── S-118 spec router ──
     # GET /api/spec — DataSpec read endpoint over app.state.workspace (S-111),
     # building a heuristic spec lazily via spec.analyzer.heuristic_fallback
-    # when no spec is cached. Content-negotiates: JSON by default, HTMX grid
-    # fragment on ``Accept: text/html``. No persistence; no LLM.
+    # when no spec is cached. JSON-only. PUT /api/spec/tables/{t} and
+    # PUT /api/spec/tables/{t}/columns/{c} edit the spec (JSON).
     app.include_router(spec_router)
     # ── end S-118 ──
     # ─── S-120 generators region ───
     # GET /api/generators — provider/method catalogue derived from the
     # spec.catalog helpers (heuristic PATTERNS + _TYPE_FALLBACKS). Read-only,
-    # workspace-independent; the Studio method-picker fetches this once on
+    # workspace-independent; the SPA method-picker fetches this once on
     # open to populate the dropdown.
     app.include_router(generators_router)
     # ─── end S-120 ───
-    # ── S-117 studio shell ──
-    # GET /studio — single-page workspace shell with four named-slot panels
-    # (tree · grid · context · console). Later Phase-C stories (S-118 spec
-    # grid, S-125 console progress, S-127 seed control) plug into the stable
-    # element ids (#studio-tree / #studio-grid / #studio-context /
-    # #studio-console) without editing this shell.
-    app.include_router(studio_router)
-    # ── end S-117 ──
     # ── S-131 regenerate router ──
     # POST /api/regenerate — re-roll one column or one whole table via the
     # surgical S-128/S-129 entry points in dbsprout/generate/regenerate.py.
@@ -289,24 +254,11 @@ def create_app(
     app.include_router(regenerate_router)
     # ── end S-131 ──
     # ── S-133 validate router ──
-    # POST /api/validate — integrity report over app.state.workspace.last_result.
-    # Reuses dbsprout/quality/integrity.py (FK / UNIQUE / NOT NULL); CHECK slot
-    # is reserved in the envelope shape for future quality work (S-134+). 409
-    # NO_RUN when no generation has run yet. HTMX-aware: returns the
-    # ``_validate_panel.html`` fragment with stable ``data-table`` /
-    # ``data-column`` / ``data-row`` row attributes so S-135 can wire drill-down.
+    # POST /api/validate — integrity + fidelity + detection report over
+    # app.state.workspace.last_result. Reuses dbsprout/quality/* . 409 NO_RUN
+    # when no generation has run yet. JSON-only.
     app.include_router(validate_router)
     # ── end S-133 ──
-    # ── S-142 wizard ──
-    # GET /wizard renders the 6-step guided shell (Connect → Review →
-    # Configure → Generate → Validate → Insert/Export); GET /wizard/step/{n}
-    # returns the HTMX body fragment for step n; POST /wizard/step/{n}
-    # persists the submission to app.state.workspace.wizard_state (S-142
-    # frozen Pydantic model) and advances / rewinds / jumps. Step bodies are
-    # placeholders here — S-143 (Wave 2) wires the real per-step flows
-    # without restructuring the shell or the navigation contract.
-    app.include_router(wizard_router)
-    # ── end S-142 ──
     # ── S-140 export route ──
     # POST /api/export — stream the workspace's last GenerateResult (S-111 / S-124)
     # back to the browser as a single file download. Resolves the writer through
@@ -317,11 +269,10 @@ def create_app(
     app.include_router(export_router)
     # ── end S-140 ──
     # ─── P1c-4 region ───
-    # GET /api/runs · /api/quality · /api/costs — read-only JSON twins of the
-    # HTML views/insights.py, feeding the React Workbench "Runs & Quality"
-    # panels. Wrap the existing pure builders (paginate_runs · build_quality_table
-    # · build_cost_summary) over the state DB; never leak config_json/secrets;
-    # honest empty payloads (200) when the CLI has never run.
+    # GET /api/runs · /api/quality · /api/costs — read-only JSON for the React
+    # Workbench "Runs & Quality" panels. Wrap the pure builders (paginate_runs ·
+    # build_quality_table · build_cost_summary) over the state DB; never leak
+    # config_json/secrets; honest empty payloads (200) when the CLI never ran.
     app.include_router(insights_api_router)
     # ─── end P1c-4 region ───
     return app

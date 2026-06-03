@@ -27,8 +27,9 @@ FastAPI/Starlette (the ``[web]`` extra) and the *pure*
 generation orchestrator (a probe test asserts this) — the worker ``fn`` carries
 the pipeline dependency, as in S-108.
 
-NOTE: this is ``dbsprout/web/progress.py`` — distinct from the unrelated S-092
-SSE page ``dbsprout/web/views/progress.py``.
+NOTE: this is ``dbsprout/web/progress.py`` — the live progress **WebSocket**
+(``/ws/jobs/{job_id}``), which the SPA consumes. The legacy S-092 SSE *page*
+(``dbsprout/web/views/progress.py``) was removed in the P1c-5 cutover.
 """
 
 from __future__ import annotations

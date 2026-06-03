@@ -3,9 +3,8 @@
 Mirrors ``test_spec_view.py`` (same fixtures + small schema). Locks down:
 
 * JSON happy path returns the new value + the workspace spec is immutably
-  updated.
-* HTML/HTMX branch returns ``text/html`` with the re-rendered header partial
-  carrying the new row_count and the ``data-row-count`` swap target.
+  updated (JSON-only since the P1c-5 cutover — the legacy HTMX header partial
+  was removed).
 * Input validation:
   * ``row_count < 1`` → 422,
   * ``row_count > _DEFAULT_UPPER_BOUND`` → 422,
@@ -125,10 +124,11 @@ def test_put_row_count_preserves_other_tables(tmp_path: Path) -> None:
     assert orders_after.row_count == orders_before.row_count
 
 
-# ── HTMX / HTML fragment branch ──────────────────────────────────────────
+# ── JSON-only since P1c-5 (HX-Request / Accept html no longer special-cased) ──
 
 
-def test_put_row_count_returns_header_fragment_for_htmx(tmp_path: Path) -> None:
+def test_put_row_count_returns_json_even_with_htmx_header(tmp_path: Path) -> None:
+    """The legacy HTMX header partial was removed — the body is JSON regardless."""
     app = _make_app(tmp_path)
     _seed_workspace(app, _small_schema())
     client = TestClient(app)
@@ -141,29 +141,8 @@ def test_put_row_count_returns_header_fragment_for_htmx(tmp_path: Path) -> None:
     )
 
     assert response.status_code == 200
-    assert response.headers["content-type"].startswith("text/html")
-    body = response.text
-    assert "data-row-count" in body
-    assert "444" in body
-
-
-def test_put_row_count_returns_header_fragment_for_accept_html(tmp_path: Path) -> None:
-    app = _make_app(tmp_path)
-    _seed_workspace(app, _small_schema())
-    client = TestClient(app)
-    client.get("/api/spec")
-
-    response = client.put(
-        "/api/spec/tables/users",
-        json={"row_count": 88},
-        headers={"Accept": "text/html"},
-    )
-
-    assert response.status_code == 200
-    assert response.headers["content-type"].startswith("text/html")
-    body = response.text
-    assert "data-row-count" in body
-    assert "88" in body
+    assert response.headers["content-type"].startswith("application/json")
+    assert response.json() == {"table_name": "users", "row_count": 444}
 
 
 # ── input validation: 422 envelope ────────────────────────────────────

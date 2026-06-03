@@ -1,4 +1,4 @@
-"""GET /api/schema (tree JSON) + GET /api/schema/erd (ERD fragment) tests (S-115).
+"""GET /api/schema (tree JSON) + GET /api/schema/erd (ERD JSON) tests (S-115).
 
 The web stack lives in the optional ``[web]`` extra, so the module guards with
 ``pytest.importorskip("fastapi")`` before importing FastAPI symbols (mirrors the
@@ -8,13 +8,13 @@ sibling web tests). These endpoints are *read-only* over the in-memory
 
 * ``GET /api/schema`` returns the loaded schema as a tree-shaped JSON body
   (tables → columns/types/PKs/FKs); 404 friendly JSON when none is loaded.
-* ``GET /api/schema/erd`` returns an HTMX ERD *fragment* rendering the workspace
-  schema via the reused :func:`dbsprout.report.erd.build_erd_mermaid`; 200 +
-  graceful empty state when none is loaded.
+* ``GET /api/schema/erd`` returns ERD JSON
+  ``{"mermaid": <erDiagram source | null>, "table_details": {...} | null}`` for
+  the SPA to render client-side (JSON-only since the P1c-5 cutover; the legacy
+  HTMX fragment was removed). 200 + graceful empty state when none is loaded.
 
 Tests seed ``app.state.workspace`` directly (a plain mutable object), exactly as
-the connect tests inspect it; they never exercise the snapshot-backed
-``GET /schema`` view (covered by ``test_erd.py``).
+the connect tests inspect it.
 """
 
 from __future__ import annotations
@@ -161,46 +161,43 @@ def test_get_schema_404_when_no_schema_loaded(tmp_path: Path) -> None:
 # ── GET /api/schema/erd — loaded ───────────────────────────────────────
 
 
-def test_schema_erd_fragment_renders_erdiagram(tmp_path: Path) -> None:
-    """AC: ERD review of the loaded workspace schema via reused build_erd_mermaid."""
+def test_schema_erd_returns_mermaid_json(tmp_path: Path) -> None:
+    """AC: ERD JSON of the loaded workspace schema via reused build_erd_mermaid."""
     app = _make_app(tmp_path)
     _seed(app, _small_schema())
     resp = TestClient(app).get("/api/schema/erd")
     assert resp.status_code == 200, resp.text
-    body = resp.text
-    assert "erDiagram" in body
-    assert "users" in body
-    assert "orders" in body
-    assert 'class="mermaid"' in body
+    assert resp.headers["content-type"].startswith("application/json")
+    body = resp.json()
+    assert "erDiagram" in body["mermaid"]
+    assert "users" in body["mermaid"]
+    assert "orders" in body["mermaid"]
 
 
-def test_schema_erd_fragment_has_detail_blob_and_click_handler(tmp_path: Path) -> None:
-    """The fragment reuses the views/erd.py detail blob + click handler hooks."""
+def test_schema_erd_returns_table_details(tmp_path: Path) -> None:
+    """The JSON carries per-table column + FK detail for the SPA click panel."""
     app = _make_app(tmp_path)
     _seed(app, _small_schema())
-    body = TestClient(app).get("/api/schema/erd").text
-    assert "erd-table-data" in body
-    assert "erdTableClick" in body
-    assert "mermaid" in body.lower()
-
-
-def test_schema_erd_is_a_fragment_not_full_page(tmp_path: Path) -> None:
-    """S-117 hx-gets this into a panel — it must be a fragment, not a full page."""
-    app = _make_app(tmp_path)
-    _seed(app, _small_schema())
-    body = TestClient(app).get("/api/schema/erd").text.lower()
-    assert "<html" not in body
-    assert "<!doctype" not in body
+    body = TestClient(app).get("/api/schema/erd").json()
+    details = body["table_details"]
+    assert set(details.keys()) == {"users", "orders"}
+    # orders carries its FK to users.
+    fks = details["orders"]["foreign_keys"]
+    assert fks[0]["ref_table"] == "users"
+    assert fks[0]["columns"] == ["user_id"]
+    # users carries its columns with metadata.
+    col_names = [c["name"] for c in details["users"]["columns"]]
+    assert col_names == ["id", "email"]
 
 
 # ── GET /api/schema/erd — empty state ──────────────────────────────────
 
 
-def test_schema_erd_fragment_200_empty_state_when_no_schema(tmp_path: Path) -> None:
-    """AC: graceful 200 empty-state fragment (HTMX swap), not an error."""
+def test_schema_erd_200_empty_state_when_no_schema(tmp_path: Path) -> None:
+    """AC: graceful 200 empty-state JSON (null payload), not an error."""
     resp = TestClient(_make_app(tmp_path)).get("/api/schema/erd")
     assert resp.status_code == 200, resp.text
-    assert "no schema" in resp.text.lower()
+    assert resp.json() == {"mermaid": None, "table_details": None}
 
 
 # ── router registration / seam ─────────────────────────────────────────

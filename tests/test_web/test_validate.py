@@ -162,14 +162,13 @@ def test_validate_409_when_no_schema_either(tmp_path: Path) -> None:
     assert resp.json()["detail"]["code"] == "NO_RUN"
 
 
-def test_validate_409_htmx_fragment(tmp_path: Path) -> None:
-    """HTMX variant of the NO_RUN response returns an HTML 409 fragment."""
+def test_validate_409_json_even_with_htmx_header(tmp_path: Path) -> None:
+    """JSON-only since P1c-5: the NO_RUN 409 is JSON even with the HX header."""
     app = _make_app(tmp_path)
     resp = TestClient(app).post("/api/validate", headers={"HX-Request": "true"})
     assert resp.status_code == 409, resp.text
-    assert "text/html" in resp.headers["content-type"].lower()
-    body = resp.text
-    assert "NO_RUN" in body or "no run" in body.lower() or "generate" in body.lower()
+    assert "application/json" in resp.headers["content-type"].lower()
+    assert resp.json()["detail"]["code"] == "NO_RUN"
 
 
 # ── happy path: clean data → no violations ─────────────────────────────
@@ -323,11 +322,15 @@ def test_validate_details_capped_at_500(tmp_path: Path) -> None:
     assert len(body["details"]) == 500
 
 
-# ── HTMX fragment response ─────────────────────────────────────────────
+# ── JSON-only since P1c-5 (HX-Request no longer returns an HTML fragment) ──
 
 
-def test_validate_htmx_fragment_renders_panel(tmp_path: Path) -> None:
-    """AC: HTMX variant returns an HTML fragment with violation rows + S-135 hooks."""
+def test_validate_returns_json_even_with_htmx_header(tmp_path: Path) -> None:
+    """The legacy ``_validate_panel.html`` fragment was removed — body is JSON.
+
+    A request carrying ``HX-Request: true`` now gets the same JSON envelope as
+    the default branch (violations in ``details``, not an HTML panel).
+    """
     app = _make_app(tmp_path)
     schema = _users_orders_schema()
     users = [{"id": 1, "email": "a@example.com"}]
@@ -345,31 +348,10 @@ def test_validate_htmx_fragment_renders_panel(tmp_path: Path) -> None:
     _seed(app, schema, result)
     resp = TestClient(app).post("/api/validate", headers={"HX-Request": "true"})
     assert resp.status_code == 200, resp.text
-    assert "text/html" in resp.headers["content-type"].lower()
-    body = resp.text
-
-    # row attributes that S-135 listens on
-    assert 'data-table="orders"' in body
-    assert 'data-column="user_id"' in body
-    # data-row may be empty when we don't have a specific row index — but the
-    # attribute is present on every violation row.
-    assert "data-row=" in body
-
-
-def test_validate_htmx_fragment_clean_dataset_renders_pass_state(tmp_path: Path) -> None:
-    """Clean data → fragment renders a "no violations" success state."""
-    app = _make_app(tmp_path)
-    _seed(app, _users_orders_schema(), _clean_result())
-    resp = TestClient(app).post("/api/validate", headers={"HX-Request": "true"})
-    assert resp.status_code == 200, resp.text
-    assert "text/html" in resp.headers["content-type"].lower()
-    body = resp.text.lower()
-    assert (
-        "no violations" in body
-        or "all checks passed" in body
-        or "0 violations" in body
-        or "clean" in body
-    )
+    assert "application/json" in resp.headers["content-type"].lower()
+    body = resp.json()
+    # The FK violation surfaces in the JSON details array.
+    assert any(d["table"] == "orders" and d["column"] == "user_id" for d in body["details"])
 
 
 # ── lazy-import contract ───────────────────────────────────────────────

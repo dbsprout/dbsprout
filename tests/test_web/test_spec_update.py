@@ -9,9 +9,8 @@ The endpoint extends the S-118 spec router to support in-place edits:
   would break PK / FK invariants with ``409 CONSTRAINT_VIOLATION``.
 * Missing schema → ``409 NO_SCHEMA`` (matches the S-118 read shape).
 * Unknown table / column → ``404 NOT_FOUND``.
-* On success returns the new ``GeneratorConfig`` as JSON, or — when the
-  client carries ``Accept: text/html`` or ``HX-Request: true`` — the
-  re-rendered single-row HTMX fragment.
+* On success returns the new ``GeneratorConfig`` as JSON (JSON-only since the
+  P1c-5 cutover — the legacy single-row HTMX fragment was removed).
 * The workspace spec is replaced *immutably*: the new ``DataSpec`` instance
   differs by identity from the original.
 """
@@ -301,45 +300,26 @@ def test_put_column_unknown_column_returns_404(tmp_path: Path) -> None:
     assert "ghost_col" in detail["message"]
 
 
-# ── HTML fragment branch ──────────────────────────────────────────────
+# ── JSON-only since P1c-5 (Accept html / HX-Request no longer special-cased) ──
 
 
-def test_put_column_html_fragment_via_accept_header(tmp_path: Path) -> None:
+def test_put_column_returns_json_even_with_accept_html_or_htmx(tmp_path: Path) -> None:
+    """The legacy single-row HTMX fragment was removed — body is JSON regardless."""
     app = _make_app(tmp_path)
     _seed(app)
     client = TestClient(app)
 
-    response = client.put(
-        "/api/spec/tables/users/columns/email",
-        json={"provider": "mimesis.first_name"},
-        headers={"Accept": "text/html"},
-    )
-
-    assert response.status_code == 200
-    assert response.headers["content-type"].startswith("text/html")
-    body = response.text
-    assert 'data-column="users.email"' in body
-    assert 'data-provider="mimesis.first_name"' in body
-    assert 'type="button"' in body
-
-
-def test_put_column_html_fragment_via_hx_request_header(tmp_path: Path) -> None:
-    app = _make_app(tmp_path)
-    _seed(app)
-    client = TestClient(app)
-
-    response = client.put(
-        "/api/spec/tables/users/columns/email",
-        json={"provider": "mimesis.first_name", "method": "first_name"},
-        headers={"HX-Request": "true"},
-    )
-
-    assert response.status_code == 200
-    assert response.headers["content-type"].startswith("text/html")
-    body = response.text
-    assert 'data-column="users.email"' in body
-    assert 'data-method="first_name"' in body
-    assert 'data-provider="mimesis.first_name"' in body
+    for headers in ({"Accept": "text/html"}, {"HX-Request": "true"}):
+        response = client.put(
+            "/api/spec/tables/users/columns/email",
+            json={"provider": "mimesis.first_name", "method": "first_name"},
+            headers=headers,
+        )
+        assert response.status_code == 200
+        assert response.headers["content-type"].startswith("application/json")
+        payload = response.json()
+        assert payload["provider"] == "mimesis.first_name"
+        assert payload["method"] == "first_name"
 
 
 # ── coverage corners ──────────────────────────────────────────────────
