@@ -1,10 +1,18 @@
 import { useEffect, useRef, useState } from "react";
-import type { GeneratorConfig } from "../../api/types";
+import type { GeneratorConfig, GeneratorMethod } from "../../api/types";
+import { generatorOptions } from "./columnDtype";
 import { genLabel } from "./genLabel";
 
 interface ColumnInspectorProps {
   column: string;
   cfg: GeneratorConfig;
+  /**
+   * Generator catalogue. When supplied, a dtype-filtered generator picker is
+   * rendered (P4-1). Optional so callers without the catalogue stay unchanged.
+   */
+  methods?: GeneratorMethod[];
+  /** Raw SQL type of this column (e.g. `VARCHAR(255)`); drives the dtype filter. */
+  columnType?: string;
   onSave: (cfg: GeneratorConfig) => void;
 }
 
@@ -139,7 +147,10 @@ function buffersEqual(a: DraftBuffers, b: DraftBuffers): boolean {
   );
 }
 
-function InspectorForm({ column, cfg, onSave }: ColumnInspectorProps) {
+function InspectorForm({ column, cfg, methods, columnType, onSave }: ColumnInspectorProps) {
+  // ── P4-1: dtype-filtered generator picker ──
+  const [generator, setGenerator] = useState(genLabel(cfg.provider, cfg.method));
+  const [showAllGenerators, setShowAllGenerators] = useState(false);
   const [nullableRate, setNullableRate] = useState(String(cfg.nullable_rate));
   const [unique, setUnique] = useState(cfg.unique);
   const [paramsText, setParamsText] = useState(JSON.stringify(cfg.params));
@@ -170,6 +181,7 @@ function InspectorForm({ column, cfg, onSave }: ColumnInspectorProps) {
     setMinText(seed.minText);
     setMaxText(seed.maxText);
     setEnumValuesText(seed.enumValuesText);
+    setGenerator(genLabel(next.provider, next.method));
     baselineRef.current = next;
     seedRef.current = seed;
     setExternalChange(false);
@@ -229,8 +241,13 @@ function InspectorForm({ column, cfg, onSave }: ColumnInspectorProps) {
       throw new Error("min must be ≤ max");
     }
 
+    // P4-1: a "provider/method" (or bare "provider") label → provider + method.
+    const [provider, method = null] = generator.split("/");
+
     return {
       ...cfg,
+      provider,
+      method,
       params,
       unique,
       nullable_rate: Number(nullableRate),
@@ -254,10 +271,38 @@ function InspectorForm({ column, cfg, onSave }: ColumnInspectorProps) {
     onSave(draft);
   }
 
+  const pickerOptions = methods
+    ? generatorOptions(methods, columnType, showAllGenerators, generator)
+    : null;
+
   return (
     <aside aria-label={`inspector for ${column}`}>
       <h3>{column}</h3>
       <p>{genLabel(cfg.provider, cfg.method)}</p>
+
+      {pickerOptions && (
+        <>
+          <label>
+            generator method
+            <select value={generator} onChange={(e) => setGenerator(e.target.value)}>
+              {pickerOptions.map((o) => (
+                <option key={o.value} value={o.value}>
+                  {o.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
+            <input
+              type="checkbox"
+              aria-label="show all generators"
+              checked={showAllGenerators}
+              onChange={(e) => setShowAllGenerators(e.target.checked)}
+            />
+            show all generators
+          </label>
+        </>
+      )}
 
       {externalChange && (
         <div role="status">

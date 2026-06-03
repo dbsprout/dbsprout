@@ -1,6 +1,7 @@
-import { useRef, type ChangeEvent, type CSSProperties } from "react";
+import { useRef, useState, type ChangeEvent, type CSSProperties } from "react";
 import { observeElementRect, useVirtualizer, type Virtualizer } from "@tanstack/react-virtual";
 import type { GeneratorConfig, GeneratorMethod, TableSpec } from "../../api/types";
+import { generatorOptions } from "./columnDtype";
 import { genLabel } from "./genLabel";
 
 interface ColumnGridProps {
@@ -8,6 +9,12 @@ interface ColumnGridProps {
   methods: GeneratorMethod[];
   /** First row of the table preview, used for the live "sample" column. */
   previewRow: Record<string, unknown> | null;
+  /**
+   * Raw SQL type per column name (e.g. `{ email: "VARCHAR(255)" }`). When given,
+   * each column's generator dropdown is filtered to dtype-compatible generators
+   * (P4-1). Optional so callers that don't have schema types stay unfiltered.
+   */
+  columnTypes?: Record<string, string>;
   /** Focus a column in the Inspector. */
   onSelect: (column: string) => void;
   /** Persist a new generator config for a column. */
@@ -50,12 +57,14 @@ export function ColumnGrid({
   spec,
   methods,
   previewRow,
+  columnTypes,
   onSelect,
   onGeneratorChange,
 }: ColumnGridProps) {
-  const options = methods.map((m) => genLabel(m.provider, m.method));
   const entries = Object.entries(spec.columns);
   const parentRef = useRef<HTMLTableSectionElement>(null);
+  // P4-1: escape hatch — show every generator regardless of column dtype.
+  const [showAll, setShowAll] = useState(false);
 
   const virtualizer = useVirtualizer({
     count: entries.length,
@@ -78,8 +87,18 @@ export function ColumnGrid({
   }
 
   return (
-    <table aria-label={`columns of ${spec.table_name}`} style={{ display: "block", width: "100%" }}>
-      <thead style={{ display: "block" }}>
+    <div>
+      <label>
+        <input
+          type="checkbox"
+          aria-label="show all generators"
+          checked={showAll}
+          onChange={(e) => setShowAll(e.target.checked)}
+        />
+        show all generators
+      </label>
+      <table aria-label={`columns of ${spec.table_name}`} style={{ display: "block", width: "100%" }}>
+        <thead style={{ display: "block" }}>
         <tr style={ROW_STYLE}>
           <th style={CELL_STYLE}>name</th>
           <th style={CELL_STYLE}>generator</th>
@@ -97,6 +116,7 @@ export function ColumnGrid({
             {virtualizer.getVirtualItems().map((virtualRow) => {
               const [name, cfg] = entries[virtualRow.index];
               const current = genLabel(cfg.provider, cfg.method);
+              const options = generatorOptions(methods, columnTypes?.[name], showAll, current);
               const sample = previewRow ? String(previewRow[name] ?? "") : "—";
               const paramSummary = Object.keys(cfg.params).length ? JSON.stringify(cfg.params) : "—";
               return (
@@ -121,10 +141,9 @@ export function ColumnGrid({
                       value={current}
                       onChange={(e) => handleChange(name, cfg, e)}
                     >
-                      {!options.includes(current) && <option value={current}>{current}</option>}
                       {options.map((o) => (
-                        <option key={o} value={o}>
-                          {o}
+                        <option key={o.value} value={o.value}>
+                          {o.label}
                         </option>
                       ))}
                     </select>
@@ -138,6 +157,7 @@ export function ColumnGrid({
           </td>
         </tr>
       </tbody>
-    </table>
+      </table>
+    </div>
   );
 }

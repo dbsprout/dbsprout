@@ -360,3 +360,74 @@ test("refresh re-seeds every advanced field from the latest cfg", () => {
     }),
   );
 });
+
+// ─── P4-1: dtype-filtered generator picker ───
+import type { GeneratorMethod } from "../../api/types";
+
+const inspectorMethods: GeneratorMethod[] = [
+  { provider: "mimesis", method: "email", description: "", example: "", dtypes: ["VARCHAR", "TEXT"], params: [] },
+  { provider: "mimesis", method: "name", description: "", example: "", dtypes: ["VARCHAR", "TEXT"], params: [] },
+  { provider: "builtin", method: "increment", description: "", example: "", dtypes: ["INTEGER"], params: [] },
+];
+
+function genOptionValues(): string[] {
+  const select = screen.getByLabelText(/generator method/i) as HTMLSelectElement;
+  return Array.from(select.options).map((o) => o.value);
+}
+
+test("no generator picker renders when methods are not supplied (backwards compatible)", () => {
+  render(<ColumnInspector column="email" cfg={cfg} onSave={() => undefined} />);
+  expect(screen.queryByLabelText(/generator method/i)).not.toBeInTheDocument();
+});
+
+test("the generator picker filters to the column's dtype", () => {
+  render(
+    <ColumnInspector
+      column="email"
+      cfg={cfg}
+      methods={inspectorMethods}
+      columnType="VARCHAR(255)"
+      onSave={() => undefined}
+    />,
+  );
+  expect(genOptionValues()).toEqual(
+    expect.arrayContaining(["mimesis/email", "mimesis/name"]),
+  );
+  expect(genOptionValues()).not.toContain("builtin/increment");
+});
+
+test("the show-all toggle exposes incompatible generators in the inspector", () => {
+  render(
+    <ColumnInspector
+      column="email"
+      cfg={cfg}
+      methods={inspectorMethods}
+      columnType="VARCHAR(255)"
+      onSave={() => undefined}
+    />,
+  );
+  expect(genOptionValues()).not.toContain("builtin/increment");
+  fireEvent.click(screen.getByLabelText(/show all generators/i));
+  expect(genOptionValues()).toContain("builtin/increment");
+});
+
+test("changing the generator persists provider/method via onSave", () => {
+  const onSave = vi.fn();
+  render(
+    <ColumnInspector
+      column="email"
+      cfg={cfg}
+      methods={inspectorMethods}
+      columnType="VARCHAR(255)"
+      onSave={onSave}
+    />,
+  );
+  fireEvent.change(screen.getByLabelText(/generator method/i), {
+    target: { value: "mimesis/name" },
+  });
+  save();
+  expect(onSave).toHaveBeenCalledWith(
+    expect.objectContaining({ provider: "mimesis", method: "name" }),
+  );
+});
+// ─── end P4-1 ───

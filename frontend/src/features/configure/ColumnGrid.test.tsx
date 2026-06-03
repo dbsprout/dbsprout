@@ -112,6 +112,106 @@ test("renders a unique badge for unique columns", () => {
   expect(screen.getByText("unique")).toBeInTheDocument();
 });
 
+// ─── P4-1: dtype-filtered generator dropdown ───
+const typedMethods: GeneratorMethod[] = [
+  { provider: "mimesis", method: "email", description: "", example: "", dtypes: ["VARCHAR", "TEXT"], params: [] },
+  { provider: "mimesis", method: "name", description: "", example: "", dtypes: ["VARCHAR", "TEXT"], params: [] },
+  { provider: "builtin", method: "increment", description: "", example: "", dtypes: ["INTEGER", "BIGINT"], params: [] },
+];
+
+function optionValues(select: HTMLSelectElement): string[] {
+  return Array.from(select.options).map((o) => o.value);
+}
+
+test("filters the generator options to the column's dtype when columnTypes is given", () => {
+  render(
+    <ColumnGrid
+      spec={spec}
+      methods={typedMethods}
+      previewRow={null}
+      columnTypes={{ id: "INTEGER", email: "VARCHAR(255)" }}
+      onSelect={() => undefined}
+      onGeneratorChange={() => undefined}
+    />,
+  );
+  const emailSelect = screen.getByLabelText(/generator for email/i) as HTMLSelectElement;
+  // VARCHAR column: only the two string generators (plus its own current value).
+  expect(optionValues(emailSelect)).toEqual(
+    expect.arrayContaining(["mimesis/email", "mimesis/name"]),
+  );
+  expect(optionValues(emailSelect)).not.toContain("builtin/increment");
+});
+
+test("always keeps the current generator selectable even when it is incompatible", () => {
+  // email column persisted with an INTEGER-only generator; VARCHAR dtype would hide it.
+  const oddSpec: TableSpec = {
+    ...spec,
+    columns: { email: { ...emailCfg, provider: "builtin", method: "increment" } },
+  };
+  render(
+    <ColumnGrid
+      spec={oddSpec}
+      methods={typedMethods}
+      previewRow={null}
+      columnTypes={{ email: "VARCHAR(255)" }}
+      onSelect={() => undefined}
+      onGeneratorChange={() => undefined}
+    />,
+  );
+  const emailSelect = screen.getByLabelText(/generator for email/i) as HTMLSelectElement;
+  expect(emailSelect.value).toBe("builtin/increment");
+  expect(optionValues(emailSelect)).toContain("builtin/increment");
+});
+
+test("the show-all toggle reveals incompatible generators (escape hatch)", () => {
+  render(
+    <ColumnGrid
+      spec={spec}
+      methods={typedMethods}
+      previewRow={null}
+      columnTypes={{ id: "INTEGER", email: "VARCHAR(255)" }}
+      onSelect={() => undefined}
+      onGeneratorChange={() => undefined}
+    />,
+  );
+  const emailSelect = screen.getByLabelText(/generator for email/i) as HTMLSelectElement;
+  expect(optionValues(emailSelect)).not.toContain("builtin/increment");
+  fireEvent.click(screen.getByLabelText(/show all generators/i));
+  expect(optionValues(emailSelect)).toContain("builtin/increment");
+});
+
+test("without columnTypes the dropdown is unfiltered (backwards compatible)", () => {
+  render(
+    <ColumnGrid
+      spec={spec}
+      methods={typedMethods}
+      previewRow={null}
+      onSelect={() => undefined}
+      onGeneratorChange={() => undefined}
+    />,
+  );
+  const emailSelect = screen.getByLabelText(/generator for email/i) as HTMLSelectElement;
+  expect(optionValues(emailSelect)).toEqual(
+    expect.arrayContaining(["mimesis/email", "mimesis/name", "builtin/increment"]),
+  );
+});
+
+test("an unmappable column type disables filtering for that column", () => {
+  render(
+    <ColumnGrid
+      spec={spec}
+      methods={typedMethods}
+      previewRow={null}
+      columnTypes={{ email: "geography" }}
+      onSelect={() => undefined}
+      onGeneratorChange={() => undefined}
+    />,
+  );
+  const emailSelect = screen.getByLabelText(/generator for email/i) as HTMLSelectElement;
+  expect(optionValues(emailSelect)).toContain("builtin/increment");
+});
+// ─── end P4-1 ───
+
 // ─── P4-2: virtualization ───
 afterEach(() => {
   vi.restoreAllMocks();
