@@ -1,8 +1,9 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useSelection } from "../../app/SelectionProvider";
 import {
   getPreview,
+  getSchema,
   getSpec,
   listGenerators,
   putColumnSpec,
@@ -55,6 +56,9 @@ export function ConfigurePanel() {
     queryKey: queryKeys.generators,
     queryFn: () => listGenerators(),
   });
+  // ─── P4-12 ─── the SQL type that drives the dtype filter lives in the schema
+  // tree (`ColumnNode.type`), not in the spec; load it to feed the dormant filter.
+  const schema = useQuery({ queryKey: queryKeys.schema, queryFn: getSchema });
 
   const tables = spec.data?.tables ?? [];
   const table = tables.find((t) => t.table_name === selectedTable) ?? tables[0];
@@ -81,6 +85,17 @@ export function ConfigurePanel() {
     onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.spec }),
   });
   // ─── end P2b-2 ───
+
+  // ─── P4-12 ─── column name → raw SQL type for the active table, read from the
+  // schema tree. Feeds the dtype filter (P4-1) in ColumnGrid/ColumnInspector;
+  // columns absent here fall back to "unfiltered" (the child's safe default).
+  const columnTypes = useMemo<Record<string, string>>(() => {
+    const node = schema.data?.tables?.find((t) => t.name === table?.table_name);
+    if (!node) {
+      return {};
+    }
+    return Object.fromEntries(node.columns.map((c) => [c.name, c.type]));
+  }, [schema.data, table?.table_name]);
 
   if (spec.isLoading) {
     return <p>Loading spec…</p>;
@@ -123,6 +138,8 @@ export function ConfigurePanel() {
         spec={activeTable}
         methods={generators.data?.methods ?? []}
         previewRow={preview.data?.rows[0] ?? null}
+        // ─── P4-12 ─── per-column SQL types activate the dtype-filtered dropdowns.
+        columnTypes={columnTypes}
         // ─── P4-7 ─── scroll/highlight the drilled-into column (no-op if absent).
         focusColumn={selectedColumn}
         onSelect={(c) => setSelectedColumn(c)}
@@ -133,6 +150,9 @@ export function ConfigurePanel() {
         <ColumnInspector
           column={selectedColumn}
           cfg={focusedCfg}
+          // ─── P4-12 ─── feed the inspector's dtype-filtered generator picker.
+          methods={generators.data?.methods ?? []}
+          columnType={columnTypes[selectedColumn]}
           onSave={(cfg) => mutation.mutate({ column: selectedColumn, cfg })}
         />
       )}
