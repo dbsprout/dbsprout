@@ -40,6 +40,58 @@ function urlInput(): HTMLInputElement {
   return screen.getByLabelText(/connection url/i) as HTMLInputElement;
 }
 
+// ─── P4-8: URL-paste → field auto-fill ───
+
+function input(label: RegExp): HTMLInputElement {
+  return screen.getByLabelText(label) as HTMLInputElement;
+}
+
+test("pasting a postgres URL fills the structured fields", () => {
+  renderWithClient(<ConnectForm onLoaded={() => undefined} />);
+  fireEvent.change(urlInput(), {
+    target: { value: "postgresql://admin:secret@db.host:6543/shop" },
+  });
+  expect(input(/^host/i).value).toBe("db.host");
+  expect(input(/^port/i).value).toBe("6543");
+  expect(input(/^user/i).value).toBe("admin");
+  expect((screen.getByLabelText("Database") as HTMLInputElement).value).toBe("shop");
+  expect((screen.getByLabelText(/database type/i) as HTMLSelectElement).value).toBe("postgresql");
+});
+
+test("pasting a URL with advanced params fills the Advanced section", () => {
+  renderWithClient(<ConnectForm onLoaded={() => undefined} />);
+  fireEvent.change(urlInput(), {
+    target: {
+      value:
+        "postgresql://admin:secret@db.host:5432/shop" +
+        "?sslmode=require&options=-csearch_path%3Danalytics&connect_timeout=12" +
+        "&application_name=dbsprout",
+    },
+  });
+  expect((screen.getByLabelText(/ssl mode/i) as HTMLSelectElement).value).toBe("require");
+  expect(input(/^schema/i).value).toBe("analytics");
+  expect(input(/connect timeout/i).value).toBe("12");
+  expect((screen.getByLabelText(/extra parameters/i) as HTMLTextAreaElement).value).toContain(
+    "application_name=dbsprout",
+  );
+});
+
+test("pasting a sqlite URL switches db-type and fills the file path", () => {
+  renderWithClient(<ConnectForm onLoaded={() => undefined} />);
+  fireEvent.change(urlInput(), { target: { value: "sqlite:////tmp/seed.db" } });
+  expect((screen.getByLabelText(/database type/i) as HTMLSelectElement).value).toBe("sqlite");
+  expect(input(/file path/i).value).toBe("/tmp/seed.db");
+});
+
+test("the pasted URL stays verbatim in the URL field (round-trip safe)", () => {
+  renderWithClient(<ConnectForm onLoaded={() => undefined} />);
+  const pasted = "postgresql://admin:secret@db.host:5432/shop?sslmode=require";
+  fireEvent.change(urlInput(), { target: { value: pasted } });
+  expect(urlInput().value).toBe(pasted);
+});
+
+// ─── end P4-8 ───
+
 test("selecting an SSL mode folds sslmode into the URL preview", () => {
   renderWithClient(<ConnectForm onLoaded={() => undefined} />);
   fireEvent.change(screen.getByLabelText(/ssl mode/i), { target: { value: "require" } });
