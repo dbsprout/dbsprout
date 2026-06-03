@@ -32,6 +32,16 @@ test("mounts the Generate surface", () => {
   expect(screen.getByRole("heading", { name: "Generate" })).toBeInTheDocument();
 });
 
+test("mounts the Insert surface", () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () => new Response(JSON.stringify({ samples: [] }), { status: 200, headers: { "Content-Type": "application/json" } })),
+  );
+  renderWithClient(<App />);
+  expect(screen.getByRole("heading", { name: "Insert" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: /preview insert/i })).toBeInTheDocument();
+});
+
 test("mounts the Validate surface", () => {
   vi.stubGlobal(
     "fetch",

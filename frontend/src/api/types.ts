@@ -156,6 +156,59 @@ export interface JobRecordResponse {
   error: string | null;
 }
 
+// ── P1c-2: Insert ──────────────────────────────────────────────────────────
+// Mirrors POST /api/insert/preview + POST /api/insert + POST /api/jobs/{id}/cancel
+// (backend dbsprout/web/routers/insert.py + jobs.py).
+
+/** Writer strategy pinned on the insert request (S-141 method select). */
+export type InsertMethod = "auto" | "batch" | "copy";
+
+/** One table in the FK-safe insert scope, with its row count. */
+export interface InsertScopeEntry {
+  table: string;
+  row_count: number;
+}
+
+/**
+ * Response of POST /api/insert/preview — issues a single-use, scope-bound HMAC
+ * confirmation_token (5-min TTL). The token carries only hashes server-side
+ * (never the raw DSN); the redacted target + dialect + scope are safe to render.
+ * `warnings` is optional: the current backend preview does not emit it, but the
+ * client tolerates a future preview that does (FK-prerequisite hints also arrive
+ * on the insert response's `scope_warnings`).
+ */
+export interface InsertPreview {
+  target: string;
+  dialect: string;
+  scope: InsertScopeEntry[];
+  total_rows: number;
+  confirmation_token: string;
+  warnings?: string[];
+}
+
+/** Request body for POST /api/insert. The token comes from a prior preview. */
+export interface InsertRequest {
+  tables?: string[] | null;
+  confirmation_token: string;
+  method: InsertMethod;
+}
+
+/** Response of POST /api/insert — starts a background job. */
+export interface InsertResponse {
+  job_id: string;
+  scope: InsertScopeEntry[];
+  total_rows: number;
+  writer: string;
+  method: InsertMethod;
+  scope_warnings: string[];
+}
+
+/** Response of POST /api/jobs/{id}/cancel. */
+export interface CancelJobResponse {
+  job_id: string;
+  status: string;
+}
+
 // ── P1c-1: Export ──
 // Mirrors POST /api/export (backend dbsprout/web/routers/export.py).
 
