@@ -1,7 +1,7 @@
 import { QueryClient } from "@tanstack/react-query";
 import { expect, test } from "vitest";
 import { queryKeys } from "../api/endpoints";
-import { STEPS, hasSchema, hasSpec, hasSucceededJob } from "./steps";
+import { STEPS, STEP_IDS, hasSchema, hasSpec, hasSucceededJob } from "./steps";
 
 function client() {
   return new QueryClient();
@@ -42,6 +42,24 @@ test("hasSucceededJob scans parameterized job keys", () => {
   expect(hasSucceededJob(qc)).toBe(false);
   qc.setQueryData(queryKeys.job("b"), { status: "succeeded" });
   expect(hasSucceededJob(qc)).toBe(true);
+});
+
+test("STEP_IDS lists the 7 step ids in order", () => {
+  expect(STEP_IDS).toEqual([
+    "start",
+    "schema",
+    "configure",
+    "generate",
+    "validate",
+    "output",
+    "runs",
+  ]);
+});
+
+test("every STEP id is a member of STEP_IDS", () => {
+  for (const s of STEPS) {
+    expect(STEP_IDS).toContain(s.id);
+  }
 });
 
 test("gate truth table: each step's precondition", () => {
