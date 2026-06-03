@@ -189,6 +189,45 @@ export interface JobRecordResponse {
   error: string | null;
 }
 
+// ─── P4-5 ───
+// Live job-progress WebSocket frames streamed by GET /ws/jobs/{job_id}
+// (backend dbsprout/web/progress.py). The server sends one event frame per
+// ProgressEvent (per-table boundary), then a single terminal frame, then closes.
+
+/** A per-table progress frame (mirrors ProgressEvent.model_dump(mode="json")). */
+export interface ProgressEventFrame {
+  phase: "table_start" | "table_done";
+  table: string | null;
+  tables_done: number;
+  tables_total: number;
+  rows_in_table: number;
+  total_rows: number;
+  message: string | null;
+}
+
+/** The final frame carrying the job's terminal status (+ error if it failed). */
+export interface TerminalFrame {
+  phase: "terminal";
+  status: JobStatus;
+  error: string | null;
+}
+
+/** Discriminated union of every frame the job-progress socket emits. */
+export type JobProgressFrame = ProgressEventFrame | TerminalFrame;
+
+/** Reduced live-progress snapshot the console renders from the socket stream. */
+export interface JobProgress {
+  /** The table named by the latest event frame (null before the first frame). */
+  table: string | null;
+  tablesDone: number;
+  tablesTotal: number;
+  totalRows: number;
+  /** Terminal status once the terminal frame arrives, else null while live. */
+  status: JobStatus | null;
+  /** Failure message from the terminal frame (null unless the run failed). */
+  error: string | null;
+}
+
 // ── P1c-4: Runs/Quality/Costs ──
 // Mirrors GET /api/runs · /api/quality · /api/costs
 // (backend dbsprout/web/routers/insights_api.py). Telemetry only — no secrets.
