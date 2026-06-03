@@ -1,7 +1,9 @@
-import { apiGet, apiPost, apiPut, apiUpload } from "./client";
+import { apiDownload, apiGet, apiPost, apiPut, apiUpload } from "./client";
 import type {
   ConnectionProbe,
   DataSpec,
+  ExportFormat,
+  ExportRequest,
   GenerateRequest,
   GenerateResponse,
   GeneratorConfig,
@@ -60,3 +62,16 @@ export const generate = (body: GenerateRequest) =>
   apiPost<GenerateResponse>("/api/generate", body);
 export const getJob = (jobId: string) =>
   apiGet<JobRecordResponse>(`/api/jobs/${encodeURIComponent(jobId)}`);
+
+// ─── P1c-1: export ───
+// Imperative file download (not a query) — POST /api/export → blob → browser save.
+export const exportData = (format: ExportFormat, tables?: string[]): Promise<void> => {
+  const body: ExportRequest = tables && tables.length > 0 ? { format, tables } : { format };
+  // The server names a single-table file "<table>.<ext>" and a multi-table bundle
+  // "dbsprout-export.<ext>"; mirror that as the fallback when no header is present.
+  const fallback =
+    tables && tables.length === 1
+      ? `${tables[0]}.${format}`
+      : `dbsprout-export.${format}`;
+  return apiDownload("/api/export", body, fallback);
+};
