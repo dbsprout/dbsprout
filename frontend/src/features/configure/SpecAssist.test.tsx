@@ -70,8 +70,11 @@ test("selecting Cloud forwards provider:cloud", async () => {
   await waitFor(() => {
     const call = m.mock.calls.find(([u]) => String(u) === "/api/spec/assist");
     expect(call).toBeDefined();
+    // P4-11: cloud now also carries its non-secret model + api-key-env defaults.
     expect(JSON.parse(String((call as [string, RequestInit])[1].body))).toEqual({
       provider: "cloud",
+      model: "gpt-4o-mini",
+      api_key_env: "OPENAI_API_KEY",
     });
   });
 });
@@ -126,4 +129,94 @@ test("shows progress while the proposal is in flight", async () => {
 
   await waitFor(() => expect(screen.getByText(/proposing/i)).toBeInTheDocument());
   resolve?.(json(OK));
+});
+
+// ─── P4-11: cloud key-entry UX ───────────────────────────────────────────────
+
+test("the cloud key sub-panel is hidden while embedded is selected", () => {
+  renderWithClient(<SpecAssist />);
+  // Embedded is the default, so the cloud-only model / env-var inputs are absent.
+  expect(screen.queryByLabelText(/cloud model/i)).not.toBeInTheDocument();
+  expect(screen.queryByLabelText(/api key env/i)).not.toBeInTheDocument();
+});
+
+test("selecting Cloud reveals the model + API-key-env inputs with safe defaults", () => {
+  renderWithClient(<SpecAssist />);
+  fireEvent.change(screen.getByLabelText(/spec-assist provider/i), {
+    target: { value: "cloud" },
+  });
+
+  const model = screen.getByLabelText(/cloud model/i) as HTMLInputElement;
+  const keyEnv = screen.getByLabelText(/api key env/i) as HTMLInputElement;
+  expect(model).toBeInTheDocument();
+  expect(keyEnv).toBeInTheDocument();
+  // Sensible defaults that need no further typing for the common case.
+  expect(model.value).toBe("gpt-4o-mini");
+  expect(keyEnv.value).toBe("OPENAI_API_KEY");
+});
+
+test("cloud assist forwards provider, model and api_key_env (never a raw key)", async () => {
+  const m = vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) =>
+    String(input) === "/api/spec/assist" ? json({ ...OK, provider: "cloud" }) : json({}, 404),
+  );
+  vi.stubGlobal("fetch", m);
+
+  renderWithClient(<SpecAssist />);
+  fireEvent.change(screen.getByLabelText(/spec-assist provider/i), {
+    target: { value: "cloud" },
+  });
+  fireEvent.change(screen.getByLabelText(/cloud model/i), {
+    target: { value: "gpt-4o" },
+  });
+  fireEvent.change(screen.getByLabelText(/api key env/i), {
+    target: { value: "MY_OPENAI_KEY" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: /ai assist/i }));
+
+  await waitFor(() => {
+    const call = m.mock.calls.find(([u]) => String(u) === "/api/spec/assist");
+    expect(call).toBeDefined();
+    const body = JSON.parse(String((call as [string, RequestInit])[1].body));
+    expect(body).toEqual({
+      provider: "cloud",
+      model: "gpt-4o",
+      api_key_env: "MY_OPENAI_KEY",
+    });
+    // Security: the body must carry only an env-var *name*, never a key value.
+    expect(JSON.stringify(body)).not.toMatch(/sk-/);
+    expect(Object.keys(body)).not.toContain("api_key");
+    expect(Object.keys(body)).not.toContain("key");
+  });
+});
+
+test("a missing-key 503 renders an actionable panel with the server hint", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: RequestInfo | URL) =>
+      String(input) === "/api/spec/assist"
+        ? json(
+            {
+              detail: {
+                code: "LLM_UNAVAILABLE",
+                message:
+                  "cloud provider key not found — set the OPENAI_API_KEY environment variable",
+                hint: "Install an LLM provider extra or use the heuristic spec.",
+              },
+            },
+            503,
+          )
+        : json({}, 404),
+    ),
+  );
+  renderWithClient(<SpecAssist />);
+  fireEvent.change(screen.getByLabelText(/spec-assist provider/i), {
+    target: { value: "cloud" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: /ai assist/i }));
+
+  // Both the typed message AND the actionable hint are shown (not a bare error).
+  await waitFor(() =>
+    expect(screen.getByRole("alert")).toHaveTextContent(/OPENAI_API_KEY/),
+  );
+  expect(screen.getByRole("alert")).toHaveTextContent(/heuristic spec/i);
 });

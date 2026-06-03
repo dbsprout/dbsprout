@@ -403,6 +403,20 @@ export interface SpecAssistResponse {
   total_columns: number;
 }
 
+// ─── P4-11 ───
+// Cloud key-entry UX. The cloud assist call may carry two *non-secret* steering
+// fields: `model` (the litellm model string) and `api_key_env` — the *name* of
+// the env var holding the provider key (e.g. "OPENAI_API_KEY"). The raw key
+// value is NEVER sent: the server reads it from its own process environment via
+// the named var. Embedded (offline) ignores both.
+export interface SpecAssistOptions {
+  /** litellm model string, e.g. "gpt-4o-mini". Omitted ⇒ server default. */
+  model?: string;
+  /** Name of the server env var holding the API key (never the value). */
+  api_key_env?: string;
+}
+// ─── end P4-11 ───
+
 /** High-level integrity totals across the validated run. */
 export interface ValidateSummary {
   tables: number;

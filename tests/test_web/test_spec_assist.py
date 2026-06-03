@@ -246,6 +246,125 @@ def test_assist_explicit_cloud_calls_cloud_provider(
     assert len(_StubProvider.instances) == 1
 
 
+# ── P4-11: cloud key-entry UX (model + env-var reference) ────────────────────
+#
+# The cloud assist call may carry a non-secret ``model`` string and an
+# ``api_key_env`` *name* (e.g. ``OPENAI_API_KEY``). The raw key never crosses the
+# wire — litellm reads it from the server's own process environment. The route
+# guards on env-var presence so a missing key degrades to the typed 503 envelope
+# (naming the var) instead of a deep provider failure, and forwards ``model`` to
+# ``CloudProvider(model=...)``.
+
+
+def test_assist_cloud_forwards_model_to_provider(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A ``model`` on the cloud request is forwarded to ``CloudProvider(model=...)``."""
+    _patch_cloud(monkeypatch)
+    app = _make_app(tmp_path)
+    app.state.workspace.set_schema(_small_schema())
+    client = TestClient(app)
+
+    resp = client.post(
+        "/api/spec/assist",
+        json={"provider": "cloud", "model": "gpt-4o-mini"},
+    )
+
+    assert resp.status_code == 200
+    assert len(_StubProvider.instances) == 1
+    assert _StubProvider.instances[0].kwargs.get("model") == "gpt-4o-mini"
+
+
+def test_assist_cloud_missing_env_var_returns_typed_503_naming_var(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``api_key_env`` naming an *unset* var → typed 503 that names the var, and
+    the provider is never even constructed (so no real API call is attempted)."""
+    _patch_cloud(monkeypatch)
+    monkeypatch.delenv("DEFINITELY_UNSET_KEY_P411", raising=False)
+    app = _make_app(tmp_path)
+    app.state.workspace.set_schema(_small_schema())
+    client = TestClient(app)
+
+    resp = client.post(
+        "/api/spec/assist",
+        json={"provider": "cloud", "api_key_env": "DEFINITELY_UNSET_KEY_P411"},
+    )
+
+    assert resp.status_code == 503
+    detail = resp.json()["detail"]
+    assert detail["code"] == "LLM_UNAVAILABLE"
+    # The message must name the missing variable so the UX can act on it.
+    assert "DEFINITELY_UNSET_KEY_P411" in detail["message"]
+    # Provider never constructed; no spec committed on the failure path.
+    assert len(_StubProvider.instances) == 0
+    assert app.state.workspace.get_spec() is None
+
+
+def test_assist_cloud_present_env_var_constructs_provider(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``api_key_env`` naming a *present* var → the provider is constructed and the
+    proposal succeeds (litellm would read the key from the same environment)."""
+    _patch_cloud(monkeypatch)
+    monkeypatch.setenv("PRESENT_KEY_P411", "sk-not-a-real-secret")
+    app = _make_app(tmp_path)
+    app.state.workspace.set_schema(_small_schema())
+    client = TestClient(app)
+
+    resp = client.post(
+        "/api/spec/assist",
+        json={"provider": "cloud", "api_key_env": "PRESENT_KEY_P411", "model": "gpt-4o"},
+    )
+
+    assert resp.status_code == 200
+    assert resp.json()["provider"] == "cloud"
+    assert len(_StubProvider.instances) == 1
+    assert _StubProvider.instances[0].kwargs.get("model") == "gpt-4o"
+
+
+def test_assist_embedded_ignores_model_and_env_fields(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The embedded (offline) path ignores ``model`` / ``api_key_env`` — the
+    env-var guard is cloud-only, and the embedded provider takes no model arg."""
+    _patch_embedded(monkeypatch)
+    monkeypatch.delenv("SOME_UNSET_KEY_P411", raising=False)
+    app = _make_app(tmp_path)
+    app.state.workspace.set_schema(_small_schema())
+    client = TestClient(app)
+
+    resp = client.post(
+        "/api/spec/assist",
+        json={
+            "provider": "embedded",
+            "model": "ignored",
+            "api_key_env": "SOME_UNSET_KEY_P411",
+        },
+    )
+
+    assert resp.status_code == 200
+    assert resp.json()["provider"] == "embedded"
+    assert len(_StubProvider.instances) == 1
+
+
+def test_assist_cloud_no_env_field_unchanged_behaviour(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Omitting ``api_key_env`` keeps the legacy behaviour: the provider is
+    constructed and litellm itself raises if no key is configured (folded into
+    the typed 503 by the existing broad-except path)."""
+    _patch_cloud(monkeypatch)
+    app = _make_app(tmp_path)
+    app.state.workspace.set_schema(_small_schema())
+    client = TestClient(app)
+
+    resp = client.post("/api/spec/assist", json={"provider": "cloud", "model": "gpt-4o"})
+
+    assert resp.status_code == 200
+    assert len(_StubProvider.instances) == 1
+
+
 # ── error paths ──────────────────────────────────────────────────────────
 
 
