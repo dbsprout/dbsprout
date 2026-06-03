@@ -172,3 +172,101 @@ test("SSH fields are not shown for sqlite", () => {
   fireEvent.change(screen.getByLabelText(/database type/i), { target: { value: "sqlite" } });
   expect(screen.queryByLabelText(/ssh bastion host/i)).toBeNull();
 });
+
+// ─── end P2a-3 ───
+
+// ─── P4-10: SSH incomplete-block inline validation ───
+
+function testButton(): HTMLButtonElement {
+  return screen.getByRole("button", { name: /test connection/i }) as HTMLButtonElement;
+}
+
+function connectButton(): HTMLButtonElement {
+  return screen.getByRole("button", { name: /^connect/i }) as HTMLButtonElement;
+}
+
+test("an incomplete SSH block (host only) shows inline errors and blocks submit", () => {
+  renderWithClient(<ConnectForm onLoaded={() => undefined} />);
+  fireEvent.change(screen.getByLabelText(/ssh bastion host/i), {
+    target: { value: "bastion.example.com" },
+  });
+  // SSH user and key path are required once any field is set.
+  expect(screen.getByText(/ssh user is required/i)).toBeInTheDocument();
+  expect(screen.getByText(/ssh key path is required/i)).toBeInTheDocument();
+  expect(testButton()).toBeDisabled();
+  expect(connectButton()).toBeDisabled();
+});
+
+test("a fully-empty SSH block is allowed and sends no ssh on Connect", async () => {
+  const fetchMock = stubOk();
+  const onLoaded = vi.fn();
+  renderWithClient(<ConnectForm onLoaded={onLoaded} />);
+  fireEvent.change(screen.getByLabelText(/connection url/i), {
+    target: { value: "postgresql://u:p@db.internal:5432/app" },
+  });
+  // No SSH fields touched → no errors, buttons enabled.
+  expect(screen.queryByText(/ssh .* is required/i)).toBeNull();
+  expect(connectButton()).not.toBeDisabled();
+  fireEvent.click(connectButton());
+  await waitFor(() => expect(onLoaded).toHaveBeenCalled());
+  const connectCall = fetchMock.mock.calls.find(([u]) => String(u).endsWith("/api/connect"));
+  expect(bodyOf(connectCall).ssh).toBeUndefined();
+});
+
+test("a complete SSH block (host+user+key, no port) is allowed and sends ssh", async () => {
+  const fetchMock = stubOk();
+  const onLoaded = vi.fn();
+  renderWithClient(<ConnectForm onLoaded={onLoaded} />);
+  fireEvent.change(screen.getByLabelText(/connection url/i), {
+    target: { value: "postgresql://u:p@db.internal:5432/app" },
+  });
+  fireEvent.change(screen.getByLabelText(/ssh bastion host/i), {
+    target: { value: "bastion.example.com" },
+  });
+  fireEvent.change(screen.getByLabelText(/ssh user/i), { target: { value: "deploy" } });
+  fireEvent.change(screen.getByLabelText(/ssh key path/i), {
+    target: { value: "/home/me/.ssh/id" },
+  });
+  expect(screen.queryByText(/ssh .* is required/i)).toBeNull();
+  expect(connectButton()).not.toBeDisabled();
+  fireEvent.click(connectButton());
+  await waitFor(() => expect(onLoaded).toHaveBeenCalled());
+  const connectCall = fetchMock.mock.calls.find(([u]) => String(u).endsWith("/api/connect"));
+  expect(bodyOf(connectCall)).toMatchObject({
+    ssh: { host: "bastion.example.com", user: "deploy", key_path: "/home/me/.ssh/id" },
+  });
+});
+
+test("setting only the SSH port treats the block as non-empty and requires host/user/key", () => {
+  renderWithClient(<ConnectForm onLoaded={() => undefined} />);
+  fireEvent.change(screen.getByLabelText(/ssh bastion port/i), { target: { value: "2222" } });
+  expect(screen.getByText(/ssh bastion host is required/i)).toBeInTheDocument();
+  expect(screen.getByText(/ssh user is required/i)).toBeInTheDocument();
+  expect(screen.getByText(/ssh key path is required/i)).toBeInTheDocument();
+  expect(connectButton()).toBeDisabled();
+});
+
+test("completing a previously-incomplete SSH block clears errors and re-enables submit", () => {
+  renderWithClient(<ConnectForm onLoaded={() => undefined} />);
+  fireEvent.change(screen.getByLabelText(/ssh bastion host/i), {
+    target: { value: "bastion.example.com" },
+  });
+  expect(connectButton()).toBeDisabled();
+  fireEvent.change(screen.getByLabelText(/ssh user/i), { target: { value: "deploy" } });
+  fireEvent.change(screen.getByLabelText(/ssh key path/i), {
+    target: { value: "/home/me/.ssh/id" },
+  });
+  expect(screen.queryByText(/ssh .* is required/i)).toBeNull();
+  expect(connectButton()).not.toBeDisabled();
+});
+
+test("clearing all SSH fields back to empty re-enables submit (block fully empty again)", () => {
+  renderWithClient(<ConnectForm onLoaded={() => undefined} />);
+  fireEvent.change(screen.getByLabelText(/ssh bastion host/i), {
+    target: { value: "bastion.example.com" },
+  });
+  expect(connectButton()).toBeDisabled();
+  fireEvent.change(screen.getByLabelText(/ssh bastion host/i), { target: { value: "  " } });
+  expect(screen.queryByText(/ssh .* is required/i)).toBeNull();
+  expect(connectButton()).not.toBeDisabled();
+});

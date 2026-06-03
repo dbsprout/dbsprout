@@ -41,6 +41,49 @@ function buildSsh(f: SshFields): SshTunnelInput | undefined {
 }
 // ─── end P2a-3 ───
 
+// ─── P4-10: SSH incomplete-block inline validation ───
+// Validate the SSH block at the boundary: a fully-empty block means "no tunnel"
+// and is allowed, but the moment ANY field is set the block must be complete —
+// host + user + key path are all required (port is optional, defaults to 22
+// server-side). This catches a partial block (which the backend would 422) with
+// inline errors before submit. Pure function → unit-testable, no side effects.
+
+/** Per-field SSH error messages; only present for required fields left blank. */
+interface SshErrors {
+  host?: string;
+  user?: string;
+  keyPath?: string;
+}
+
+const SSH_FIELD_KEYS: (keyof SshFields)[] = ["host", "port", "user", "keyPath"];
+
+/** True when at least one SSH field has a non-blank value. */
+function isSshTouched(f: SshFields): boolean {
+  return SSH_FIELD_KEYS.some((k) => f[k].trim().length > 0);
+}
+
+/**
+ * Required-field errors for a touched SSH block. A fully-empty block yields no
+ * errors (no tunnel); otherwise host/user/key_path must each be non-blank.
+ */
+function sshErrors(f: SshFields): SshErrors {
+  if (!isSshTouched(f)) {
+    return {};
+  }
+  const errors: SshErrors = {};
+  if (f.host.trim().length === 0) {
+    errors.host = "SSH bastion host is required when configuring a tunnel";
+  }
+  if (f.user.trim().length === 0) {
+    errors.user = "SSH user is required when configuring a tunnel";
+  }
+  if (f.keyPath.trim().length === 0) {
+    errors.keyPath = "SSH key path is required when configuring a tunnel";
+  }
+  return errors;
+}
+// ─── end P4-10 ───
+
 interface ConnectFormProps {
   onLoaded: () => void;
 }
@@ -116,7 +159,13 @@ export function ConnectForm({ onLoaded }: ConnectFormProps) {
     },
   });
 
+  // ─── P4-10 ─── Inline SSH validation: block submit while the block is partial.
+  const sshFieldErrors = sshErrors(ssh);
+  const sshIncomplete = Object.keys(sshFieldErrors).length > 0;
+  // ─── end P4-10 ───
+
   const isPending = testM.isPending || connectM.isPending;
+  const submitBlocked = isPending || sshIncomplete;
 
   function updateFields(next: ConnectionFields) {
     setFields(next);
@@ -318,8 +367,15 @@ export function ConnectForm({ onLoaded }: ConnectFormProps) {
                   id="ssh-host"
                   type="text"
                   value={ssh.host}
+                  aria-invalid={sshFieldErrors.host ? true : undefined}
+                  aria-describedby={sshFieldErrors.host ? "ssh-host-error" : undefined}
                   onChange={(e) => handleSshChange("host", e.target.value)}
                 />
+                {sshFieldErrors.host && (
+                  <p id="ssh-host-error" role="alert">
+                    {sshFieldErrors.host}
+                  </p>
+                )}
               </div>
               <div>
                 <label htmlFor="ssh-port">SSH bastion port</label>
@@ -338,8 +394,15 @@ export function ConnectForm({ onLoaded }: ConnectFormProps) {
                   id="ssh-user"
                   type="text"
                   value={ssh.user}
+                  aria-invalid={sshFieldErrors.user ? true : undefined}
+                  aria-describedby={sshFieldErrors.user ? "ssh-user-error" : undefined}
                   onChange={(e) => handleSshChange("user", e.target.value)}
                 />
+                {sshFieldErrors.user && (
+                  <p id="ssh-user-error" role="alert">
+                    {sshFieldErrors.user}
+                  </p>
+                )}
               </div>
               <div>
                 <label htmlFor="ssh-key-path">SSH key path</label>
@@ -347,8 +410,15 @@ export function ConnectForm({ onLoaded }: ConnectFormProps) {
                   id="ssh-key-path"
                   type="text"
                   value={ssh.keyPath}
+                  aria-invalid={sshFieldErrors.keyPath ? true : undefined}
+                  aria-describedby={sshFieldErrors.keyPath ? "ssh-key-path-error" : undefined}
                   onChange={(e) => handleSshChange("keyPath", e.target.value)}
                 />
+                {sshFieldErrors.keyPath && (
+                  <p id="ssh-key-path-error" role="alert">
+                    {sshFieldErrors.keyPath}
+                  </p>
+                )}
               </div>
             </fieldset>
             {/* ═══ end P2a-3 ═══ */}
@@ -389,14 +459,14 @@ export function ConnectForm({ onLoaded }: ConnectFormProps) {
         <button
           type="button"
           onClick={() => testM.mutate()}
-          disabled={isPending}
+          disabled={submitBlocked}
         >
           Test Connection
         </button>
         <button
           type="button"
           onClick={() => connectM.mutate()}
-          disabled={isPending}
+          disabled={submitBlocked}
         >
           Connect &amp; continue
         </button>
