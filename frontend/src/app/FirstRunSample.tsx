@@ -40,12 +40,18 @@ function hasSchemaLoaded(qc: QueryClient): boolean {
 export function FirstRunSample() {
   const { mode } = useMode();
   const qc = useQueryClient();
-  // Capture "first entry" once, BEFORE marking seen, so a re-render (or the
-  // effect below) can't flip it within this mount.
-  const [firstEntry] = useState(() => mode === "guided" && !readSeen());
+  // Latches true the first time guided mode is entered while the "seen" flag is
+  // unset — whether the app starts in guided OR the user toggles advanced→guided.
+  // Once latched it stays true for the rest of this mount, so the offer does not
+  // vanish mid-interaction; `markSeen()` ensures a future mount/reload never
+  // re-triggers it.
+  const [firstEntry, setFirstEntry] = useState(() => mode === "guided" && !readSeen());
 
   useEffect(() => {
-    if (mode === "guided" && !readSeen()) markSeen();
+    if (mode === "guided" && !readSeen()) {
+      setFirstEntry(true);
+      markSeen();
+    }
   }, [mode]);
 
   const { data } = useQuery({

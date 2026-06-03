@@ -2,7 +2,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { queryKeys } from "../api/endpoints";
-import { ModeProvider } from "./ModeProvider";
+import { ModeProvider, useMode } from "./ModeProvider";
 import { FirstRunSample } from "./FirstRunSample";
 
 const SEEN = "dbsprout.guided.seen";
@@ -92,6 +92,34 @@ test("does not offer on a second entry (seen flag already set)", () => {
   localStorage.setItem(SEEN, "true");
   renderFirstRun();
   expect(screen.queryByText(/E-commerce/i)).not.toBeInTheDocument();
+});
+
+test("offers the sample when the user toggles advanced -> guided", async () => {
+  vi.stubGlobal("fetch", sampleFetch());
+  localStorage.setItem("dbsprout.mode", "advanced");
+
+  function Toggle() {
+    const { setMode } = useMode();
+    return (
+      <button type="button" onClick={() => setMode("guided")}>
+        go-guided
+      </button>
+    );
+  }
+
+  render(
+    <QueryClientProvider client={new QueryClient()}>
+      <ModeProvider>
+        <Toggle />
+        <FirstRunSample />
+      </ModeProvider>
+    </QueryClientProvider>,
+  );
+  // Nothing offered while advanced.
+  expect(screen.queryByText(/E-commerce/i)).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "go-guided" }));
+  await waitFor(() => expect(screen.getByText(/E-commerce/i)).toBeInTheDocument());
+  expect(localStorage.getItem(SEEN)).toBe("true");
 });
 
 test("surfaces a load error from the sample endpoint", async () => {
