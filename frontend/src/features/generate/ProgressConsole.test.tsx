@@ -1,4 +1,4 @@
-import { act, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { renderWithClient } from "../../test/renderWithClient";
 import { ProgressConsole } from "./ProgressConsole";
@@ -215,4 +215,70 @@ test("falls back to polling when the socket drops before terminal", async () => 
 
   // Poll fallback still drives the console to a terminal status.
   await waitFor(() => expect(screen.getByText(/succeeded/i)).toBeInTheDocument());
+});
+
+// ─── P4-6: cancel affordance ───
+// A router fetch stub: /api/jobs/{id}/cancel records the call + flips the job to
+// `cancelled`; bare /api/jobs/{id} polls return `running` until cancel, then
+// `cancelled`. The WS is left inert so the poll is the source of truth.
+function cancelFetch() {
+  const cancelCalls: string[] = [];
+  const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+    const url = String(input);
+    if (url.endsWith("/cancel")) {
+      cancelCalls.push(url);
+      return jsonResponse({ job_id: "j1", status: "cancelled" });
+    }
+    if (url.startsWith("/api/jobs/")) {
+      const status = cancelCalls.length > 0 ? "cancelled" : "running";
+      return jsonResponse({ ...base, status });
+    }
+    return jsonResponse({}, 500);
+  });
+  return { fetchMock, cancelCalls };
+}
+
+test("shows a Cancel button while the job runs and clicking it calls cancelJob", async () => {
+  const { fetchMock, cancelCalls } = cancelFetch();
+  vi.stubGlobal("fetch", fetchMock);
+
+  renderWithClient(<ProgressConsole jobId="j1" pollMs={20} />);
+
+  const cancelBtn = await screen.findByRole("button", { name: /cancel/i });
+  fireEvent.click(cancelBtn);
+
+  await waitFor(() => expect(cancelCalls.length).toBeGreaterThan(0));
+  expect(cancelCalls[0]).toBe("/api/jobs/j1/cancel");
+});
+
+test("the poll settles on cancelled; the console shows it and stops polling", async () => {
+  const { fetchMock } = cancelFetch();
+  vi.stubGlobal("fetch", fetchMock);
+
+  renderWithClient(<ProgressConsole jobId="j1" pollMs={20} />);
+
+  fireEvent.click(await screen.findByRole("button", { name: /cancel/i }));
+
+  await waitFor(() => expect(screen.getByText(/run cancelled\./i)).toBeInTheDocument());
+  // The Cancel button is gone once the run is terminal.
+  expect(screen.queryByRole("button", { name: /cancel/i })).not.toBeInTheDocument();
+
+  // No further /api/jobs polls after the terminal (cancelled) state.
+  const pollCalls = () =>
+    fetchMock.mock.calls.filter(
+      (c) => String(c[0]).startsWith("/api/jobs/") && !String(c[0]).endsWith("/cancel"),
+    ).length;
+  const settled = pollCalls();
+  await new Promise((r) => setTimeout(r, 80));
+  expect(pollCalls()).toBe(settled);
+});
+
+test("no Cancel button once the job has already succeeded", async () => {
+  const m = staged({ status: "succeeded", finished_at: "2026-06-02T00:00:05+00:00" }, 1);
+  vi.stubGlobal("fetch", m);
+
+  renderWithClient(<ProgressConsole jobId="j1" pollMs={20} />);
+
+  await waitFor(() => expect(screen.getByText(/succeeded/i)).toBeInTheDocument());
+  expect(screen.queryByRole("button", { name: /cancel/i })).not.toBeInTheDocument();
 });

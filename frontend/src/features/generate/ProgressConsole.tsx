@@ -1,7 +1,7 @@
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import { useEffect } from "react";
 import { ApiError } from "../../api/client";
-import { getJob, queryKeys } from "../../api/endpoints";
+import { cancelJob, getJob, queryKeys } from "../../api/endpoints";
 import { isTerminal } from "./isTerminal";
 import { useJobSocket } from "./useJobSocket";
 
@@ -24,6 +24,11 @@ interface ProgressConsoleProps {
  * shown; a transport/HTTP failure of the poll itself surfaces the typed
  * ApiError message. `onSucceeded` fires exactly once on the first succeeded
  * signal from either source.
+ *
+ * While the run is non-terminal a Cancel button arms the cooperative cancel via
+ * POST /api/jobs/{id}/cancel (the existing `cancelJob`, modelled on the P1c-2
+ * insert-cancel pattern); the next poll observes the `cancelled` state, the poll
+ * settles, and the "Run cancelled." line renders.
  */
 export function ProgressConsole({ jobId, pollMs = 500, onSucceeded }: ProgressConsoleProps) {
   const { progress, terminal: wsTerminal } = useJobSocket(jobId);
@@ -38,6 +43,8 @@ export function ProgressConsole({ jobId, pollMs = 500, onSucceeded }: ProgressCo
       return pollMs;
     },
   });
+
+  const cancel = useMutation({ mutationFn: () => cancelJob(jobId) });
 
   // The WS terminal status (when present) wins; otherwise fall back to the poll.
   const status = progress?.status ?? job.data?.status;
@@ -73,6 +80,11 @@ export function ProgressConsole({ jobId, pollMs = 500, onSucceeded }: ProgressCo
           Table: <strong>{progress.table}</strong> · {progress.tablesDone} / {progress.tablesTotal}{" "}
           tables · {progress.totalRows} rows
         </p>
+      )}
+      {!isTerminal(status) && (
+        <button type="button" disabled={cancel.isPending} onClick={() => cancel.mutate()}>
+          Cancel
+        </button>
       )}
       {status === "failed" && error && <p role="alert">{error}</p>}
       {status === "cancelled" && <p>Run cancelled.</p>}
