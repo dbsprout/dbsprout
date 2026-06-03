@@ -189,6 +189,69 @@ export interface JobRecordResponse {
   error: string | null;
 }
 
+// ─── P4-5 ───
+// Live job-progress WebSocket frames streamed by GET /ws/jobs/{job_id}
+// (backend dbsprout/web/progress.py). The server sends one event frame per
+// ProgressEvent (per-table boundary), then a single terminal frame, then closes.
+
+/** A per-table progress frame (mirrors ProgressEvent.model_dump(mode="json")). */
+export interface ProgressEventFrame {
+  phase: "table_start" | "table_done";
+  table: string | null;
+  tables_done: number;
+  tables_total: number;
+  rows_in_table: number;
+  total_rows: number;
+  message: string | null;
+}
+
+/** The final frame carrying the job's terminal status (+ error if it failed). */
+export interface TerminalFrame {
+  phase: "terminal";
+  status: JobStatus;
+  error: string | null;
+}
+
+/** Discriminated union of every frame the job-progress socket emits. */
+export type JobProgressFrame = ProgressEventFrame | TerminalFrame;
+
+/** Reduced live-progress snapshot the console renders from the socket stream. */
+export interface JobProgress {
+  /** The table named by the latest event frame (null before the first frame). */
+  table: string | null;
+  tablesDone: number;
+  tablesTotal: number;
+  totalRows: number;
+  /** Terminal status once the terminal frame arrives, else null while live. */
+  status: JobStatus | null;
+  /** Failure message from the terminal frame (null unless the run failed). */
+  error: string | null;
+}
+
+// ─── P4-4 ───
+// Mirrors GET /api/jobs/{id}/result (backend dbsprout/web/routers/generate.py).
+// The richer, terminal-only result envelope: the *real* per-table generated row
+// counts + per-table / total duration, read off the GenerateResult captured on
+// the JobRecord (vs. the /api/spec approximation). Available only once a run
+// succeeds (the endpoint 409s before then, 404s on an unknown id).
+
+/** One generated table's actual row count + real generation time (ms). */
+export interface JobTableResult {
+  table_name: string;
+  row_count: number;
+  duration_ms: number;
+}
+
+/** Response of GET /api/jobs/{id}/result — actual generated counts + timings. */
+export interface JobResultResponse {
+  job_id: string;
+  total_rows: number;
+  total_tables: number;
+  total_duration_ms: number;
+  tables: JobTableResult[];
+}
+// ─── end P4-4 ───
+
 // ── P1c-4: Runs/Quality/Costs ──
 // Mirrors GET /api/runs · /api/quality · /api/costs
 // (backend dbsprout/web/routers/insights_api.py). Telemetry only — no secrets.

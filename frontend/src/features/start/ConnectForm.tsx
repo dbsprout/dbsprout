@@ -4,6 +4,7 @@ import { ApiError } from "../../api/client";
 import {
   buildConnectionUrl,
   defaultPort,
+  parseConnectionUrl,
   SSL_MODES,
   type ConnectionFields,
   type ConnectionParam,
@@ -81,6 +82,11 @@ function parseParams(text: string): ConnectionParam[] {
   return out;
 }
 
+/** Serialize parsed params back into the textarea's `key=value` per-line form. */
+function paramsToText(params: ConnectionParam[]): string {
+  return params.map((p) => (p.value.length > 0 ? `${p.key}=${p.value}` : p.key)).join("\n");
+}
+
 /** String-valued keys of ConnectionFields (everything except `type` and `params`). */
 type StringFieldKey = Exclude<keyof ConnectionFields, "type" | "params">;
 
@@ -135,6 +141,19 @@ export function ConnectForm({ onLoaded }: ConnectFormProps) {
     setParamsText(text);
     updateFields({ ...fields, params: parseParams(text) });
   }
+
+  // ─── P4-8 ───
+  // Pasting / editing the URL reverse-populates the structured form (incl. the
+  // Advanced section). The raw URL is kept verbatim in state — so what you paste is
+  // exactly what is sent on Test/Connect — while `fields` and the params textarea are
+  // derived from it via `parseConnectionUrl` (the inverse of `buildConnectionUrl`).
+  function handleUrlChange(raw: string) {
+    setUrl(raw);
+    const parsed = parseConnectionUrl(raw);
+    setFields(parsed);
+    setParamsText(paramsToText(parsed.params));
+  }
+  // ─── end P4-8 ───
 
   function renderProbeResult(data: ConnectionProbe) {
     return (
@@ -344,7 +363,7 @@ export function ConnectForm({ onLoaded }: ConnectFormProps) {
           type="text"
           aria-label="Connection URL"
           value={url}
-          onChange={(e) => setUrl(e.target.value)}
+          onChange={(e) => handleUrlChange(e.target.value)}
         />
       </div>
 

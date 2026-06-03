@@ -33,15 +33,26 @@ const job = {
   error: null,
 };
 
+// ─── P4-4 ─── the real per-table result envelope read once the run succeeds.
+const JOB_RESULT = {
+  job_id: "job-1",
+  total_rows: 100,
+  total_tables: 1,
+  total_duration_ms: 120,
+  tables: [{ table_name: "users", row_count: 100, duration_ms: 120 }],
+};
+
 /**
- * One router fetch stub: /api/generate → job id, /api/jobs/* → running then
- * succeeded, /api/spec → SPEC. Models the full slice end-to-end.
+ * One router fetch stub: /api/generate → job id, /api/jobs/{id}/result → the
+ * real result envelope (P4-4), /api/jobs/* → running then succeeded, /api/spec →
+ * SPEC (fallback). Models the full slice end-to-end.
  */
 function makeFetch() {
   let jobPolls = 0;
   return vi.fn(async (input: RequestInfo | URL) => {
     const url = String(input);
     if (url === "/api/generate") return jsonResponse({ job_id: "job-1", seed: 42 });
+    if (url.endsWith("/result")) return jsonResponse(JOB_RESULT); // P4-4
     if (url.startsWith("/api/jobs/")) {
       jobPolls += 1;
       const status = jobPolls <= 1 ? "running" : "succeeded";

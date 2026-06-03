@@ -16,6 +16,7 @@ import type {
   InsertRequest,
   InsertResponse,
   JobRecordResponse,
+  JobResultResponse,
   PreviewResponse,
   QualityResponse,
   RowCountResponse,
@@ -40,6 +41,7 @@ export const queryKeys = {
   generators: ["generators"] as const,
   preview: (table: string) => ["preview", table] as const,
   job: (jobId: string) => ["job", jobId] as const,
+  jobResult: (jobId: string) => ["job-result", jobId] as const, // P4-4
   validate: ["validate"] as const, // P1c-3
   runs: (page?: number) => ["runs", page] as const, // P1c-4
   quality: (runId?: number) => ["quality", runId] as const, // P1c-4
@@ -100,6 +102,24 @@ export const generate = (body: GenerateRequest) =>
   apiPost<GenerateResponse>("/api/generate", body);
 export const getJob = (jobId: string) =>
   apiGet<JobRecordResponse>(`/api/jobs/${encodeURIComponent(jobId)}`);
+
+// ─── P4-5 ───
+// Absolute ws[s]:// URL for the live job-progress socket (GET /ws/jobs/{id},
+// backend dbsprout/web/progress.py). Derived from window.location so the vite
+// dev `/ws` proxy and same-origin production both resolve correctly; https
+// pages upgrade to wss. URL only — no fetch.
+export const jobSocketUrl = (jobId: string): string => {
+  const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
+  return `${proto}//${window.location.host}/ws/jobs/${encodeURIComponent(jobId)}`;
+};
+
+// ─── P4-4 ───
+// GET /api/jobs/{id}/result — the richer result envelope (real per-table
+// generated counts + per-table/total duration). Available only after the run
+// succeeds (409 before then; 404 on an unknown id). Read by ResultSummary.
+export const getJobResult = (jobId: string) =>
+  apiGet<JobResultResponse>(`/api/jobs/${encodeURIComponent(jobId)}/result`);
+// ─── end P4-4 ───
 
 // ─── P1c-4: insights ───
 // Read-only JSON twins of the legacy HTML insights views, over state.db

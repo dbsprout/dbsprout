@@ -22,6 +22,14 @@ keeps **two** failure paths:
   the original exception logged at ``ERROR`` (with traceback) and a correlation
   id surfaced to the user.
 
+Two SSH-tunnel paths are caught *before* the known-set / INTERNAL guards: a
+missing ``[ssh]`` extra (:class:`~dbsprout.core.ssh_tunnel.SshTunnelUnavailable`)
+→ typed 503 ``SSH_UNAVAILABLE`` (P2a-3), and a live bastion connect/auth/forward
+failure (:class:`~dbsprout.core.ssh_tunnel.SshTunnelConnectError`) → typed 4xx/502
+``SSH_TUNNEL_FAILED`` kind-mapped via
+:func:`dbsprout.web.errors.web_error_ssh_tunnel_failed` (P4-9) — neither is ever a
+raw 500, and the bastion / remote target is scrubbed at the raise site.
+
 Credentials are redacted in any echoed URL or message via
 :func:`dbsprout.web.workspace._redact_url`, and the workspace is mutated only
 on success — a failed connect can never leave half-loaded state behind.
@@ -48,6 +56,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 # bound as a module-level name so tests can monkeypatch the seam.
 from dbsprout.core.ssh_tunnel import (
     SshTunnelConfig,
+    SshTunnelConnectError,
     SshTunnelUnavailable,
     open_ssh_tunnel,
 )
@@ -55,6 +64,7 @@ from dbsprout.web.errors import (
     classify_connect_error,
     raise_web_error,
     web_error_internal,
+    web_error_ssh_tunnel_failed,
     web_error_ssh_unavailable,
 )
 
@@ -208,6 +218,12 @@ async def connect_test(request: Request, body: ConnectRequest) -> Any:
         # ─── end P2a-3 region ───
     except SshTunnelUnavailable as exc:
         return raise_web_error(request, web_error_ssh_unavailable(), original=exc)
+    except SshTunnelConnectError as exc:
+        # P4-9: a live bastion connect/auth/forward failure → typed 4xx/502
+        # (kind-mapped), never the INTERNAL 500 it used to fall through to. The
+        # target is already scrubbed at the raise site; only the coarse kind
+        # crosses into the envelope.
+        return raise_web_error(request, web_error_ssh_tunnel_failed(exc.kind), original=exc)
     except _known_connect_exceptions() as exc:
         return raise_web_error(request, classify_connect_error(exc, body.url), original=exc)
     except Exception as exc:
@@ -260,6 +276,12 @@ async def connect(request: Request, body: ConnectRequest) -> Any:
         # ─── end P2a-3 region ───
     except SshTunnelUnavailable as exc:
         return raise_web_error(request, web_error_ssh_unavailable(), original=exc)
+    except SshTunnelConnectError as exc:
+        # P4-9: a live bastion connect/auth/forward failure → typed 4xx/502
+        # (kind-mapped), never the INTERNAL 500 it used to fall through to. The
+        # target is already scrubbed at the raise site; only the coarse kind
+        # crosses into the envelope.
+        return raise_web_error(request, web_error_ssh_tunnel_failed(exc.kind), original=exc)
     except _known_connect_exceptions() as exc:
         return raise_web_error(request, classify_connect_error(exc, url), original=exc)
     except Exception as exc:
