@@ -1,6 +1,6 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
-import { ColumnGrid } from "./ColumnGrid";
+import { ColumnGrid, focusRowIndex } from "./ColumnGrid";
 import type { GeneratorConfig, GeneratorMethod, TableSpec } from "../../api/types";
 
 const emailCfg: GeneratorConfig = {
@@ -267,3 +267,72 @@ test("scrolling the virtualized body mounts later rows and unmounts earlier ones
   expect(screen.queryByRole("button", { name: "inspect col_0" })).not.toBeInTheDocument();
 });
 // ─── end P4-2 ───
+
+// ─── P4-7: cross-panel focus (drill-to-cell) ───
+test("highlights the focused column row when focusColumn is given", () => {
+  render(
+    <ColumnGrid
+      spec={spec}
+      methods={methods}
+      previewRow={null}
+      focusColumn="email"
+      onSelect={() => undefined}
+      onGeneratorChange={() => undefined}
+    />,
+  );
+  const emailButton = screen.getByRole("button", { name: "inspect email" });
+  const row = emailButton.closest("[data-focused]") as HTMLElement | null;
+  expect(row).not.toBeNull();
+  expect(row).toHaveAttribute("data-focused", "true");
+  // The non-focused row carries the attribute set to "false".
+  const idButton = screen.getByRole("button", { name: "inspect id" });
+  expect(idButton.closest("[data-focused]")).toHaveAttribute("data-focused", "false");
+});
+
+test("no row is focused when focusColumn is null", () => {
+  render(
+    <ColumnGrid
+      spec={spec}
+      methods={methods}
+      previewRow={null}
+      focusColumn={null}
+      onSelect={() => undefined}
+      onGeneratorChange={() => undefined}
+    />,
+  );
+  const focused = document.querySelectorAll('[data-focused="true"]');
+  expect(focused.length).toBe(0);
+});
+
+test("no-op (no crash, no highlight) when the focused column no longer exists", () => {
+  render(
+    <ColumnGrid
+      spec={spec}
+      methods={methods}
+      previewRow={null}
+      focusColumn="ghost_column"
+      onSelect={() => undefined}
+      onGeneratorChange={() => undefined}
+    />,
+  );
+  // Grid still renders its real columns; nothing is marked focused.
+  expect(screen.getByRole("button", { name: "inspect email" })).toBeInTheDocument();
+  expect(document.querySelectorAll('[data-focused="true"]').length).toBe(0);
+});
+
+// The scroll-into-view for a far-down focused column delegates to the virtualizer's
+// scrollToIndex(focusRowIndex(...)). jsdom never relayouts the virtual window, so the
+// row-mount can't be asserted here; the pure index helper is unit-tested instead.
+test("focusRowIndex returns the column's position", () => {
+  const order = ["id", "email", "name"];
+  expect(focusRowIndex(order, "email")).toBe(1);
+  expect(focusRowIndex(order, "id")).toBe(0);
+});
+
+test("focusRowIndex returns -1 for a null or absent column (no-op)", () => {
+  const order = ["id", "email"];
+  expect(focusRowIndex(order, null)).toBe(-1);
+  expect(focusRowIndex(order, undefined)).toBe(-1);
+  expect(focusRowIndex(order, "ghost")).toBe(-1);
+});
+// ─── end P4-7 ───

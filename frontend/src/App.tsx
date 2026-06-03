@@ -1,5 +1,6 @@
 import { AppShell } from "./app/AppShell";
 import { GuidedSection } from "./app/GuidedSection";
+import { useSelection } from "./app/SelectionProvider";
 import { SchemaTree } from "./features/schema/SchemaTree";
 import { ConfigurePanel } from "./features/configure/ConfigurePanel";
 import { SpecPanel } from "./features/configure/SpecPanel";
@@ -11,6 +12,9 @@ import { InsertPanel } from "./features/insert/InsertPanel"; // P1c-2
 import { ValidatePanel } from "./features/validate/ValidatePanel"; // P1c-3
 
 export function App() {
+  // ─── P4-7 ─── route a Validate violation's drill into the cross-panel selection
+  // store; ConfigurePanel consumes it to focus the offending table+column.
+  const { setSelection } = useSelection();
   return (
     <AppShell>
       {/* ═══ P3-2: each section is wrapped in GuidedSection (advanced = plain
@@ -47,9 +51,11 @@ export function App() {
       {/* ═══ P1c-3: Validate ═══ */}
       <GuidedSection stepId="validate">
         <h2>Validate</h2>
-        {/* Drill seam: no shared cross-panel selection store yet, so wire a no-op
-            stub. A future story can route this to focus the Configure ColumnGrid. */}
-        <ValidatePanel onDrill={() => undefined} />
+        {/* P4-7: a violation's "Drill to cell" sets the cross-panel selection,
+            which ConfigurePanel applies to focus the offending table+column. */}
+        <ValidatePanel
+          onDrill={({ table, column }) => setSelection({ table, column })}
+        />
       </GuidedSection>
       {/* ═══ /P1c-3 ═══ */}
       {/* ═══ P1c-4: Runs & Quality ═══ */}
