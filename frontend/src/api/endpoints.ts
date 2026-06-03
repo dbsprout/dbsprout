@@ -12,6 +12,7 @@ import type {
   SamplesResponse,
   SchemaSummary,
   SchemaTreeData,
+  ValidateResponse,
 } from "./types";
 
 export const queryKeys = {
@@ -21,6 +22,7 @@ export const queryKeys = {
   generators: ["generators"] as const,
   preview: (table: string) => ["preview", table] as const,
   job: (jobId: string) => ["job", jobId] as const,
+  validate: ["validate"] as const, // P1c-3
 };
 
 export const listSamples = () => apiGet<SamplesResponse>("/api/samples");
@@ -60,3 +62,10 @@ export const generate = (body: GenerateRequest) =>
   apiPost<GenerateResponse>("/api/generate", body);
 export const getJob = (jobId: string) =>
   apiGet<JobRecordResponse>(`/api/jobs/${encodeURIComponent(jobId)}`);
+
+// ─── P1c-3: validate ───
+// POST /api/validate validates the last generation run (no body validates all
+// tables; an optional table list scopes the report). The non-HTMX JSON branch
+// is consumed here — no HX-Request header is sent.
+export const validate = (tables?: string[]) =>
+  apiPost<ValidateResponse>("/api/validate", tables ? { tables } : undefined);
