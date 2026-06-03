@@ -23,6 +23,8 @@ import type {
   SchemaTreeData,
   SpecAssistResponse,
   SpecProvider,
+  TableAdvanced,
+  TableAdvancedResponse,
   ValidateResponse,
 } from "./types";
 
@@ -68,6 +70,15 @@ export const putColumnSpec = (table: string, column: string, cfg: GeneratorConfi
     `/api/spec/tables/${encodeURIComponent(table)}/columns/${encodeURIComponent(column)}`,
     cfg,
   );
+// ─── P2b-2: advanced packs (correlations + derived) ───
+// Persist a table's correlations / derived lists; either may be omitted (partial
+// update). Invalidate queryKeys.spec on success — no dedicated query key needed.
+export const putTableAdvanced = (table: string, body: TableAdvanced) =>
+  apiPut<TableAdvancedResponse>(
+    `/api/spec/tables/${encodeURIComponent(table)}/advanced`,
+    body,
+  );
+// ─── end P2b-2 ───
 export const getPreview = (table: string) =>
   apiGet<PreviewResponse>(`/api/preview/${encodeURIComponent(table)}`);
 
