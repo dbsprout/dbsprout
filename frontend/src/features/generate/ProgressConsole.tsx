@@ -3,6 +3,7 @@ import { useEffect } from "react";
 import { ApiError } from "../../api/client";
 import { getJob, queryKeys } from "../../api/endpoints";
 import { isTerminal } from "./isTerminal";
+import { useJobSocket } from "./useJobSocket";
 
 interface ProgressConsoleProps {
   jobId: string;
@@ -13,24 +14,33 @@ interface ProgressConsoleProps {
 }
 
 /**
- * Poll GET /api/jobs/{jobId} on an interval and render the live status. Polling
- * stops as soon as the job reaches a terminal state (succeeded / failed /
- * cancelled). On failure the (already credential-scrubbed) server error is shown;
- * a transport/HTTP failure of the poll itself surfaces the typed ApiError message.
+ * Render a generate job's live progress. The per-table progress line streams
+ * over the `/ws/jobs/{jobId}` WebSocket (`useJobSocket`); a `GET /api/jobs/{id}`
+ * poll runs alongside as the disconnect fallback so the run still reaches a
+ * terminal status if the socket drops or never opens.
  *
- * Per-table progress events stream over a WebSocket on the backend; this slice
- * intentionally uses polling only, so the console reports status transitions
- * rather than per-row progress.
+ * Polling stops as soon as EITHER signal reports terminal — the WS terminal
+ * frame or a terminal poll. On failure the (credential-scrubbed) server error is
+ * shown; a transport/HTTP failure of the poll itself surfaces the typed
+ * ApiError message. `onSucceeded` fires exactly once on the first succeeded
+ * signal from either source.
  */
 export function ProgressConsole({ jobId, pollMs = 500, onSucceeded }: ProgressConsoleProps) {
+  const { progress, terminal: wsTerminal } = useJobSocket(jobId);
+
   const job = useQuery({
     queryKey: queryKeys.job(jobId),
     queryFn: () => getJob(jobId),
     enabled: !!jobId,
-    refetchInterval: (query) => (isTerminal(query.state.data?.status) ? false : pollMs),
+    refetchInterval: (query) => {
+      // Stop polling once either the poll OR the WebSocket reports terminal.
+      if (wsTerminal || isTerminal(query.state.data?.status)) return false;
+      return pollMs;
+    },
   });
 
-  const status = job.data?.status;
+  // The WS terminal status (when present) wins; otherwise fall back to the poll.
+  const status = progress?.status ?? job.data?.status;
   const succeeded = status === "succeeded";
 
   useEffect(() => {
@@ -41,11 +51,14 @@ export function ProgressConsole({ jobId, pollMs = 500, onSucceeded }: ProgressCo
     return <p role="alert">{(job.error as ApiError).message}</p>;
   }
 
-  if (!job.data) {
+  if (!job.data && !progress) {
     return <p>Starting job…</p>;
   }
 
-  const { engine, seed, error } = job.data;
+  const engine = job.data?.engine;
+  const seed = job.data?.seed;
+  // Prefer the WS terminal error when the socket reported the failure; else poll.
+  const error = progress?.status === "failed" ? progress.error : job.data?.error;
 
   return (
     <div>
@@ -55,6 +68,12 @@ export function ProgressConsole({ jobId, pollMs = 500, onSucceeded }: ProgressCo
       <p>
         Engine: {engine ?? "—"} · Seed: {seed ?? "—"}
       </p>
+      {progress && progress.table && (
+        <p>
+          Table: <strong>{progress.table}</strong> · {progress.tablesDone} / {progress.tablesTotal}{" "}
+          tables · {progress.totalRows} rows
+        </p>
+      )}
       {status === "failed" && error && <p role="alert">{error}</p>}
       {status === "cancelled" && <p>Run cancelled.</p>}
     </div>

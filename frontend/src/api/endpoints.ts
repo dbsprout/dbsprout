@@ -102,6 +102,16 @@ export const generate = (body: GenerateRequest) =>
 export const getJob = (jobId: string) =>
   apiGet<JobRecordResponse>(`/api/jobs/${encodeURIComponent(jobId)}`);
 
+// ─── P4-5 ───
+// Absolute ws[s]:// URL for the live job-progress socket (GET /ws/jobs/{id},
+// backend dbsprout/web/progress.py). Derived from window.location so the vite
+// dev `/ws` proxy and same-origin production both resolve correctly; https
+// pages upgrade to wss. URL only — no fetch.
+export const jobSocketUrl = (jobId: string): string => {
+  const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
+  return `${proto}//${window.location.host}/ws/jobs/${encodeURIComponent(jobId)}`;
+};
+
 // ─── P4-4 ───
 // GET /api/jobs/{id}/result — the richer result envelope (real per-table
 // generated counts + per-table/total duration). Available only after the run
