@@ -50,7 +50,7 @@ function json(body: unknown, status = 200) {
 }
 
 function router() {
-  return vi.fn(async (input: RequestInfo | URL) => {
+  return vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) => {
     const url = String(input);
     if (url === "/api/spec") return json(SPEC);
     if (url === "/api/generators") return json({ providers: [], methods: [] });
