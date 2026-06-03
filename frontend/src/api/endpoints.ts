@@ -21,6 +21,8 @@ import type {
   SamplesResponse,
   SchemaSummary,
   SchemaTreeData,
+  SpecAssistResponse,
+  SpecProvider,
   ValidateResponse,
 } from "./types";
 
@@ -123,3 +125,11 @@ export const exportData = (format: ExportFormat, tables?: string[]): Promise<voi
 // is consumed here — no HX-Request header is sent.
 export const validate = (tables?: string[]) =>
   apiPost<ValidateResponse>("/api/validate", tables ? { tables } : undefined);
+
+// ─── P2b-3 ───
+// POST /api/spec/assist — let an LLM propose a full DataSpec for the loaded
+// schema. Default provider is the offline "embedded" path; "cloud" is opt-in.
+// On success the server stores the proposal on the workspace, so callers
+// invalidate queryKeys.spec to repaint the configure grid (no new query key).
+export const assistSpec = (provider?: SpecProvider) =>
+  apiPost<SpecAssistResponse>("/api/spec/assist", provider ? { provider } : {});
