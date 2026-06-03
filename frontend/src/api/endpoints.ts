@@ -1,12 +1,18 @@
-import { apiGet, apiPost, apiPut, apiUpload } from "./client";
+import { apiDownload, apiGet, apiPost, apiPut, apiUpload } from "./client";
 import type {
+  CancelJobResponse,
   ConnectionProbe,
   CostsResponse,
   DataSpec,
+  ExportFormat,
+  ExportRequest,
   GenerateRequest,
   GenerateResponse,
   GeneratorConfig,
   GeneratorsResponse,
+  InsertPreview,
+  InsertRequest,
+  InsertResponse,
   JobRecordResponse,
   PreviewResponse,
   QualityResponse,
@@ -15,6 +21,7 @@ import type {
   SamplesResponse,
   SchemaSummary,
   SchemaTreeData,
+  ValidateResponse,
 } from "./types";
 
 export const queryKeys = {
@@ -24,6 +31,7 @@ export const queryKeys = {
   generators: ["generators"] as const,
   preview: (table: string) => ["preview", table] as const,
   job: (jobId: string) => ["job", jobId] as const,
+  validate: ["validate"] as const, // P1c-3
   runs: (page?: number) => ["runs", page] as const, // P1c-4
   quality: (runId?: number) => ["quality", runId] as const, // P1c-4
   costs: ["costs"] as const, // P1c-4
@@ -75,3 +83,43 @@ export const listRuns = (page?: number) =>
 export const getQuality = (runId?: number) =>
   apiGet<QualityResponse>(runId === undefined ? "/api/quality" : `/api/quality?run_id=${runId}`);
 export const getCosts = () => apiGet<CostsResponse>("/api/costs");
+
+// ─── P1c-2: insert ─────────────────────────────────────────────────────────
+// Write-guard preview → confirm → background insert job. Reuses getJob (P1b-3)
+// + queryKeys.job for the poll — the job semantics are identical, so no new key.
+
+/**
+ * POST /api/insert/preview — request a single-use, scope-bound HMAC token for
+ * the connected DB's last generation result. `tables` selects a subset (null /
+ * omitted ⇒ whole-DB FK-safe scope).
+ */
+export const insertPreview = (tables?: string[]) =>
+  apiPost<InsertPreview>("/api/insert/preview", { tables: tables ?? null });
+
+/** POST /api/insert — start a background insert job (requires the preview token). */
+export const insertData = (body: InsertRequest) =>
+  apiPost<InsertResponse>("/api/insert", body);
+
+/** POST /api/jobs/{id}/cancel — cooperatively cancel the active insert job. */
+export const cancelJob = (jobId: string) =>
+  apiPost<CancelJobResponse>(`/api/jobs/${encodeURIComponent(jobId)}/cancel`);
+
+// ─── P1c-1: export ───
+// Imperative file download (not a query) — POST /api/export → blob → browser save.
+export const exportData = (format: ExportFormat, tables?: string[]): Promise<void> => {
+  const body: ExportRequest = tables && tables.length > 0 ? { format, tables } : { format };
+  // The server names a single-table file "<table>.<ext>" and a multi-table bundle
+  // "dbsprout-export.<ext>"; mirror that as the fallback when no header is present.
+  const fallback =
+    tables && tables.length === 1
+      ? `${tables[0]}.${format}`
+      : `dbsprout-export.${format}`;
+  return apiDownload("/api/export", body, fallback);
+};
+
+// ─── P1c-3: validate ───
+// POST /api/validate validates the last generation run (no body validates all
+// tables; an optional table list scopes the report). The non-HTMX JSON branch
+// is consumed here — no HX-Request header is sent.
+export const validate = (tables?: string[]) =>
+  apiPost<ValidateResponse>("/api/validate", tables ? { tables } : undefined);
