@@ -33,7 +33,7 @@ export function GenerateSurface({ pollMs }: GenerateSurfaceProps) {
           onSucceeded={() => setSucceeded(true)}
         />
       )}
-      {succeeded && <ResultSummary />}
+      {succeeded && jobId && <ResultSummary jobId={jobId} />}
     </div>
   );
 }

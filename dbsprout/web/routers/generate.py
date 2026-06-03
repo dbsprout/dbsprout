@@ -72,6 +72,7 @@ _SEED_BITS: int = 63
 if TYPE_CHECKING:
     from collections.abc import Callable
 
+    from dbsprout.generate.orchestrator import GenerateResult
     from dbsprout.generate.progress import CancelToken, ProgressEvent
     from dbsprout.web.workspace import Workspace
 
@@ -297,4 +298,82 @@ async def get_job(request: Request, job_id: str) -> dict[str, Any]:
         "started_at": _isoformat(record.started_at),
         "finished_at": _isoformat(record.finished_at),
         "error": record.error,
+    }
+
+
+# ── GET /api/jobs/{job_id}/result (P4-4 / DBS-204) ─────────────────────
+
+
+@generate_router.get("/api/jobs/{job_id}/result")
+async def get_job_result(request: Request, job_id: str) -> dict[str, Any]:
+    """Return the *real* per-table generated counts + durations (P4-4).
+
+    The plain ``GET /api/jobs/{job_id}`` envelope carries only metadata; this
+    dedicated, terminal-only endpoint surfaces the ``GenerateResult`` captured
+    on ``JobRecord.result`` so the Studio summary reflects actual generated rows
+    and timings instead of the ``/api/spec`` approximation.
+
+    Shape::
+
+        {
+            "job_id": str,
+            "total_rows": int,
+            "total_tables": int,
+            "total_duration_ms": int,
+            "tables": [{"table_name": str, "row_count": int, "duration_ms": int}, ...],
+        }
+
+    The per-table rows come from ``GenerateResult.table_timings`` — a tuple of
+    ``(table_name, row_count, generation_ms)`` triples captured by the
+    orchestrator — so the counts are the *generated* counts (cross-checking
+    ``len(tables_data[name])``) and the durations are real per-table
+    milliseconds. ``total_duration_ms`` rounds ``duration_seconds`` to whole
+    milliseconds.
+
+    Errors:
+
+    * ``404`` (friendly string ``detail``) on an unknown id — the
+      :class:`~dbsprout.web.jobs.JobError` from ``JobManager.get`` is mapped to
+      the HTTP shape (no traceback leak).
+    * ``409`` when the job has not produced a result yet (still running, or
+      failed / cancelled) — the real result only exists on success, so there is
+      nothing to summarise; the client should wait for / re-check the job
+      status.
+
+    The result is pure generated data + counts (no DB target / DSN), so unlike
+    the failure path of ``POST /api/generate`` there is no credential surface to
+    scrub here. The orchestrator import stays lazy to preserve the
+    ``dbsprout serve`` lazy-import contract.
+    """
+    from dbsprout.web.jobs import JobError  # noqa: PLC0415
+
+    manager = request.app.state.job_manager
+    try:
+        record = manager.get(job_id)
+    except JobError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Unknown job {job_id!r}.",
+        ) from exc
+
+    if record.result is None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                f"Job {job_id!r} has no result yet (status {record.status.value!r}); "
+                "the per-table summary is available only after a run succeeds."
+            ),
+        )
+
+    result = cast("GenerateResult", record.result)
+    tables = [
+        {"table_name": name, "row_count": row_count, "duration_ms": generation_ms}
+        for name, row_count, generation_ms in result.table_timings
+    ]
+    return {
+        "job_id": record.id,
+        "total_rows": result.total_rows,
+        "total_tables": result.total_tables,
+        "total_duration_ms": round(result.duration_seconds * 1000),
+        "tables": tables,
     }

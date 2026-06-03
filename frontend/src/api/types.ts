@@ -189,6 +189,30 @@ export interface JobRecordResponse {
   error: string | null;
 }
 
+// ─── P4-4 ───
+// Mirrors GET /api/jobs/{id}/result (backend dbsprout/web/routers/generate.py).
+// The richer, terminal-only result envelope: the *real* per-table generated row
+// counts + per-table / total duration, read off the GenerateResult captured on
+// the JobRecord (vs. the /api/spec approximation). Available only once a run
+// succeeds (the endpoint 409s before then, 404s on an unknown id).
+
+/** One generated table's actual row count + real generation time (ms). */
+export interface JobTableResult {
+  table_name: string;
+  row_count: number;
+  duration_ms: number;
+}
+
+/** Response of GET /api/jobs/{id}/result — actual generated counts + timings. */
+export interface JobResultResponse {
+  job_id: string;
+  total_rows: number;
+  total_tables: number;
+  total_duration_ms: number;
+  tables: JobTableResult[];
+}
+// ─── end P4-4 ───
+
 // ── P1c-4: Runs/Quality/Costs ──
 // Mirrors GET /api/runs · /api/quality · /api/costs
 // (backend dbsprout/web/routers/insights_api.py). Telemetry only — no secrets.
