@@ -1,6 +1,8 @@
 import type { ReactNode } from "react";
 import { useMode } from "./ModeProvider";
 import { Stepper } from "./Stepper";
+import { CoachPanel } from "./CoachPanel";
+import { FirstRunSample } from "./FirstRunSample";
 
 interface AppShellProps {
   children: ReactNode;
@@ -42,6 +44,10 @@ export function AppShell({ children }: AppShellProps) {
         </h1>
         <ModeToggle />
         <Stepper />
+        {/* ═══ P3-2: guided-only — render null in advanced mode, so the advanced
+            header stays byte-identical. ═══ */}
+        <FirstRunSample />
+        <CoachPanel />
       </header>
       <main>{children}</main>
     </div>

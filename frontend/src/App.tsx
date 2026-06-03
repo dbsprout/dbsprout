@@ -1,4 +1,5 @@
 import { AppShell } from "./app/AppShell";
+import { GuidedSection } from "./app/GuidedSection";
 import { SchemaTree } from "./features/schema/SchemaTree";
 import { ConfigurePanel } from "./features/configure/ConfigurePanel";
 import { SpecPanel } from "./features/configure/SpecPanel";
@@ -12,47 +13,50 @@ import { ValidatePanel } from "./features/validate/ValidatePanel"; // P1c-3
 export function App() {
   return (
     <AppShell>
-      <section>
+      {/* ═══ P3-2: each section is wrapped in GuidedSection (advanced = plain
+          <section>; guided = dim non-active steps). The Output step owns both the
+          Export and Insert sections (design spec §6 "Output (Export+Insert)"). ═══ */}
+      <GuidedSection stepId="start">
         <h2>Start</h2>
         <StartPanel onLoaded={() => undefined} />
-      </section>
-      <section>
+      </GuidedSection>
+      <GuidedSection stepId="schema">
         <SchemaTree />
-      </section>
-      <section>
+      </GuidedSection>
+      <GuidedSection stepId="configure">
         <h2>Configure</h2>
         <SpecPanel />
         <ConfigurePanel />
-      </section>
-      <section>
+      </GuidedSection>
+      <GuidedSection stepId="generate">
         <h2>Generate</h2>
         <GenerateSurface />
-      </section>
+      </GuidedSection>
       {/* ═══ P1c-1: Export ═══ */}
-      <section>
+      <GuidedSection stepId="output">
         <h2>Output</h2>
         <ExportPanel />
-      </section>
+      </GuidedSection>
       {/* ═══ /P1c-1 ═══ */}
       {/* ═══ P1c-2: Insert ═══ */}
-      <section>
+      <GuidedSection stepId="output">
         <h2>Insert</h2>
         <InsertPanel />
-      </section>
+      </GuidedSection>
       {/* ═══ /P1c-2 ═══ */}
       {/* ═══ P1c-3: Validate ═══ */}
-      <section>
+      <GuidedSection stepId="validate">
         <h2>Validate</h2>
         {/* Drill seam: no shared cross-panel selection store yet, so wire a no-op
             stub. A future story can route this to focus the Configure ColumnGrid. */}
         <ValidatePanel onDrill={() => undefined} />
-      </section>
+      </GuidedSection>
       {/* ═══ /P1c-3 ═══ */}
       {/* ═══ P1c-4: Runs & Quality ═══ */}
-      <section>
+      <GuidedSection stepId="runs">
         <h2>Runs & Quality</h2>
         <RunsSurface />
-      </section>
+      </GuidedSection>
       {/* ═══ /P1c-4 ═══ */}
     </AppShell>
   );

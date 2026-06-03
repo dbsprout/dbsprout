@@ -87,3 +87,37 @@ test("advanced mode renders all 7 sections and no stepper (regression)", () => {
   expect(screen.queryByText(/Step 1 of 7/)).not.toBeInTheDocument();
   expect(screen.getByRole("button", { name: /guided/i })).toBeInTheDocument();
 });
+
+// ─── P3-2: guided focus overlay + coach copy ───
+// Advanced sections carry NO overlay attributes (byte-identical regression guard).
+test("advanced mode: no section is inert or aria-hidden", () => {
+  stubSamplesFetch();
+  const { container } = renderApp();
+  const sections = Array.from(container.querySelectorAll("main > section"));
+  expect(sections.length).toBeGreaterThan(0);
+  for (const s of sections) {
+    expect(s).not.toHaveAttribute("inert");
+    expect(s).not.toHaveAttribute("aria-hidden");
+  }
+});
+
+test("guided mode: only the active step's section is interactive, others inert", () => {
+  stubSamplesFetch();
+  localStorage.setItem("dbsprout.mode", "guided");
+  const { container } = renderApp();
+  const sections = Array.from(container.querySelectorAll("main > section"));
+  // currentStep defaults to 0 (Start) → at least one non-active section is inert.
+  const inertCount = sections.filter((s) => s.hasAttribute("inert")).length;
+  expect(inertCount).toBeGreaterThan(0);
+  // The Start section (active) is NOT inert.
+  const startHeading = screen.getByRole("heading", { name: "Start" });
+  const startSection = startHeading.closest("section")!;
+  expect(startSection).not.toHaveAttribute("inert");
+});
+
+test("guided mode: coach copy for the active (Start) step is shown", () => {
+  stubSamplesFetch();
+  localStorage.setItem("dbsprout.mode", "guided");
+  renderApp();
+  expect(screen.getByText("Pick a data source")).toBeInTheDocument();
+});
