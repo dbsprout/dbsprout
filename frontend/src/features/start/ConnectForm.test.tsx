@@ -73,3 +73,50 @@ test("advanced fields are not shown for sqlite", () => {
   fireEvent.change(screen.getByLabelText(/database type/i), { target: { value: "sqlite" } });
   expect(screen.queryByLabelText(/ssl mode/i)).toBeNull();
 });
+
+// ─── P2a-3 ───
+
+function bodyOf(call: unknown): Record<string, unknown> {
+  const init = (call as [string, RequestInit])[1];
+  return JSON.parse(String(init.body)) as Record<string, unknown>;
+}
+
+test("filling the SSH bastion sends an ssh block on Connect", async () => {
+  const fetchMock = stubOk();
+  const onLoaded = vi.fn();
+  renderWithClient(<ConnectForm onLoaded={onLoaded} />);
+  fireEvent.change(screen.getByLabelText(/connection url/i), {
+    target: { value: "postgresql://u:p@db.internal:5432/app" },
+  });
+  fireEvent.change(screen.getByLabelText(/ssh bastion host/i), {
+    target: { value: "bastion.example.com" },
+  });
+  fireEvent.change(screen.getByLabelText(/ssh user/i), { target: { value: "deploy" } });
+  fireEvent.change(screen.getByLabelText(/ssh key path/i), { target: { value: "/home/me/.ssh/id" } });
+  fireEvent.click(screen.getByRole("button", { name: /^connect/i }));
+  await waitFor(() => expect(onLoaded).toHaveBeenCalled());
+  const connectCall = fetchMock.mock.calls.find(([u]) => String(u).endsWith("/api/connect"));
+  expect(connectCall).toBeDefined();
+  expect(bodyOf(connectCall)).toMatchObject({
+    ssh: { host: "bastion.example.com", user: "deploy", key_path: "/home/me/.ssh/id" },
+  });
+});
+
+test("no ssh block is sent when the bastion host is left blank", async () => {
+  const fetchMock = stubOk();
+  const onLoaded = vi.fn();
+  renderWithClient(<ConnectForm onLoaded={onLoaded} />);
+  fireEvent.change(screen.getByLabelText(/connection url/i), {
+    target: { value: "postgresql://u:p@db.internal:5432/app" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: /^connect/i }));
+  await waitFor(() => expect(onLoaded).toHaveBeenCalled());
+  const connectCall = fetchMock.mock.calls.find(([u]) => String(u).endsWith("/api/connect"));
+  expect(bodyOf(connectCall).ssh).toBeUndefined();
+});
+
+test("SSH fields are not shown for sqlite", () => {
+  renderWithClient(<ConnectForm onLoaded={() => undefined} />);
+  fireEvent.change(screen.getByLabelText(/database type/i), { target: { value: "sqlite" } });
+  expect(screen.queryByLabelText(/ssh bastion host/i)).toBeNull();
+});

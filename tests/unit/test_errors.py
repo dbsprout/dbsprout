@@ -95,6 +95,7 @@ _VALID_EXTRAS = {
     "train",
     "mongo",
     "docs",
+    "ssh",
     "all",
 }
 
