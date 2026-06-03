@@ -1,6 +1,7 @@
 import { apiGet, apiPost, apiPut, apiUpload } from "./client";
 import type {
   ConnectionProbe,
+  CostsResponse,
   DataSpec,
   GenerateRequest,
   GenerateResponse,
@@ -8,7 +9,9 @@ import type {
   GeneratorsResponse,
   JobRecordResponse,
   PreviewResponse,
+  QualityResponse,
   RowCountResponse,
+  RunsResponse,
   SamplesResponse,
   SchemaSummary,
   SchemaTreeData,
@@ -21,6 +24,9 @@ export const queryKeys = {
   generators: ["generators"] as const,
   preview: (table: string) => ["preview", table] as const,
   job: (jobId: string) => ["job", jobId] as const,
+  runs: (page?: number) => ["runs", page] as const, // P1c-4
+  quality: (runId?: number) => ["quality", runId] as const, // P1c-4
+  costs: ["costs"] as const, // P1c-4
 };
 
 export const listSamples = () => apiGet<SamplesResponse>("/api/samples");
@@ -60,3 +66,12 @@ export const generate = (body: GenerateRequest) =>
   apiPost<GenerateResponse>("/api/generate", body);
 export const getJob = (jobId: string) =>
   apiGet<JobRecordResponse>(`/api/jobs/${encodeURIComponent(jobId)}`);
+
+// ─── P1c-4: insights ───
+// Read-only JSON twins of the legacy HTML insights views, over state.db
+// telemetry (backend dbsprout/web/routers/insights_api.py).
+export const listRuns = (page?: number) =>
+  apiGet<RunsResponse>(page === undefined ? "/api/runs" : `/api/runs?page=${page}`);
+export const getQuality = (runId?: number) =>
+  apiGet<QualityResponse>(runId === undefined ? "/api/quality" : `/api/quality?run_id=${runId}`);
+export const getCosts = () => apiGet<CostsResponse>("/api/costs");

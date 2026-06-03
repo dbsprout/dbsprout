@@ -42,6 +42,7 @@ from dbsprout.web.routers.export import export_router
 from dbsprout.web.routers.generate import generate_router
 from dbsprout.web.routers.generators import generators_router
 from dbsprout.web.routers.insert import insert_router
+from dbsprout.web.routers.insights_api import insights_api_router
 from dbsprout.web.routers.jobs import jobs_router
 from dbsprout.web.routers.preview import preview_router
 from dbsprout.web.routers.regenerate import regenerate_router
@@ -315,6 +316,14 @@ def create_app(
     # alongside without colliding on the same line.
     app.include_router(export_router)
     # ── end S-140 ──
+    # ─── P1c-4 region ───
+    # GET /api/runs · /api/quality · /api/costs — read-only JSON twins of the
+    # HTML views/insights.py, feeding the React Workbench "Runs & Quality"
+    # panels. Wrap the existing pure builders (paginate_runs · build_quality_table
+    # · build_cost_summary) over the state DB; never leak config_json/secrets;
+    # honest empty payloads (200) when the CLI has never run.
+    app.include_router(insights_api_router)
+    # ─── end P1c-4 region ───
     return app
 
 

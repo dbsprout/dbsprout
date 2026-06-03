@@ -155,3 +155,61 @@ export interface JobRecordResponse {
   finished_at: string | null;
   error: string | null;
 }
+
+// ── P1c-4: Runs/Quality/Costs ──
+// Mirrors GET /api/runs · /api/quality · /api/costs
+// (backend dbsprout/web/routers/insights_api.py). Telemetry only — no secrets.
+
+export interface RunRow {
+  id: number | null;
+  started_at: string;
+  engine: string;
+  provider: string | null;
+  total_rows: number;
+  total_tables: number;
+  duration_ms: number | null;
+  cost: number;
+}
+
+export interface RunsResponse {
+  rows: RunRow[];
+  page: number;
+  total_pages: number;
+  total_runs: number;
+  has_prev: boolean;
+  has_next: boolean;
+}
+
+/** Classified quality-metric status. */
+export type QualityStatus = "pass" | "fail" | "warn";
+
+export interface QualityRow {
+  metric_type: string;
+  metric_name: string;
+  score: number;
+  passed: boolean;
+  status: QualityStatus;
+  details_json: string | null;
+}
+
+export interface QualityResponse {
+  // false (with empty rows, run_id null) when no run exists / run_id unknown.
+  found: boolean;
+  run_id: number | null;
+  rows: QualityRow[];
+}
+
+export interface ProviderCost {
+  provider: string;
+  cost: number;
+  tokens: number;
+  calls: number;
+}
+
+export interface CostsResponse {
+  total_cost: number;
+  total_tokens: number;
+  total_calls: number;
+  avg_cost_per_run: number;
+  per_provider: ProviderCost[];
+}
