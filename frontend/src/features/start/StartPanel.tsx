@@ -2,6 +2,7 @@ import { useState } from "react";
 import { ConnectForm } from "./ConnectForm";
 import { PasteForm } from "./PasteForm";
 import { SamplePicker } from "./SamplePicker";
+import { SavedConnections } from "./SavedConnections";
 import { UploadForm } from "./UploadForm";
 
 type Tab = "connect" | "upload" | "paste" | "sample";
@@ -24,6 +25,13 @@ interface StartPanelProps {
 
 export function StartPanel({ onLoaded }: StartPanelProps) {
   const [activeTab, setActiveTab] = useState<Tab>("connect");
+  // ═══ P2a-2 ═══ — the URL of the most recently loaded saved connection.
+  const [loadedUrl, setLoadedUrl] = useState<string | null>(null);
+
+  function handleLoadConnection(url: string) {
+    setLoadedUrl(url);
+    setActiveTab("connect");
+  }
 
   return (
     <div>
@@ -46,6 +54,13 @@ export function StartPanel({ onLoaded }: StartPanelProps) {
         {activeTab === "paste" && <PasteForm onLoaded={onLoaded} />}
         {activeTab === "sample" && <SamplePicker onLoaded={onLoaded} />}
       </div>
+
+      {/* ═══ P2a-2 ═══ */}
+      {loadedUrl !== null && (
+        <p role="status">{`Loaded connection: ${loadedUrl}`}</p>
+      )}
+      <SavedConnections onLoad={handleLoadConnection} />
+      {/* ═══ end P2a-2 ═══ */}
     </div>
   );
 }

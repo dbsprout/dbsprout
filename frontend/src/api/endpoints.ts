@@ -1,9 +1,11 @@
-import { apiDownload, apiGet, apiPost, apiPut, apiUpload } from "./client";
+import { ApiError, apiDownload, apiGet, apiPost, apiPut, apiUpload } from "./client";
 import type {
   CancelJobResponse,
   ConnectionProbe,
+  ConnectionsResponse,
   CostsResponse,
   DataSpec,
+  DeleteConnectionResponse,
   ExportFormat,
   ExportRequest,
   GenerateRequest,
@@ -19,6 +21,7 @@ import type {
   RowCountResponse,
   RunsResponse,
   SamplesResponse,
+  SavedConnectionInfo,
   SchemaSummary,
   SchemaTreeData,
   ValidateResponse,
@@ -35,6 +38,8 @@ export const queryKeys = {
   runs: (page?: number) => ["runs", page] as const, // P1c-4
   quality: (runId?: number) => ["quality", runId] as const, // P1c-4
   costs: ["costs"] as const, // P1c-4
+  connections: ["connections"] as const,
+  // P2a-2
 };
 
 export const listSamples = () => apiGet<SamplesResponse>("/api/samples");
@@ -123,3 +128,29 @@ export const exportData = (format: ExportFormat, tables?: string[]): Promise<voi
 // is consumed here — no HX-Request header is sent.
 export const validate = (tables?: string[]) =>
   apiPost<ValidateResponse>("/api/validate", tables ? { tables } : undefined);
+
+// ─── P2a-2 ───
+// Saved connections (.dbsprout/connections.toml). The server strips passwords
+// before persisting; the client only ever sees/sends a password-stripped or
+// ${ENV_VAR}-referenced URL.
+export const getConnections = () => apiGet<ConnectionsResponse>("/api/connections");
+
+export const saveConnection = (name: string, url: string) =>
+  apiPost<SavedConnectionInfo>("/api/connections", { name, url });
+
+// DELETE has no client.ts helper (that module is owned elsewhere), so this issues
+// the request inline and reuses ApiError for the typed-envelope error path.
+export const deleteConnection = async (name: string): Promise<DeleteConnectionResponse> => {
+  const resp = await fetch(`/api/connections/${encodeURIComponent(name)}`, { method: "DELETE" });
+  if (!resp.ok) {
+    let detail: { code?: string; message?: string; hint?: string } = {};
+    try {
+      const data = (await resp.json()) as { detail?: typeof detail } | null;
+      detail = data?.detail ?? {};
+    } catch {
+      // Non-JSON error body — fall through to a status-only ApiError.
+    }
+    throw new ApiError(resp.status, detail);
+  }
+  return (await resp.json()) as DeleteConnectionResponse;
+};
