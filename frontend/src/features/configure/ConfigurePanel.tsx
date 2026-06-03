@@ -25,6 +25,7 @@ import { CorrelationsEditor } from "./CorrelationsEditor";
 import { DerivedColumns } from "./DerivedColumns";
 // ─── end P2b-2 ───
 import { PreviewTable } from "./PreviewTable";
+import { SpecAssist } from "./SpecAssist";
 
 /**
  * Configure surface: a table picker drives a per-column generator grid, a Column
@@ -80,6 +81,11 @@ export function ConfigurePanel() {
 
   return (
     <div>
+      {/* ═══ P2b-3 ═══ */}
+      {/* AI spec-assist: an LLM proposes a full DataSpec for the loaded schema;
+          on success the spec query is invalidated so this grid repaints. */}
+      <SpecAssist />
+      {/* ═══ end P2b-3 ═══ */}
       <label>
         table
         <select

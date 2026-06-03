@@ -323,6 +323,23 @@ export interface ValidateRequest {
   tables?: string[];
 }
 
+// ─── P2b-3 ───
+// Mirrors POST /api/spec/assist (backend dbsprout/web/routers/spec_assist.py).
+// An LLM proposes a full DataSpec for the loaded schema; the server stores it on
+// the workspace (GET /api/spec then reflects it) and returns this summary.
+
+/** Which provider proposes the spec. `embedded` is offline; `cloud` is opt-in. */
+export type SpecProvider = "embedded" | "cloud";
+
+/** Summary returned by POST /api/spec/assist after a successful proposal. */
+export interface SpecAssistResponse {
+  provider: SpecProvider;
+  model_used: string | null;
+  schema_hash: string;
+  tables: number;
+  total_columns: number;
+}
+
 /** High-level integrity totals across the validated run. */
 export interface ValidateSummary {
   tables: number;
