@@ -60,3 +60,36 @@ test("Next enables reactively once a schema lands, then advances", () => {
   expect(screen.getByText("Schema")).toBeInTheDocument();
   expect(screen.getByRole("button", { name: /back/i })).toBeEnabled();
 });
+
+/** Jumps the provider to the Generate step (index 3) once on mount. */
+function ForceGenerateStep() {
+  const { setMode, setStep } = useMode();
+  useEffect(() => {
+    setMode("guided");
+    setStep(3);
+  }, [setMode, setStep]);
+  return null;
+}
+
+// Regression: a polled job flips running→succeeded IN PLACE on the SAME jobId
+// key, so the cache-entry count is unchanged. The stepper's snapshot must still
+// advance (monotonic version) or Next would never re-enable at Generate.
+test("Generate's Next re-enables on an in-place job running→succeeded flip", () => {
+  const client = new QueryClient();
+  client.setQueryData(queryKeys.job("x"), { status: "running" });
+  render(
+    <QueryClientProvider client={client}>
+      <ModeProvider>
+        <ForceGenerateStep />
+        <Stepper />
+      </ModeProvider>
+    </QueryClientProvider>,
+  );
+  const next = () => screen.getByRole("button", { name: /next/i });
+  expect(screen.getByText("Generate")).toBeInTheDocument();
+  expect(next()).toBeDisabled();
+  act(() => {
+    client.setQueryData(queryKeys.job("x"), { status: "succeeded" });
+  });
+  expect(next()).toBeEnabled();
+});

@@ -1,5 +1,5 @@
 import { useQueryClient } from "@tanstack/react-query";
-import { useSyncExternalStore } from "react";
+import { useRef, useSyncExternalStore } from "react";
 import { useMode } from "./ModeProvider";
 import { STEPS } from "./steps";
 
@@ -17,13 +17,21 @@ export function Stepper() {
   const qc = useQueryClient();
 
   // Subscribe to the whole query cache so the gate recomputes on any mutation
-  // (schema load, spec creation, job success). The snapshot is the cache's
-  // change-count; the subscribe callback also fires on in-place setQueryData,
-  // forcing a re-render where the gate is recomputed.
+  // (schema load, spec creation, job success). The snapshot is a monotonic
+  // version bumped on every notification — using a count or hash would miss
+  // IN-PLACE data updates (e.g. a polled job flipping running→succeeded on the
+  // SAME jobId key), since the cache-entry count is unchanged. useSyncExternalStore
+  // bails out of re-rendering when the snapshot is `===` to the previous, so the
+  // version must strictly increase whenever any cached data changes.
+  const versionRef = useRef(0);
   useSyncExternalStore(
-    (onChange) => qc.getQueryCache().subscribe(onChange),
-    () => qc.getQueryCache().getAll().length,
-    () => 0,
+    (onChange) =>
+      qc.getQueryCache().subscribe(() => {
+        versionRef.current += 1;
+        onChange();
+      }),
+    () => versionRef.current,
+    () => versionRef.current,
   );
 
   if (mode !== "guided") return null;
