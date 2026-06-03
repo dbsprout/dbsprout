@@ -1,11 +1,15 @@
 import { apiGet, apiPost, apiPut, apiUpload } from "./client";
 import type {
+  CancelJobResponse,
   ConnectionProbe,
   DataSpec,
   GenerateRequest,
   GenerateResponse,
   GeneratorConfig,
   GeneratorsResponse,
+  InsertPreview,
+  InsertRequest,
+  InsertResponse,
   JobRecordResponse,
   PreviewResponse,
   RowCountResponse,
@@ -60,3 +64,23 @@ export const generate = (body: GenerateRequest) =>
   apiPost<GenerateResponse>("/api/generate", body);
 export const getJob = (jobId: string) =>
   apiGet<JobRecordResponse>(`/api/jobs/${encodeURIComponent(jobId)}`);
+
+// ─── P1c-2: insert ─────────────────────────────────────────────────────────
+// Write-guard preview → confirm → background insert job. Reuses getJob (P1b-3)
+// + queryKeys.job for the poll — the job semantics are identical, so no new key.
+
+/**
+ * POST /api/insert/preview — request a single-use, scope-bound HMAC token for
+ * the connected DB's last generation result. `tables` selects a subset (null /
+ * omitted ⇒ whole-DB FK-safe scope).
+ */
+export const insertPreview = (tables?: string[]) =>
+  apiPost<InsertPreview>("/api/insert/preview", { tables: tables ?? null });
+
+/** POST /api/insert — start a background insert job (requires the preview token). */
+export const insertData = (body: InsertRequest) =>
+  apiPost<InsertResponse>("/api/insert", body);
+
+/** POST /api/jobs/{id}/cancel — cooperatively cancel the active insert job. */
+export const cancelJob = (jobId: string) =>
+  apiPost<CancelJobResponse>(`/api/jobs/${encodeURIComponent(jobId)}/cancel`);
