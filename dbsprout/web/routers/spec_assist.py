@@ -58,6 +58,7 @@ registered by :func:`dbsprout.web.app.create_app` inside a delimited region.
 from __future__ import annotations
 
 import logging
+import os
 from typing import TYPE_CHECKING, Any, Literal, cast
 
 from fastapi import APIRouter, Request
@@ -83,11 +84,28 @@ class AssistRequest(BaseModel):
     ``provider`` defaults to the offline ``embedded`` path; ``cloud`` is opt-in.
     ``extra='forbid'`` keeps the contract tight (mirrors ``GenerateRequest`` /
     ``RegenerateRequest``) — an unknown field yields a 422 from Pydantic.
+
+    P4-11 — cloud key-entry UX. Two *non-secret* fields let the user steer the
+    cloud path without ever putting a raw API key on the wire:
+
+    * ``model`` — the litellm model string (e.g. ``gpt-4o-mini``), forwarded to
+      ``CloudProvider(model=...)``. ``None`` ⇒ the provider's own default.
+    * ``api_key_env`` — the *name* of the environment variable that holds the
+      provider key (e.g. ``OPENAI_API_KEY``). The route only checks that this
+      variable is **present in the server's own process environment**; litellm
+      then reads the value from that same environment on the real call. The key
+      *value* is never carried in the request, logged, or persisted — only its
+      env-var name (and the model) travel, both non-secret. Ignored for the
+      offline ``embedded`` provider.
     """
 
     model_config = ConfigDict(extra="forbid")
 
     provider: SpecProvider = Field(default="embedded")
+    # ─── P4-11 ─── non-secret cloud steering (model string + env-var *name*)
+    model: str | None = Field(default=None)
+    api_key_env: str | None = Field(default=None)
+    # ─── end P4-11 ───
 
 
 def _workspace(request: Request) -> Workspace:
@@ -95,17 +113,21 @@ def _workspace(request: Request) -> Workspace:
     return cast("Workspace", request.app.state.workspace)
 
 
-def _build_provider(provider: SpecProvider) -> Any:
+def _build_provider(provider: SpecProvider, model: str | None = None) -> Any:
     """Construct the chosen provider.
 
     Imported lazily so the module (and ``app.py``) never pull ``llama-cpp`` /
     ``litellm`` at import time. Construction can raise ``ImportError`` when the
     extra is absent — the caller translates that into a typed envelope.
+
+    P4-11 — a non-``None`` *model* is forwarded to ``CloudProvider(model=...)``
+    (the offline embedded provider takes no model argument, so it is ignored
+    there).
     """
     if provider == "cloud":
         from dbsprout.spec.providers.cloud import CloudProvider  # noqa: PLC0415
 
-        return CloudProvider()
+        return CloudProvider(model=model) if model else CloudProvider()
     from dbsprout.spec.providers.embedded import EmbeddedProvider  # noqa: PLC0415
 
     return EmbeddedProvider()
@@ -135,6 +157,10 @@ async def assist_spec(request: Request, body: AssistRequest) -> dict[str, Any]:
     Guards (typed envelopes via :mod:`dbsprout.web.errors`):
 
     * No schema loaded ⇒ ``409 NO_SCHEMA``.
+    * Cloud provider with an ``api_key_env`` naming an env var that is **absent
+      from the server's process environment** ⇒ ``503 LLM_UNAVAILABLE`` naming
+      the variable (P4-11) — caught *before* any provider construction so no
+      real API call is attempted.
     * Provider unavailable (missing ``[llm]``/``[cloud]`` extra, no model on
       disk, no API key, malformed model output) ⇒ ``503 LLM_UNAVAILABLE`` —
       never a ``500``; the existing workspace spec is left untouched.
@@ -152,6 +178,23 @@ async def assist_spec(request: Request, body: AssistRequest) -> dict[str, Any]:
         # ``raise_web_error`` is ``NoReturn`` — it always raises an HTTPException.
         raise_web_error(request, web_error_no_schema())
 
+    # ─── P4-11 ─── cloud key-entry guard.
+    # When the cloud request references an API key by env-var *name*, verify the
+    # variable is present in the server's own process environment before doing
+    # any work. This turns a missing key into a clear, actionable 503 (naming the
+    # variable) instead of a deep litellm AuthenticationError, and — crucially —
+    # the key *value* is never read into a local, logged, or persisted: only its
+    # presence is probed via ``os.environ`` membership.
+    if body.provider == "cloud" and body.api_key_env and body.api_key_env not in os.environ:
+        raise_web_error(
+            request,
+            web_error_llm_unavailable(
+                f"cloud provider key not found — set the {body.api_key_env} "
+                f"environment variable on the dbsprout server and retry"
+            ),
+        )
+    # ─── end P4-11 ───
+
     # Construct + call the provider. Any capability failure degrades to a typed
     # 503 envelope — never a 500, and the existing workspace spec stays in place.
     #
@@ -165,7 +208,7 @@ async def assist_spec(request: Request, body: AssistRequest) -> dict[str, Any]:
     # returns a 500, so any failure is folded into the typed envelope; the real
     # exception is preserved via ``original=exc`` for the server log.
     try:
-        provider = _build_provider(body.provider)
+        provider = _build_provider(body.provider, body.model)
         spec = provider.generate_spec(schema)
     except Exception as exc:  # see comment above; this path must never be a 500
         _log.warning("spec-assist provider %r unavailable: %s", body.provider, exc)

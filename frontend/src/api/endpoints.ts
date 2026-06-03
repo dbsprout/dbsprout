@@ -24,6 +24,7 @@ import type {
   SavedConnectionInfo,
   SchemaSummary,
   SchemaTreeData,
+  SpecAssistOptions,
   SpecAssistResponse,
   SpecProvider,
   SshTunnelInput,
@@ -180,5 +181,18 @@ export const deleteConnection = async (name: string): Promise<DeleteConnectionRe
 // schema. Default provider is the offline "embedded" path; "cloud" is opt-in.
 // On success the server stores the proposal on the workspace, so callers
 // invalidate queryKeys.spec to repaint the configure grid (no new query key).
-export const assistSpec = (provider?: SpecProvider) =>
-  apiPost<SpecAssistResponse>("/api/spec/assist", provider ? { provider } : {});
+//
+// ─── P4-11 ───
+// The cloud path may pass non-secret steering options (`model`, `api_key_env`).
+// They are forwarded only when set; the raw API key is never collected or sent —
+// the server reads it from its own environment via the named env var. The
+// embedded default body stays `{ provider: "embedded" }` (or `{}`), unchanged.
+export const assistSpec = (provider?: SpecProvider, opts?: SpecAssistOptions) => {
+  const body: { provider?: SpecProvider; model?: string; api_key_env?: string } = provider
+    ? { provider }
+    : {};
+  if (opts?.model) body.model = opts.model;
+  if (opts?.api_key_env) body.api_key_env = opts.api_key_env;
+  return apiPost<SpecAssistResponse>("/api/spec/assist", body);
+};
+// ─── end P4-11 ───
