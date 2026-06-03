@@ -245,23 +245,7 @@ async def test_same_seed_yields_byte_identical_output(tmp_path: Path) -> None:
     assert hashes[0] == hashes[1], f"Output diverged across runs: {hashes!r}"
 
 
-# ── Studio template surfaces the seed input ───────────────────────────
-
-
-def test_studio_console_template_exposes_seed_input(tmp_path: Path) -> None:
-    """Rendered Studio page must contain the seed input + Generate button.
-
-    Drives the existing Studio route (S-117) so the assertion is on the rendered
-    HTML, not the source template, catching missed includes.
-    """
-    app = _make_app(tmp_path / "state.db")
-    resp = TestClient(app).get("/studio")
-    assert resp.status_code == 200, resp.text
-    html = resp.text
-    # The seed input + Generate button live in the console panel.
-    assert 'id="studio-seed-input"' in html
-    assert 'id="studio-generate-btn"' in html
-    # Random toggle is part of the same form.
-    assert 'id="studio-seed-random"' in html
-    # The "Copy seed" affordance must be present so it can light up post-run.
-    assert "Copy seed" in html
+# The seed input UI (seed field + Generate button + random toggle + "Copy seed"
+# affordance) moved to the React SPA in the P1c-5 cutover; the seed *contract*
+# (seed echoed in the JSON response, persisted on JobRecord.seed) is covered by
+# the ``POST /api/generate`` tests above.

@@ -39,17 +39,15 @@ matches on ``type(exc).__name__`` plus a lowercase substring sweep of
 touching this code, and the test suite locks behaviour by raising stand-in
 exceptions with the right *names*.
 
-When the request carries ``HX-Request: true`` the renderer returns an
-:class:`~starlette.responses.HTMLResponse` built from the ``error_fragment.html``
-template (suitable for an ``hx-swap`` target). Without the header it raises an
-:class:`~fastapi.HTTPException` with the JSON envelope as ``detail`` — so the
-existing JSON contract (``{"detail": …}``) is preserved for curl / scripted
-callers and the existing tests.
+The renderer raises an :class:`~fastapi.HTTPException` with the JSON envelope as
+``detail`` — so the JSON contract (``{"detail": …}``) is the single response shape
+for curl / scripted callers, the React SPA, and the existing tests. (The legacy
+``HX-Request``/``error_fragment.html`` HTML branch was removed in the P1c-5
+cutover along with the rest of the server-rendered UI.)
 
-This module never imports from :mod:`dbsprout.web.app` at module level (only
-the renderer's ``request.app.state.templates`` access pulls in templates lazily
-at call time), so siblings can import :func:`classify_connect_error` /
-:func:`classify_parse_error` without circularity.
+This module never imports from :mod:`dbsprout.web.app` at module level, so
+siblings can import :func:`classify_connect_error` / :func:`classify_parse_error`
+without circularity.
 """
 
 from __future__ import annotations
@@ -59,7 +57,7 @@ import re
 import uuid
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, NoReturn
 
 from fastapi import HTTPException
 
@@ -67,14 +65,9 @@ if TYPE_CHECKING:
     from collections.abc import Iterable
 
     from starlette.requests import Request
-    from starlette.responses import HTMLResponse
 
 
 _LOGGER = logging.getLogger("dbsprout.web.errors")
-
-#: Header that marks an HTMX-driven request. When present, the renderer returns
-#: an HTML fragment instead of raising the JSON-shaped ``HTTPException``.
-_HTMX_HEADER = "hx-request"
 
 
 class WebErrorCode(str, Enum):
@@ -832,14 +825,8 @@ def web_error_llm_unavailable(reason: str) -> WebError:
 
 
 # ---------------------------------------------------------------------------
-# Renderer: HTMX-aware response, plus logging hook.
+# Renderer: JSON error response, plus logging hook.
 # ---------------------------------------------------------------------------
-
-
-def _wants_htmx(request: Request) -> bool:
-    """Return ``True`` if the request carries ``HX-Request: true``."""
-    value = request.headers.get(_HTMX_HEADER)
-    return value is not None and value.lower() == "true"
 
 
 def _log_error(
@@ -872,32 +859,16 @@ def raise_web_error(
     err: WebError,
     *,
     original: BaseException | None = None,
-) -> HTMLResponse:
-    """Log + raise/return the user-facing error response.
+) -> NoReturn:
+    """Log the failure, then raise the user-facing JSON error response.
 
-    Behaviour depends on the ``HX-Request`` header on *request*:
-
-    * **No header** — logs the failure, then raises :class:`fastapi.HTTPException`
-      with status ``err.status_code`` and ``detail = err.to_dict()``. FastAPI
-      serialises that into the canonical ``{"detail": …}`` JSON envelope.
-    * **Header set** — logs the failure and returns an :class:`HTMLResponse`
-      rendered from ``error_fragment.html``. Callers using this branch are
-      responsible for returning the response from their handler (raising would
-      bypass the HTMX swap target).
+    Logs the failure with structured context, then raises
+    :class:`fastapi.HTTPException` with status ``err.status_code`` and
+    ``detail = err.to_dict()``. FastAPI serialises that into the canonical
+    ``{"detail": …}`` JSON envelope — the single response shape since the P1c-5
+    cutover (the legacy ``HX-Request`` HTML-fragment branch was removed).
     """
     _log_error(request, err, original)
-    if _wants_htmx(request):
-        from fastapi.templating import (  # noqa: PLC0415, TC002 — lazy + needed at runtime
-            Jinja2Templates,
-        )
-
-        templates = cast("Jinja2Templates", request.app.state.templates)
-        return templates.TemplateResponse(
-            request,
-            "error_fragment.html",
-            {"error": err.to_dict(), "status_code": err.status_code},
-            status_code=err.status_code,
-        )
     raise HTTPException(status_code=err.status_code, detail=err.to_dict())
 
 

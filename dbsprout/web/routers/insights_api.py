@@ -3,17 +3,15 @@
 Three read-only JSON endpoints surface the SQLite state layer
 (``.dbsprout/state.db``) to the SPA's "Runs & Quality" panels:
 
-* ``GET /api/runs?page=`` — paginated run history (wraps
-  :func:`dbsprout.web.views.insights.paginate_runs`).
+* ``GET /api/runs?page=`` — paginated run history (uses :func:`paginate_runs`).
 * ``GET /api/quality?run_id=`` — per-metric pass/fail/warn table for one run
   (wraps :func:`dbsprout.report.quality_table.build_quality_table`); the latest
   run when ``run_id`` is omitted.
-* ``GET /api/costs`` — LLM cost summary (wraps
-  :func:`dbsprout.web.views.insights.build_cost_summary`).
+* ``GET /api/costs`` — LLM cost summary (uses :func:`build_cost_summary`).
 
-These are the JSON twins of the HTML ``views/insights.py`` views, which stay
-until the P1c-5 cutover removes them. The endpoints **wrap** the existing pure
-builders — they never re-derive the aggregations.
+The pure aggregation builders (:func:`build_cost_summary`, :func:`paginate_runs`)
+were relocated here from the former ``views/insights.py`` HTML module, which was
+removed in the P1c-5 cutover; this is now their sole home.
 
 State-data policy
 -----------------
@@ -25,9 +23,9 @@ CLI has never run, every endpoint returns an honest empty payload with ``200``
 ``/api/costs`` → zero totals.
 
 The router accesses the request-scoped :class:`~dbsprout.state.db.StateDB` via
-``app.state.get_state_db`` (the same accessor ``views/insights.py`` uses), so a
-fresh WAL connection is opened per request and the ``dbsprout serve``
-lazy-import contract is preserved (no eager generation imports).
+``app.state.get_state_db``, so a fresh WAL connection is opened per request and
+the ``dbsprout serve`` lazy-import contract is preserved (no eager generation
+imports).
 """
 
 from __future__ import annotations
@@ -38,17 +36,86 @@ from fastapi import APIRouter, Query, Request
 from pydantic import BaseModel, ConfigDict
 
 from dbsprout.report.quality_table import build_quality_table
-from dbsprout.web.views.insights import (
-    RUNS_PER_PAGE,
-    build_cost_summary,
-    paginate_runs,
-)
 
 if TYPE_CHECKING:
     from dbsprout.state.db import StateDB
     from dbsprout.state.models import RunRecord
 
 insights_api_router = APIRouter()
+
+#: Runs shown per ``/api/runs`` page.
+RUNS_PER_PAGE = 10
+
+
+# ── pure aggregation builders (relocated from views/insights.py at P1c-5) ─────
+
+
+def build_cost_summary(runs: list[RunRecord]) -> dict[str, Any]:
+    """Aggregate LLM cost telemetry across *runs* into a view-model.
+
+    Returns total cost/tokens/calls, average cost per run, and a per-provider
+    breakdown (sorted by descending cost).
+    """
+    total_cost = 0.0
+    total_tokens = 0
+    total_calls = 0
+    per_provider: dict[str, dict[str, float | int]] = {}
+
+    for run in runs:
+        for call in run.llm_calls:
+            total_cost += call.cost_usd
+            total_tokens += call.tokens_sent + call.tokens_received
+            total_calls += 1
+            bucket = per_provider.setdefault(call.provider, {"cost": 0.0, "tokens": 0, "calls": 0})
+            call_tokens = call.tokens_sent + call.tokens_received
+            bucket["cost"] = cast("float", bucket["cost"]) + call.cost_usd
+            bucket["tokens"] = cast("int", bucket["tokens"]) + call_tokens
+            bucket["calls"] = cast("int", bucket["calls"]) + 1
+
+    num_runs = len(runs)
+    avg_cost_per_run = total_cost / num_runs if num_runs else 0.0
+
+    provider_rows = sorted(
+        (
+            {
+                "provider": name,
+                "cost": round(cast("float", vals["cost"]), 6),
+                "tokens": cast("int", vals["tokens"]),
+                "calls": cast("int", vals["calls"]),
+            }
+            for name, vals in per_provider.items()
+        ),
+        key=lambda row: cast("float", row["cost"]),
+        reverse=True,
+    )
+
+    return {
+        "total_cost": round(total_cost, 6),
+        "total_tokens": total_tokens,
+        "total_calls": total_calls,
+        "avg_cost_per_run": round(avg_cost_per_run, 6),
+        "per_provider": provider_rows,
+    }
+
+
+def paginate_runs(runs: list[RunRecord], *, page: int, per_page: int) -> dict[str, Any]:
+    """Slice *runs* into one page plus navigation metadata.
+
+    ``page`` is clamped to ``[1, total_pages]`` (out-of-range or non-positive
+    values fall back to page 1). An empty list yields ``total_pages == 1``.
+    """
+    total = len(runs)
+    total_pages = max(1, -(-total // per_page))  # ceil division
+    safe_page = page if 1 <= page <= total_pages else 1
+    start = (safe_page - 1) * per_page
+    return {
+        "runs": runs[start : start + per_page],
+        "page": safe_page,
+        "total_pages": total_pages,
+        "total_runs": total,
+        "has_prev": safe_page > 1,
+        "has_next": safe_page < total_pages,
+    }
 
 
 # ── response models ──────────────────────────────────────────────────────────
@@ -132,7 +199,7 @@ class CostsResponse(BaseModel):
     per_provider: list[ProviderCost]
 
 
-# ── shared accessors (mirror dbsprout.web.views.insights) ────────────────────
+# ── shared accessors ─────────────────────────────────────────────────────────
 
 
 def _state_db(request: Request) -> StateDB:

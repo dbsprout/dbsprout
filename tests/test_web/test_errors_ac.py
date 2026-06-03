@@ -7,8 +7,8 @@ and assert the five acceptance-criteria invariants:
    parser exceptions to a typed envelope ``{code, message, hint?, correlation_id}``.
 2. HTTP responses use ``4xx`` for caller-actionable errors and ``5xx`` only for
    genuine server faults; bodies never contain ``Traceback`` or ``repr(exc)``.
-3. The browser path (``HX-Request: true``) receives a rendered HTML fragment
-   carrying the same fields and never a stack frame.
+3. Responses are JSON-only since the P1c-5 cutover — even with ``HX-Request:
+   true`` the body is the JSON envelope (the legacy HTML-fragment branch is gone).
 4. The generic catch-all returns ``{"code": "INTERNAL", "message": "Unexpected
    error"}`` with the real exception logged server-side and a correlation id
    surfaced to the user.
@@ -136,28 +136,31 @@ def test_password_never_appears_in_any_failure_body(tmp_path: Path) -> None:
     assert not _TRACEBACK_RE.search(resp_htmx.text)
 
 
-# ── invariant 3: HTMX path returns HTML fragment, not JSON ─────────────
+# ── invariant 3: responses are JSON-only, even under HX-Request (P1c-5) ─
 
 
-def test_htmx_path_returns_html_fragment_for_both_routes(tmp_path: Path) -> None:
+def test_htmx_header_still_returns_json_envelope_for_both_routes(tmp_path: Path) -> None:
+    """Since the P1c-5 cutover the ``HX-Request`` HTML-fragment branch is gone.
+
+    The error body is the JSON ``{"detail": {...}}`` envelope regardless of the
+    ``HX-Request`` header — the React SPA reads JSON, never an HTML fragment.
+    """
     client = _client(tmp_path)
     resp_connect = client.post(
         "/api/connect",
         json={"url": "redis://localhost:6379/0"},
         headers={"HX-Request": "true"},
     )
-    assert resp_connect.headers["content-type"].startswith("text/html")
-    assert "UNKNOWN_DIALECT" in resp_connect.text
-    assert "Correlation ID" in resp_connect.text
+    assert resp_connect.headers["content-type"].startswith("application/json")
+    assert resp_connect.json()["detail"]["code"] == "UNKNOWN_DIALECT"
 
     resp_load = client.post(
         "/api/schema/load",
         files={"file": ("x.sql", b"", "application/octet-stream")},
         headers={"HX-Request": "true"},
     )
-    assert resp_load.headers["content-type"].startswith("text/html")
-    assert "EMPTY_FILE" in resp_load.text
-    assert "Correlation ID" in resp_load.text
+    assert resp_load.headers["content-type"].startswith("application/json")
+    assert resp_load.json()["detail"]["code"] == "EMPTY_FILE"
 
 
 # ── invariant 4: INTERNAL fallback is 500 + real exception logged ──────

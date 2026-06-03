@@ -1,15 +1,17 @@
 """JSON insights API tests (P1c-4): /api/runs, /api/quality, /api/costs.
 
-These three read-only JSON endpoints wrap the existing pure builders
-(``paginate_runs``, ``build_quality_table``, ``build_cost_summary``) over the
-SQLite state layer (``.dbsprout/state.db``). They feed the React Workbench's
-"Runs & Quality" panels (the HTML ``views/insights.py`` stays until P1c-5).
+These three read-only JSON endpoints wrap the pure builders (``paginate_runs``,
+``build_quality_table``, ``build_cost_summary``) over the SQLite state layer
+(``.dbsprout/state.db``). They feed the React Workbench's "Runs & Quality"
+panels. (The ``paginate_runs`` / ``build_cost_summary`` builders were relocated
+into ``routers/insights_api.py`` at the P1c-5 cutover, which removed the legacy
+HTML ``views/insights.py`` module.)
 
 The web stack lives in the optional ``[web]`` extra, so every test guards with
-``pytest.importorskip("fastapi")`` *before* importing FastAPI symbols (mirrors
-``tests/test_web/test_insights_views.py``). Each endpoint is exercised with a
-``TestClient`` over a temporary state DB, plus an empty-state case that must
-return 200 (never 500) when the CLI has never run — honest "no data".
+``pytest.importorskip("fastapi")`` *before* importing FastAPI symbols. Each
+endpoint is exercised with a ``TestClient`` over a temporary state DB, plus an
+empty-state case that must return 200 (never 500) when the CLI has never run —
+honest "no data".
 """
 
 from __future__ import annotations
