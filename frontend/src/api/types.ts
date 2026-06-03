@@ -208,3 +208,91 @@ export interface CancelJobResponse {
   job_id: string;
   status: string;
 }
+
+// ── P1c-1: Export ──
+// Mirrors POST /api/export (backend dbsprout/web/routers/export.py).
+
+/** The four file-format writers offered for export. */
+export type ExportFormat = "sql" | "csv" | "json" | "parquet";
+
+export interface ExportRequest {
+  format: ExportFormat;
+  // Omitted / undefined → every table in the last run (FK-safe order preserved).
+  tables?: string[];
+}
+
+// ── P1c-3: Validate ──
+// Mirrors POST /api/validate's JSON (non-HTMX) envelope — see
+// dbsprout/web/routers/validate.py (_aggregate_report / _serialise_fidelity /
+// _serialise_detection). Keys `fidelity` and `detection` are always present but
+// null when no reference rows are seeded or the optional [stats] extra is absent.
+
+/** Optional list of table names to scope validation to (server validates the last run). */
+export interface ValidateRequest {
+  tables?: string[];
+}
+
+/** High-level integrity totals across the validated run. */
+export interface ValidateSummary {
+  tables: number;
+  rows: number;
+  /** Count of failed checks (not bad rows). */
+  violations: number;
+}
+
+/** Per-table violation buckets; one row per schema table (zeros when clean). */
+export interface IntegrityByTable {
+  table: string;
+  fk_violations: number;
+  unique_violations: number;
+  not_null_violations: number;
+  check_violations: number;
+}
+
+/** A single failed integrity check (details list is capped at 500 server-side). */
+export interface IntegrityDetail {
+  check: string;
+  table: string;
+  /** Null for table-level checks (e.g. composite PK). */
+  column: string | null;
+  /** Always false in details (passing checks are not listed). */
+  passed: boolean;
+  details: string;
+}
+
+/** One fidelity distribution-similarity metric. */
+export interface FidelityMetric {
+  metric: string;
+  table: string;
+  column: string | null;
+  score: number;
+  details: string;
+}
+
+export interface FidelityReport {
+  overall_score: number;
+  passed: boolean;
+  metrics: FidelityMetric[];
+}
+
+/** One detection (C2ST) metric. */
+export interface DetectionMetric {
+  metric: string;
+  table: string;
+  accuracy: number;
+  details: string;
+}
+
+export interface DetectionReport {
+  overall_score: number;
+  passed: boolean;
+  metrics: DetectionMetric[];
+}
+
+export interface ValidateResponse {
+  summary: ValidateSummary;
+  by_table: IntegrityByTable[];
+  details: IntegrityDetail[];
+  fidelity: FidelityReport | null;
+  detection: DetectionReport | null;
+}
