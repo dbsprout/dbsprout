@@ -1,9 +1,26 @@
 import type { QueryClient } from "@tanstack/react-query";
 import { queryKeys } from "../api/endpoints";
 
+/**
+ * The ordered step ids — the contract the focus overlay (P3-2 `GuidedSection`)
+ * and coach copy (`coachCopy.ts`) map onto. Kept in sync with `STEPS` below by
+ * the `steps.test.ts` membership check.
+ */
+export const STEP_IDS = [
+  "start",
+  "schema",
+  "configure",
+  "generate",
+  "validate",
+  "output",
+  "runs",
+] as const;
+
+export type StepId = (typeof STEP_IDS)[number];
+
 export interface Step {
   /** Stable identifier (also the App section it targets). */
-  id: string;
+  id: StepId;
   /** Human-readable step title shown in the stepper. */
   title: string;
   /**
