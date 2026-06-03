@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { GeneratorConfig } from "../../api/types";
 import { genLabel } from "./genLabel";
 
@@ -94,6 +94,51 @@ function parseParamRows(rows: ParamRow[]): Record<string, number> {
   return out;
 }
 
+/** The full set of editable buffers derived from a persisted cfg. */
+interface DraftBuffers {
+  nullableRate: string;
+  unique: boolean;
+  paramsText: string;
+  distribution: string;
+  paramRows: ParamRow[];
+  minText: string;
+  maxText: string;
+  enumValuesText: string;
+}
+
+/** Seed editable buffers from a persisted cfg (single source of truth). */
+function seedFrom(cfg: GeneratorConfig): DraftBuffers {
+  return {
+    nullableRate: String(cfg.nullable_rate),
+    unique: cfg.unique,
+    paramsText: JSON.stringify(cfg.params),
+    distribution: cfg.distribution ?? "",
+    paramRows: toParamRows(cfg.distribution_params),
+    minText: numText(cfg.min_value),
+    maxText: numText(cfg.max_value),
+    enumValuesText: enumText(cfg.enum_values),
+  };
+}
+
+/** Structural equality of two buffer snapshots (detects an unsaved edit). */
+function buffersEqual(a: DraftBuffers, b: DraftBuffers): boolean {
+  if (
+    a.nullableRate !== b.nullableRate ||
+    a.unique !== b.unique ||
+    a.paramsText !== b.paramsText ||
+    a.distribution !== b.distribution ||
+    a.minText !== b.minText ||
+    a.maxText !== b.maxText ||
+    a.enumValuesText !== b.enumValuesText ||
+    a.paramRows.length !== b.paramRows.length
+  ) {
+    return false;
+  }
+  return a.paramRows.every(
+    (row, i) => row.key === b.paramRows[i].key && row.value === b.paramRows[i].value,
+  );
+}
+
 function InspectorForm({ column, cfg, onSave }: ColumnInspectorProps) {
   const [nullableRate, setNullableRate] = useState(String(cfg.nullable_rate));
   const [unique, setUnique] = useState(cfg.unique);
@@ -106,6 +151,56 @@ function InspectorForm({ column, cfg, onSave }: ColumnInspectorProps) {
   const [maxText, setMaxText] = useState(numText(cfg.max_value));
   const [enumValuesText, setEnumValuesText] = useState(enumText(cfg.enum_values));
   const [error, setError] = useState<string | null>(null);
+
+  // ── P4-3: reconcile with external (grid-driven) edits to this same column ──
+  // `baselineRef` holds the cfg the current buffers were seeded from; `seedRef`
+  // holds that seed snapshot so we can tell a clean draft from an unsaved edit.
+  const baselineRef = useRef<GeneratorConfig>(cfg);
+  const seedRef = useRef<DraftBuffers>(seedFrom(cfg));
+  const [externalChange, setExternalChange] = useState(false);
+
+  /** Push a buffer snapshot into every input's state + reset the baselines. */
+  function applySeed(next: GeneratorConfig) {
+    const seed = seedFrom(next);
+    setNullableRate(seed.nullableRate);
+    setUnique(seed.unique);
+    setParamsText(seed.paramsText);
+    setDistribution(seed.distribution);
+    setParamRows(seed.paramRows);
+    setMinText(seed.minText);
+    setMaxText(seed.maxText);
+    setEnumValuesText(seed.enumValuesText);
+    baselineRef.current = next;
+    seedRef.current = seed;
+    setExternalChange(false);
+    setError(null);
+  }
+
+  // When the focused column's persisted cfg changes identity (e.g. the grid
+  // edited the SAME column), reconcile: silently re-seed a clean draft, or warn
+  // (preserve the edit) and offer an explicit refresh when there's unsaved work.
+  useEffect(() => {
+    if (cfg === baselineRef.current) {
+      return;
+    }
+    const current: DraftBuffers = {
+      nullableRate,
+      unique,
+      paramsText,
+      distribution,
+      paramRows,
+      minText,
+      maxText,
+      enumValuesText,
+    };
+    if (buffersEqual(current, seedRef.current)) {
+      applySeed(cfg);
+    } else {
+      setExternalChange(true);
+    }
+    // Reconciliation keys on the cfg reference only; buffer state is read
+    // imperatively above and must not retrigger this effect.
+  }, [cfg]);
 
   function patchRow(index: number, partial: Partial<ParamRow>) {
     setParamRows((rows) => rows.map((r, i) => (i === index ? { ...r, ...partial } : r)));
@@ -163,6 +258,15 @@ function InspectorForm({ column, cfg, onSave }: ColumnInspectorProps) {
     <aside aria-label={`inspector for ${column}`}>
       <h3>{column}</h3>
       <p>{genLabel(cfg.provider, cfg.method)}</p>
+
+      {externalChange && (
+        <div role="status">
+          <span>This column changed elsewhere — your edits are preserved.</span>
+          <button type="button" onClick={() => applySeed(cfg)}>
+            Refresh
+          </button>
+        </div>
+      )}
 
       <label>
         null %
