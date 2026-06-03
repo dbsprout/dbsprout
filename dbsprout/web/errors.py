@@ -131,6 +131,12 @@ class WebErrorCode(str, Enum):
     # because the failure is server-side capability, not caller input;
     # the existing heuristic spec on the workspace stays in place.
     LLM_UNAVAILABLE = "LLM_UNAVAILABLE"
+    # P2a-3 SSH-tunnel connect guard — raised by ``POST /api/connect`` /
+    # ``/api/connect/test`` when the request carries an ``ssh`` block but the
+    # optional ``[ssh]`` extra (``sshtunnel`` → ``paramiko``) is not installed.
+    # 503 because the failure is a server-side capability gap, not caller
+    # input — the request itself is well-formed.
+    SSH_UNAVAILABLE = "SSH_UNAVAILABLE"
 
 
 @dataclass(frozen=True)
@@ -353,6 +359,10 @@ _CODE_HINTS: dict[WebErrorCode, str] = {
     WebErrorCode.LLM_UNAVAILABLE: (
         "Install an LLM provider extra (e.g. pip install 'dbsprout[llm]') or "
         "use the heuristic spec which is already populated."
+    ),
+    # P2a-3 — the SSH-tunnel connect path needs the optional [ssh] extra.
+    WebErrorCode.SSH_UNAVAILABLE: (
+        "Install the SSH-tunnel extra and retry: pip install dbsprout[ssh]."
     ),
 }
 
@@ -825,6 +835,34 @@ def web_error_llm_unavailable(reason: str) -> WebError:
 
 
 # ---------------------------------------------------------------------------
+# P2a-3 SSH-tunnel connect factory helper.
+# ---------------------------------------------------------------------------
+
+
+def web_error_ssh_unavailable() -> WebError:
+    """Surfaced when an ``ssh`` block is supplied but the ``[ssh]`` extra is absent.
+
+    The SSH-tunnel connect path lazy-imports ``sshtunnel`` (which pulls
+    ``paramiko``) only when a request carries an ``ssh`` block — the dep is kept
+    behind the optional ``[ssh]`` extra so the default install stays slim and the
+    web routers import clean without it. When the lazy import fails, the connect /
+    test handlers translate the ``ImportError`` into this typed 503 envelope
+    (never a 500) so the user gets an actionable install hint instead of a
+    traceback. The failure is well-formed-request-but-server-can't-serve, hence
+    503, mirroring :func:`web_error_llm_unavailable`.
+
+    The message intentionally carries **no** tunnel target — the bastion host and
+    the remote DB address never reach the user-facing string.
+    """
+    return WebError(
+        code=WebErrorCode.SSH_UNAVAILABLE,
+        message=("SSH tunnelling is not available: the optional 'ssh' extra is not installed."),
+        status_code=503,
+        hint=_CODE_HINTS[WebErrorCode.SSH_UNAVAILABLE],
+    )
+
+
+# ---------------------------------------------------------------------------
 # Renderer: JSON error response, plus logging hook.
 # ---------------------------------------------------------------------------
 
@@ -893,6 +931,7 @@ __all__ = [
     "web_error_no_spec",
     "web_error_not_found",
     "web_error_not_found_tables",
+    "web_error_ssh_unavailable",
     "web_error_step_gate_blocked",
     "web_error_unknown_parser",
     "web_error_write_guard_rejected",

@@ -168,6 +168,13 @@ tui = [
 data = [
     "polars>=1.0,<2.0",
 ]
+# SSH tunnelling to reach a DB behind a bastion host (P2a-3). Native-dep
+# convention: kept OUT of `all` and the CI extras set; sshtunnel/paramiko are
+# lazy-imported inside the connect path, never at module import time, so the
+# web routers stay import-clean without this extra installed.
+ssh = [
+    "sshtunnel>=0.4",
+]
 train = [
     "polars>=1.0,<2.0",
     "sqlalchemy>=2.0",
@@ -259,7 +266,7 @@ module = "tests.*"
 disallow_untyped_defs = false
 
 [[tool.mypy.overrides]]
-module = ["polars", "polars.*", "alembic", "alembic.*", "psycopg", "psycopg.*", "unsloth", "unsloth.*", "trl", "trl.*", "datasets", "datasets.*", "torch", "torch.*", "mlx", "mlx.*", "mlx_lm", "mlx_lm.*", "litellm", "litellm.*", "instructor", "instructor.*", "llama_cpp", "llama_cpp.*", "huggingface_hub", "huggingface_hub.*", "peft", "peft.*", "transformers", "transformers.*", "scipy", "scipy.*", "presidio_analyzer", "presidio_analyzer.*", "presidio_anonymizer", "presidio_anonymizer.*", "opacus", "opacus.*", "pymongo", "pymongo.*", "pymongo_schema", "pymongo_schema.*", "mongomock", "mongomock.*"]
+module = ["polars", "polars.*", "alembic", "alembic.*", "psycopg", "psycopg.*", "unsloth", "unsloth.*", "trl", "trl.*", "datasets", "datasets.*", "torch", "torch.*", "mlx", "mlx.*", "mlx_lm", "mlx_lm.*", "litellm", "litellm.*", "instructor", "instructor.*", "llama_cpp", "llama_cpp.*", "huggingface_hub", "huggingface_hub.*", "peft", "peft.*", "transformers", "transformers.*", "scipy", "scipy.*", "presidio_analyzer", "presidio_analyzer.*", "presidio_anonymizer", "presidio_anonymizer.*", "opacus", "opacus.*", "pymongo", "pymongo.*", "pymongo_schema", "pymongo_schema.*", "mongomock", "mongomock.*", "sshtunnel", "sshtunnel.*"]
 ignore_missing_imports = true
 
 # ─── Bandit ────────────────────────────────────────────────────────────

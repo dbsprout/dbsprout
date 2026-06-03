@@ -26,6 +26,7 @@ import type {
   SchemaTreeData,
   SpecAssistResponse,
   SpecProvider,
+  SshTunnelInput,
   TableAdvanced,
   TableAdvancedResponse,
   ValidateResponse,
@@ -52,9 +53,15 @@ export const loadSample = (name: string) =>
 export const getSchema = () => apiGet<SchemaTreeData>("/api/schema");
 
 // Used by P1a-2b (connection form / paste); included now so the client is complete.
-export const connect = (url: string) => apiPost<SchemaSummary>("/api/connect", { url });
-export const connectTest = (url: string) =>
-  apiPost<ConnectionProbe>("/api/connect/test", { url });
+// ─── P2a-3 ───
+// Both carry an optional SSH bastion block. When `ssh` is omitted the request is
+// a plain `{ url }` (behaviour unchanged); when present the server tunnels the
+// connection through the bastion. The private key is referenced by PATH only.
+export const connect = (url: string, ssh?: SshTunnelInput) =>
+  apiPost<SchemaSummary>("/api/connect", ssh ? { url, ssh } : { url });
+export const connectTest = (url: string, ssh?: SshTunnelInput) =>
+  apiPost<ConnectionProbe>("/api/connect/test", ssh ? { url, ssh } : { url });
+// ─── end P2a-3 ───
 export const pasteSchema = (text: string, parser?: string) =>
   apiPost<SchemaSummary>("/api/schema/paste", { text, parser });
 

@@ -34,14 +34,35 @@ lazily inside the handler so importing the router stays cheap.
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 from typing import TYPE_CHECKING, Any, cast
 
 from fastapi import APIRouter, Request
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from dbsprout.web.errors import classify_connect_error, raise_web_error, web_error_internal
+# ─── P2a-3 region ───
+# SSH-tunnel support. ``SshTunnelConfig`` is a pure Pydantic model (importing it
+# pulls NOTHING heavy — ``dbsprout.core.ssh_tunnel`` lazy-imports ``sshtunnel``
+# only inside ``open_ssh_tunnel``), so this top-level import keeps the router
+# import-clean without the optional ``[ssh]`` extra. ``open_ssh_tunnel`` is
+# bound as a module-level name so tests can monkeypatch the seam.
+from dbsprout.core.ssh_tunnel import (
+    SshTunnelConfig,
+    SshTunnelUnavailable,
+    open_ssh_tunnel,
+)
+from dbsprout.web.errors import (
+    classify_connect_error,
+    raise_web_error,
+    web_error_internal,
+    web_error_ssh_unavailable,
+)
+
+# ─── end P2a-3 region ───
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator
+
     from dbsprout.schema.models import DatabaseSchema
     from dbsprout.web.workspace import Workspace
 
@@ -65,6 +86,16 @@ class ConnectRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     url: str = Field(min_length=1, description="SQLAlchemy connection URL.")
+    # ─── P2a-3 region ───
+    # Optional SSH bastion descriptor. ``extra='forbid'`` stays in place — only
+    # this single, typed field is added, so every OTHER unexpected key is still a
+    # 422. When ``None`` (the default), the connect path is byte-identical to the
+    # pre-P2a-3 plain-URL behaviour.
+    ssh: SshTunnelConfig | None = Field(
+        default=None,
+        description="Optional SSH bastion to tunnel the connection through.",
+    )
+    # ─── end P2a-3 region ───
 
     @field_validator("url")
     @classmethod
@@ -103,6 +134,54 @@ def _known_connect_exceptions() -> tuple[type[BaseException], ...]:
     return (ValueError, OSError, ImportError, sa.exc.SQLAlchemyError)
 
 
+# ─── P2a-3 region ───
+@contextmanager
+def _with_optional_tunnel(url: str, ssh: SshTunnelConfig | None) -> Iterator[str]:
+    """Yield a connection URL, opening an SSH tunnel first when *ssh* is set.
+
+    With no ``ssh`` block this is a pass-through: it yields *url* unchanged and
+    the connect path is byte-identical to the pre-P2a-3 behaviour. With an
+    ``ssh`` block it parses the URL's remote host/port, opens the tunnel via the
+    module-level :data:`open_ssh_tunnel` seam (monkeypatchable in tests),
+    rewrites the URL host/port to the LOCAL forward, and yields the rewritten
+    URL — tearing the tunnel down on exit.
+
+    The remote credentials embedded in *url* are never read here; only the host
+    / port are rewritten. ``SshTunnelUnavailable`` (missing ``[ssh]`` extra) is
+    allowed to propagate so the caller can emit the typed 503 envelope.
+    """
+    if ssh is None:
+        yield url
+        return
+
+    import sqlalchemy as sa  # noqa: PLC0415 — already a project dep
+
+    parsed = sa.engine.make_url(url)
+    # A host-less URL (e.g. file-based SQLite) has no TCP endpoint to forward to;
+    # the tunnel still opens (so config/teardown are exercised) but the URL is
+    # left unchanged — there is no host/port to rewrite.
+    remote_host = parsed.host
+    remote_port = parsed.port or _default_remote_port(parsed.get_backend_name())
+    with open_ssh_tunnel(
+        ssh,
+        remote_host=remote_host or "localhost",
+        remote_port=remote_port,
+    ) as (local_host, local_port):
+        if remote_host is None:
+            yield url
+        else:
+            rewritten = parsed.set(host=local_host, port=local_port)
+            yield rewritten.render_as_string(hide_password=False)
+
+
+def _default_remote_port(backend: str) -> int:
+    """Best-effort default remote port per backend for the tunnel bind address."""
+    return {"postgresql": 5432, "mysql": 3306, "mssql": 1433}.get(backend, 5432)
+
+
+# ─── end P2a-3 region ───
+
+
 @connect_router.post("/api/connect/test")
 async def connect_test(request: Request, body: ConnectRequest) -> Any:
     """Probe a database connection without mutating the workspace.
@@ -119,7 +198,16 @@ async def connect_test(request: Request, body: ConnectRequest) -> Any:
     from dbsprout.core.service import probe_connection  # noqa: PLC0415
 
     try:
-        probe = probe_connection(body.url)
+        # ─── P2a-3 region ───
+        # Route the probe through an optional SSH tunnel. With no ssh block the
+        # context manager yields the URL unchanged (behaviour preserved). The
+        # ``ImportError``-derived ``SshTunnelUnavailable`` is caught FIRST so a
+        # missing ``[ssh]`` extra is a typed 503, never a generic 500.
+        with _with_optional_tunnel(body.url, body.ssh) as effective_url:
+            probe = probe_connection(effective_url)
+        # ─── end P2a-3 region ───
+    except SshTunnelUnavailable as exc:
+        return raise_web_error(request, web_error_ssh_unavailable(), original=exc)
     except _known_connect_exceptions() as exc:
         return raise_web_error(request, classify_connect_error(exc, body.url), original=exc)
     except Exception as exc:
@@ -154,7 +242,6 @@ async def connect(request: Request, body: ConnectRequest) -> Any:
 
     url = body.url
     redacted = _redact_url(url)
-    source = SchemaSource(kind="db", raw_value=url, display_value=redacted)
 
     # Allow tests to monkey-patch ``dbsprout.web.routers.connect.load_schema`` —
     # they set the module-level reference; the handler honours that override
@@ -162,7 +249,17 @@ async def connect(request: Request, body: ConnectRequest) -> Any:
     loader = load_schema or _load_schema
 
     try:
-        schema = loader(source)
+        # ─── P2a-3 region ───
+        # Introspect through an optional SSH tunnel. The loader sees the
+        # REWRITTEN (local-forward) URL; the workspace below still records the
+        # ORIGINAL redacted target so the user sees their real connection, not
+        # ``127.0.0.1:<port>``. A missing ``[ssh]`` extra → typed 503.
+        with _with_optional_tunnel(url, body.ssh) as effective_url:
+            source = SchemaSource(kind="db", raw_value=effective_url, display_value=redacted)
+            schema = loader(source)
+        # ─── end P2a-3 region ───
+    except SshTunnelUnavailable as exc:
+        return raise_web_error(request, web_error_ssh_unavailable(), original=exc)
     except _known_connect_exceptions() as exc:
         return raise_web_error(request, classify_connect_error(exc, url), original=exc)
     except Exception as exc:

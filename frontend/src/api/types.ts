@@ -431,3 +431,21 @@ export interface SaveConnectionRequest {
 export interface DeleteConnectionResponse {
   deleted: boolean;
 }
+
+// ─── P2a-3 ───
+// Optional SSH bastion block carried alongside the URL on POST /api/connect and
+// /api/connect/test (backend dbsprout/core/ssh_tunnel.py + routers/connect.py).
+// The private key is referenced by PATH only — its bytes are never uploaded.
+// When omitted, the connect request is a plain `{ url }` (behaviour unchanged).
+
+/** SSH bastion descriptor sent to tunnel a DB connection. */
+export interface SshTunnelInput {
+  /** Bastion (jump) host. */
+  host: string;
+  /** Bastion SSH port (defaults to 22 server-side when omitted). */
+  port?: number;
+  /** SSH username on the bastion. */
+  user: string;
+  /** Path to the SSH private key (referenced by path; never uploaded). */
+  key_path: string;
+}

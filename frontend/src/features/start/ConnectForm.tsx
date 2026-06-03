@@ -10,7 +10,35 @@ import {
   type DbType,
 } from "../../api/connectionUrl";
 import { connect, connectTest, queryKeys } from "../../api/endpoints";
-import type { ConnectionProbe } from "../../api/types";
+import type { ConnectionProbe, SshTunnelInput } from "../../api/types";
+
+// ─── P2a-3 ───
+// SSH-tunnel bastion fields, held as component state (the SSH block is NOT part
+// of the connection URL — it travels alongside it). The key is referenced by
+// path only; nothing is uploaded. An ssh block is sent only when a bastion host
+// is filled in.
+interface SshFields {
+  host: string;
+  port: string;
+  user: string;
+  keyPath: string;
+}
+
+const DEFAULT_SSH: SshFields = { host: "", port: "", user: "", keyPath: "" };
+
+/** Build the optional SSH block; `undefined` (no tunnel) when no bastion host. */
+function buildSsh(f: SshFields): SshTunnelInput | undefined {
+  if (f.host.trim().length === 0) {
+    return undefined;
+  }
+  const ssh: SshTunnelInput = { host: f.host.trim(), user: f.user.trim(), key_path: f.keyPath.trim() };
+  const port = Number.parseInt(f.port, 10);
+  if (Number.isFinite(port) && port > 0) {
+    return { ...ssh, port };
+  }
+  return ssh;
+}
+// ─── end P2a-3 ───
 
 interface ConnectFormProps {
   onLoaded: () => void;
@@ -60,15 +88,22 @@ export function ConnectForm({ onLoaded }: ConnectFormProps) {
   const [fields, setFields] = useState<ConnectionFields>(DEFAULT_FIELDS);
   const [url, setUrl] = useState<string>(buildConnectionUrl(DEFAULT_FIELDS));
   const [paramsText, setParamsText] = useState<string>("");
+  // ─── P2a-3 ───
+  const [ssh, setSsh] = useState<SshFields>(DEFAULT_SSH);
+
+  function handleSshChange(key: keyof SshFields, value: string) {
+    setSsh((prev) => ({ ...prev, [key]: value }));
+  }
+  // ─── end P2a-3 ───
 
   const qc = useQueryClient();
 
   const testM = useMutation({
-    mutationFn: () => connectTest(url),
+    mutationFn: () => connectTest(url, buildSsh(ssh)),
   });
 
   const connectM = useMutation({
-    mutationFn: () => connect(url),
+    mutationFn: () => connect(url, buildSsh(ssh)),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: queryKeys.schema });
       onLoaded();
@@ -255,6 +290,49 @@ export function ConnectForm({ onLoaded }: ConnectFormProps) {
                 onChange={(e) => handleParamsChange(e.target.value)}
               />
             </div>
+            {/* ═══ P2a-3 ═══ SSH tunnel (bastion). Sent only when a host is set. */}
+            <fieldset>
+              <legend>SSH tunnel (optional)</legend>
+              <div>
+                <label htmlFor="ssh-host">SSH bastion host</label>
+                <input
+                  id="ssh-host"
+                  type="text"
+                  value={ssh.host}
+                  onChange={(e) => handleSshChange("host", e.target.value)}
+                />
+              </div>
+              <div>
+                <label htmlFor="ssh-port">SSH bastion port</label>
+                <input
+                  id="ssh-port"
+                  type="text"
+                  inputMode="numeric"
+                  placeholder="22"
+                  value={ssh.port}
+                  onChange={(e) => handleSshChange("port", e.target.value)}
+                />
+              </div>
+              <div>
+                <label htmlFor="ssh-user">SSH user</label>
+                <input
+                  id="ssh-user"
+                  type="text"
+                  value={ssh.user}
+                  onChange={(e) => handleSshChange("user", e.target.value)}
+                />
+              </div>
+              <div>
+                <label htmlFor="ssh-key-path">SSH key path</label>
+                <input
+                  id="ssh-key-path"
+                  type="text"
+                  value={ssh.keyPath}
+                  onChange={(e) => handleSshChange("keyPath", e.target.value)}
+                />
+              </div>
+            </fieldset>
+            {/* ═══ end P2a-3 ═══ */}
           </details>
         </>
       )}
