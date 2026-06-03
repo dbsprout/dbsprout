@@ -121,3 +121,22 @@ test("guided mode: coach copy for the active (Start) step is shown", () => {
   renderApp();
   expect(screen.getByText("Pick a data source")).toBeInTheDocument();
 });
+
+// ─── P4-7: cross-panel selection store wiring ───
+// The full App now reads useSelection() and wires ValidatePanel.onDrill into the
+// store (App.tsx). The store → ConfigurePanel → ColumnGrid focus path is exercised
+// end-to-end in ConfigurePanel.test.tsx against the real store; here we only guard
+// that mounting the whole shell inside the new provider stays crash-free and that
+// the Validate drill affordance is present (a real, non-noop callback is attached).
+test("mounts the full shell inside the SelectionProvider without regressions", () => {
+  stubSamplesFetch();
+  renderApp();
+  // All seven sections still render (advanced default) — the new provider is inert
+  // until a drill dispatches a selection.
+  for (const name of ["Start", "Configure", "Generate", "Output", "Insert", "Validate", "Runs & Quality"]) {
+    expect(screen.getByRole("heading", { name })).toBeInTheDocument();
+  }
+  // The Validate run affordance is wired (its onDrill now routes into the store).
+  expect(screen.getByRole("button", { name: /^validate$/i })).toBeInTheDocument();
+});
+// ─── end P4-7 ───

@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { useSelection } from "../../app/SelectionProvider";
 import {
   getPreview,
   getSpec,
@@ -36,6 +37,18 @@ export function ConfigurePanel() {
   const qc = useQueryClient();
   const [selectedTable, setSelectedTable] = useState<string | null>(null);
   const [selectedColumn, setSelectedColumn] = useState<string | null>(null);
+
+  // ─── P4-7 ─── cross-panel drill: a Validate violation (or any caller) can focus
+  // this grid on a specific table+column. Apply the target to the table-picker
+  // state, then clear it so a later manual table switch isn't overridden.
+  const { selection, clearSelection } = useSelection();
+  useEffect(() => {
+    if (!selection) return;
+    setSelectedTable(selection.table);
+    setSelectedColumn(selection.column);
+    clearSelection();
+  }, [selection, clearSelection]);
+  // ─── end P4-7 ───
 
   const spec = useQuery({ queryKey: queryKeys.spec, queryFn: getSpec });
   const generators = useQuery({
@@ -110,6 +123,8 @@ export function ConfigurePanel() {
         spec={activeTable}
         methods={generators.data?.methods ?? []}
         previewRow={preview.data?.rows[0] ?? null}
+        // ─── P4-7 ─── scroll/highlight the drilled-into column (no-op if absent).
+        focusColumn={selectedColumn}
         onSelect={(c) => setSelectedColumn(c)}
         onGeneratorChange={(column, cfg) => mutation.mutate({ column, cfg })}
       />

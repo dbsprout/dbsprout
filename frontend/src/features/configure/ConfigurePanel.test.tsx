@@ -1,7 +1,18 @@
 import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
 import { renderWithClient } from "../../test/renderWithClient";
+import { useSelection, type SelectionTarget } from "../../app/SelectionProvider";
 import { ConfigurePanel } from "./ConfigurePanel";
+
+/** A sibling that drills a cross-panel selection, sharing the test's SelectionProvider. */
+function Driller({ target }: { target: SelectionTarget }) {
+  const { setSelection } = useSelection();
+  return (
+    <button type="button" onClick={() => setSelection(target)}>
+      drill
+    </button>
+  );
+}
 
 const SPEC = {
   version: "1.0",
@@ -170,3 +181,60 @@ test("empty state when no schema loaded (409)", async () => {
   renderWithClient(<ConfigurePanel />);
   await waitFor(() => expect(screen.getByText(/no schema loaded/i)).toBeInTheDocument());
 });
+
+// ─── P4-7: cross-panel drill focuses the grid ───
+test("a drilled selection switches the table and focuses + opens the inspector on the column", async () => {
+  vi.stubGlobal("fetch", router());
+  renderWithClient(
+    <>
+      <Driller target={{ table: "orders", column: "total" }} />
+      <ConfigurePanel />
+    </>,
+  );
+  // Starts on the first table (users).
+  const picker = await screen.findByLabelText(/configure table/i);
+  expect(picker).toHaveValue("users");
+  // Drill into orders.total.
+  fireEvent.click(screen.getByRole("button", { name: "drill" }));
+  await waitFor(() => expect(picker).toHaveValue("orders"));
+  // The grid now shows the orders column and the inspector opens on it.
+  expect(await screen.findByLabelText(/generator for total/i)).toBeInTheDocument();
+  expect(await screen.findByLabelText(/inspector for total/i)).toBeInTheDocument();
+  // The drilled row is highlighted.
+  const row = screen.getByRole("button", { name: "inspect total" }).closest("[data-focused]");
+  expect(row).toHaveAttribute("data-focused", "true");
+});
+
+test("a drill to a table with a null column selects the table without opening the inspector", async () => {
+  vi.stubGlobal("fetch", router());
+  renderWithClient(
+    <>
+      <Driller target={{ table: "orders", column: null }} />
+      <ConfigurePanel />
+    </>,
+  );
+  const picker = await screen.findByLabelText(/configure table/i);
+  fireEvent.click(screen.getByRole("button", { name: "drill" }));
+  await waitFor(() => expect(picker).toHaveValue("orders"));
+  // No column focused → no inspector and no highlighted row.
+  expect(screen.queryByLabelText(/inspector for/i)).not.toBeInTheDocument();
+  expect(document.querySelectorAll('[data-focused="true"]').length).toBe(0);
+});
+
+test("a drill to a column that no longer exists selects the table but is otherwise a no-op", async () => {
+  vi.stubGlobal("fetch", router());
+  renderWithClient(
+    <>
+      <Driller target={{ table: "orders", column: "ghost_column" }} />
+      <ConfigurePanel />
+    </>,
+  );
+  const picker = await screen.findByLabelText(/configure table/i);
+  fireEvent.click(screen.getByRole("button", { name: "drill" }));
+  await waitFor(() => expect(picker).toHaveValue("orders"));
+  // Grid still renders; no crash, no inspector, no highlight for the missing column.
+  expect(await screen.findByLabelText(/generator for total/i)).toBeInTheDocument();
+  expect(screen.queryByLabelText(/inspector for ghost_column/i)).not.toBeInTheDocument();
+  expect(document.querySelectorAll('[data-focused="true"]').length).toBe(0);
+});
+// ─── end P4-7 ───

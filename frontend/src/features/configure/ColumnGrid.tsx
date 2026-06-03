@@ -1,4 +1,4 @@
-import { useRef, useState, type ChangeEvent, type CSSProperties } from "react";
+import { useEffect, useRef, useState, type ChangeEvent, type CSSProperties } from "react";
 import { observeElementRect, useVirtualizer, type Virtualizer } from "@tanstack/react-virtual";
 import type { GeneratorConfig, GeneratorMethod, TableSpec } from "../../api/types";
 import { generatorOptions } from "./columnDtype";
@@ -15,10 +15,28 @@ interface ColumnGridProps {
    * (P4-1). Optional so callers that don't have schema types stay unfiltered.
    */
   columnTypes?: Record<string, string>;
+  /**
+   * Cross-panel drill target (P4-7): the column to scroll into view and
+   * highlight (e.g. from a Validate violation). No-op when null/absent or when
+   * the column no longer exists in `spec`.
+   */
+  focusColumn?: string | null;
   /** Focus a column in the Inspector. */
   onSelect: (column: string) => void;
   /** Persist a new generator config for a column. */
   onGeneratorChange: (column: string, cfg: GeneratorConfig) => void;
+}
+
+/**
+ * Row index of a cross-panel focus target within the ordered column names, or -1
+ * when the target is null/absent (so callers treat it as a no-op). Pure + exported
+ * for unit testing the drill-to-cell logic without the jsdom-unfriendly virtualizer.
+ */
+export function focusRowIndex(
+  order: readonly string[],
+  focusColumn: string | null | undefined,
+): number {
+  return focusColumn == null ? -1 : order.indexOf(focusColumn);
 }
 
 /** Estimated row height (px); rows are uniform single-line cells. */
@@ -58,6 +76,7 @@ export function ColumnGrid({
   methods,
   previewRow,
   columnTypes,
+  focusColumn,
   onSelect,
   onGeneratorChange,
 }: ColumnGridProps) {
@@ -76,6 +95,19 @@ export function ColumnGrid({
     initialRect: { width: 0, height: VIEWPORT_HEIGHT },
     observeElementRect: observeFixedRect,
   });
+
+  // P4-7: cross-panel drill — index of the focused column (-1 when null/absent).
+  const focusIndex = focusRowIndex(
+    entries.map(([name]) => name),
+    focusColumn,
+  );
+
+  // Scroll the focused row into the virtualized window when the target changes.
+  useEffect(() => {
+    if (focusIndex >= 0) {
+      virtualizer.scrollToIndex(focusIndex, { align: "center" });
+    }
+  }, [focusIndex, virtualizer]);
 
   function handleChange(
     column: string,
@@ -119,15 +151,20 @@ export function ColumnGrid({
               const options = generatorOptions(methods, columnTypes?.[name], showAll, current);
               const sample = previewRow ? String(previewRow[name] ?? "") : "—";
               const paramSummary = Object.keys(cfg.params).length ? JSON.stringify(cfg.params) : "—";
+              const focused = virtualRow.index === focusIndex;
               return (
                 <div
                   key={name}
+                  data-focused={focused}
                   style={{
                     ...ROW_STYLE,
                     position: "absolute",
                     top: 0,
                     left: 0,
                     transform: `translateY(${virtualRow.start}px)`,
+                    // P4-7: highlight the drilled-into row.
+                    outline: focused ? "2px solid #2563eb" : undefined,
+                    background: focused ? "#eff6ff" : undefined,
                   }}
                 >
                   <span style={CELL_STYLE}>

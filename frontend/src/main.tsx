@@ -3,6 +3,7 @@ import React from "react";
 import ReactDOM from "react-dom/client";
 import { App } from "./App";
 import { ModeProvider } from "./app/ModeProvider";
+import { SelectionProvider } from "./app/SelectionProvider";
 
 const queryClient = new QueryClient({
   defaultOptions: { queries: { retry: false, refetchOnWindowFocus: false } },
@@ -16,7 +17,9 @@ ReactDOM.createRoot(root).render(
   <React.StrictMode>
     <QueryClientProvider client={queryClient}>
       <ModeProvider>
-        <App />
+        <SelectionProvider>
+          <App />
+        </SelectionProvider>
       </ModeProvider>
     </QueryClientProvider>
   </React.StrictMode>,
