@@ -279,3 +279,84 @@ test("save preserves untouched advanced fields", () => {
     }),
   );
 });
+
+// ── P4-3: dual-edit refresh (grid edits the SAME focused column) ──────────────
+
+test("an external cfg change re-seeds a clean draft without reselection", () => {
+  const { rerender } = render(
+    <ColumnInspector column="email" cfg={cfg} onSave={() => undefined} />,
+  );
+  expect(screen.getByLabelText(/null %/i)).toHaveValue(0);
+  // Grid edits the SAME column → ConfigurePanel feeds a new cfg identity, same column key.
+  const external: GeneratorConfig = { ...cfg, nullable_rate: 0.4, distribution: "zipf" };
+  rerender(<ColumnInspector column="email" cfg={external} onSave={() => undefined} />);
+  expect(screen.getByLabelText(/null %/i)).toHaveValue(0.4);
+  expect(screen.getByLabelText(/distribution/i)).toHaveValue("zipf");
+  expect(screen.queryByRole("status")).not.toBeInTheDocument();
+});
+
+test("after a clean re-seed, save persists the latest cfg, not the stale one", () => {
+  const onSave = vi.fn();
+  const { rerender } = render(
+    <ColumnInspector column="email" cfg={cfg} onSave={onSave} />,
+  );
+  const external: GeneratorConfig = { ...cfg, nullable_rate: 0.4 };
+  rerender(<ColumnInspector column="email" cfg={external} onSave={onSave} />);
+  save();
+  expect(onSave).toHaveBeenCalledWith(expect.objectContaining({ nullable_rate: 0.4 }));
+});
+
+test("an external cfg change does not clobber an in-progress unsaved edit", () => {
+  const { rerender } = render(
+    <ColumnInspector column="email" cfg={cfg} onSave={() => undefined} />,
+  );
+  // User starts editing locally (draft is now dirty).
+  fireEvent.change(screen.getByLabelText(/null %/i), { target: { value: "0.9" } });
+  const external: GeneratorConfig = { ...cfg, nullable_rate: 0.4 };
+  rerender(<ColumnInspector column="email" cfg={external} onSave={() => undefined} />);
+  // The user's edit survives; a non-destructive notice appears.
+  expect(screen.getByLabelText(/null %/i)).toHaveValue(0.9);
+  expect(screen.getByRole("status")).toHaveTextContent(/chang/i);
+});
+
+test("no external change shows no notice and no refresh affordance", () => {
+  render(<ColumnInspector column="email" cfg={cfg} onSave={() => undefined} />);
+  expect(screen.queryByRole("status")).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: /refresh/i })).not.toBeInTheDocument();
+});
+
+test("the refresh affordance pulls the latest cfg into a dirty draft and dismisses the notice", () => {
+  const { rerender } = render(
+    <ColumnInspector column="email" cfg={cfg} onSave={() => undefined} />,
+  );
+  fireEvent.change(screen.getByLabelText(/null %/i), { target: { value: "0.9" } });
+  const external: GeneratorConfig = { ...cfg, nullable_rate: 0.4 };
+  rerender(<ColumnInspector column="email" cfg={external} onSave={() => undefined} />);
+  fireEvent.click(screen.getByRole("button", { name: /refresh/i }));
+  expect(screen.getByLabelText(/null %/i)).toHaveValue(0.4);
+  expect(screen.queryByRole("status")).not.toBeInTheDocument();
+});
+
+test("refresh re-seeds every advanced field from the latest cfg", () => {
+  const onSave = vi.fn();
+  const { rerender } = render(
+    <ColumnInspector column="age" cfg={cfg} onSave={onSave} />,
+  );
+  fireEvent.change(screen.getByLabelText(/null %/i), { target: { value: "0.9" } });
+  rerender(<ColumnInspector column="age" cfg={numericCfg} onSave={onSave} />);
+  fireEvent.click(screen.getByRole("button", { name: /refresh/i }));
+  expect(screen.getByLabelText(/^min$/i)).toHaveValue("0");
+  expect(screen.getByLabelText(/^max$/i)).toHaveValue("100");
+  expect(screen.getByLabelText(/enum values/i)).toHaveValue("a\nb");
+  save();
+  expect(onSave).toHaveBeenCalledWith(
+    expect.objectContaining({
+      nullable_rate: 0,
+      distribution: "normal",
+      distribution_params: { mean: 50, std: 10 },
+      min_value: 0,
+      max_value: 100,
+      enum_values: ["a", "b"],
+    }),
+  );
+});

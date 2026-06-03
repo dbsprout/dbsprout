@@ -38,6 +38,7 @@ from fastapi.testclient import TestClient
 
 from dbsprout.core.ssh_tunnel import (
     SshTunnelConfig,
+    SshTunnelConnectError,
     SshTunnelUnavailable,
     open_ssh_tunnel,
 )
@@ -199,6 +200,132 @@ def test_open_tunnel_scrubs_target_from_start_error(monkeypatch: pytest.MonkeyPa
     text = str(exc_info.value)
     assert "bastion.example.com" not in text
     assert "db.internal" not in text
+
+
+# ── P4-9: typed kind classification of a start() failure ─────────────────
+
+
+def _forwarder_raising(exc: BaseException) -> type:
+    """Build a fake forwarder subclass whose ``start()`` raises *exc*.
+
+    The stand-in exceptions carry sshtunnel / paramiko *type names* but are not
+    the real classes — the classifier dispatches on ``type(exc).__name__`` plus a
+    message sweep, so the test never needs the optional ``[ssh]`` extra.
+    """
+
+    class _Raising(_FakeForwarder):
+        def start(self) -> None:
+            raise exc
+
+    return _Raising
+
+
+def _named_exc(name: str, message: str, base: type[Exception] = Exception) -> Exception:
+    """Construct an exception instance whose ``type(...).__name__`` is *name*."""
+    cls = type(name, (base,), {})
+    return cls(message)
+
+
+@pytest.mark.parametrize(
+    ("exc", "expected_kind"),
+    [
+        # auth — paramiko-named exceptions + message keywords.
+        (_named_exc("AuthenticationException", "Authentication failed."), "auth"),
+        (_named_exc("BadAuthenticationType", "Bad authentication type."), "auth"),
+        (_named_exc("PasswordRequiredException", "Private key file is encrypted."), "auth"),
+        (_named_exc("PartialAuthentication", "partial authentication."), "auth"),
+        (_named_exc("SSHException", "Authentication failed for bastion.example.com."), "auth"),
+        # host — bastion unreachable / DNS / refused / bad host key.
+        (_named_exc("gaierror", "[Errno -2] Name or service not known"), "host"),
+        (_named_exc("ConnectionRefusedError", "[Errno 111] Connection refused"), "host"),
+        (
+            _named_exc("NoValidConnectionsError", "Unable to connect to bastion.example.com:22"),
+            "host",
+        ),
+        (
+            _named_exc("BadHostKeyException", "Host key for bastion.example.com does not match."),
+            "host",
+        ),
+        (_named_exc("TimeoutError", "timed out"), "host"),
+        # forward — bastion reached + authed, remote-bind / channel fails.
+        (
+            _named_exc(
+                "HandlerSSHTunnelForwarderError",
+                "An error occurred while opening tunnels.",
+            ),
+            "forward",
+        ),
+        (_named_exc("BaseSSHTunnelForwarderError", "Could not establish session."), "forward"),
+        (_named_exc("ChannelException", "(2, 'Connect failed')"), "forward"),
+        # unknown / odd → defaults to forward (still typed, still scrubbed).
+        (_named_exc("OSError", "kaboom"), "forward"),
+    ],
+)
+def test_start_failure_classified_by_kind(
+    monkeypatch: pytest.MonkeyPatch, exc: Exception, expected_kind: str
+) -> None:
+    """Each start() failure maps to a typed SshTunnelConnectError with the right kind."""
+    monkeypatch.setattr(
+        "dbsprout.core.ssh_tunnel._import_sshtunnel",
+        lambda: _fake_sshtunnel(_forwarder_raising(exc)),
+    )
+    with (
+        pytest.raises(SshTunnelConnectError) as exc_info,
+        open_ssh_tunnel(_cfg(), remote_host="db.internal", remote_port=5432),
+    ):
+        pass
+    assert exc_info.value.kind == expected_kind
+
+
+def test_start_failure_is_typed_subclass_of_runtimeerror(monkeypatch: pytest.MonkeyPatch) -> None:
+    """SshTunnelConnectError must remain a RuntimeError so any legacy guard still catches it."""
+    monkeypatch.setattr(
+        "dbsprout.core.ssh_tunnel._import_sshtunnel",
+        lambda: _fake_sshtunnel(_forwarder_raising(OSError("connection refused"))),
+    )
+    with (
+        pytest.raises(RuntimeError),
+        open_ssh_tunnel(_cfg(), remote_host="db.internal", remote_port=5432),
+    ):
+        pass
+
+
+def test_start_failure_scrubs_target_for_every_kind(monkeypatch: pytest.MonkeyPatch) -> None:
+    """No kind's surfaced message may leak the bastion or remote target."""
+    leaky = _named_exc(
+        "AuthenticationException",
+        "auth failed connecting bastion.example.com:22 -> db.internal:5432",
+    )
+    monkeypatch.setattr(
+        "dbsprout.core.ssh_tunnel._import_sshtunnel",
+        lambda: _fake_sshtunnel(_forwarder_raising(leaky)),
+    )
+    with (
+        pytest.raises(SshTunnelConnectError) as exc_info,
+        open_ssh_tunnel(_cfg(), remote_host="db.internal", remote_port=5432),
+    ):
+        pass
+    text = str(exc_info.value)
+    assert "bastion.example.com" not in text
+    assert "db.internal" not in text
+    assert exc_info.value.kind == "auth"
+
+
+def test_start_failure_still_stops_forwarder(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The teardown invariant survives the new typed-error path."""
+    monkeypatch.setattr(
+        "dbsprout.core.ssh_tunnel._import_sshtunnel",
+        lambda: _fake_sshtunnel(
+            _forwarder_raising(_named_exc("ConnectionRefusedError", "refused"))
+        ),
+    )
+    with (
+        pytest.raises(SshTunnelConnectError),
+        open_ssh_tunnel(_cfg(), remote_host="db.internal", remote_port=5432),
+    ):
+        pass
+    fwd = _FakeForwarder.instances[-1]
+    assert fwd.stopped is True
 
 
 def test_sshtunnel_config_rejects_blank_fields() -> None:
@@ -430,3 +557,85 @@ def test_connect_with_ssh_rewrites_tcp_host_port(
     # The failing loader is still a clean 4xx (no creds, no traceback).
     assert resp.status_code == 400
     assert "p@" not in resp.text  # password scrubbed
+
+
+# ── P4-9: bastion-failure → typed 4xx/502 envelope (router + factory) ─────
+
+
+def _tunnel_raising(kind: str) -> Any:
+    """A fake tunnel CM that raises ``SshTunnelConnectError(kind)`` on enter."""
+    from contextlib import contextmanager  # noqa: PLC0415
+
+    @contextmanager
+    def _cm(cfg: SshTunnelConfig, *, remote_host: str, remote_port: int | None) -> Any:
+        raise SshTunnelConnectError(kind, "the SSH tunnel could not be opened")
+        yield  # pragma: no cover
+
+    return _cm
+
+
+@pytest.mark.parametrize(
+    ("kind", "status"),
+    [("auth", 400), ("host", 502), ("forward", 502)],
+)
+def test_connect_bastion_failure_is_typed_not_500(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, kind: str, status: int
+) -> None:
+    """A bastion connect/auth/forward failure is a typed 4xx/502, never INTERNAL 500."""
+    monkeypatch.setattr("dbsprout.web.routers.connect.open_ssh_tunnel", _tunnel_raising(kind))
+    resp = _client(tmp_path).post(
+        "/api/connect",
+        json={
+            "url": "postgresql://u:secretpw@db.internal:5432/app",
+            "ssh": {"host": "bastion.example.com", "user": "deploy", "key_path": "/k"},
+        },
+    )
+    assert resp.status_code == status, resp.text
+    detail = resp.json()["detail"]
+    assert detail["code"] == "SSH_TUNNEL_FAILED"
+    assert detail["kind"] == kind
+    assert detail["hint"]
+    # No bastion target, no DB password, no traceback ever crosses the wire.
+    assert "bastion.example.com" not in resp.text
+    assert "secretpw" not in resp.text
+    assert "Traceback" not in resp.text
+
+
+def test_connect_test_bastion_auth_failure_is_400(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The /connect/test probe path surfaces the same typed envelope."""
+    monkeypatch.setattr("dbsprout.web.routers.connect.open_ssh_tunnel", _tunnel_raising("auth"))
+    resp = _client(tmp_path).post(
+        "/api/connect/test",
+        json={
+            "url": "postgresql://u:secretpw@db.internal:5432/app",
+            "ssh": {"host": "bastion.example.com", "user": "deploy", "key_path": "/k"},
+        },
+    )
+    assert resp.status_code == 400, resp.text
+    detail = resp.json()["detail"]
+    assert detail["code"] == "SSH_TUNNEL_FAILED"
+    assert detail["kind"] == "auth"
+    assert "bastion.example.com" not in resp.text
+    assert "secretpw" not in resp.text
+
+
+@pytest.mark.parametrize(
+    ("kind", "status"),
+    [("auth", 400), ("host", 502), ("forward", 502)],
+)
+def test_web_error_ssh_tunnel_failed_factory(kind: str, status: int) -> None:
+    """The factory maps each kind to the right status + carries kind in extras."""
+    from dbsprout.web.errors import WebErrorCode, web_error_ssh_tunnel_failed  # noqa: PLC0415
+
+    err = web_error_ssh_tunnel_failed(kind)
+    assert err.code is WebErrorCode.SSH_TUNNEL_FAILED
+    assert err.status_code == status
+    assert err.hint
+    payload = err.to_dict()
+    assert payload["kind"] == kind
+    # The user-facing copy never embeds a concrete target host — the generic noun
+    # "bastion" is fine, a specific hostname is not.
+    assert "bastion.example.com" not in payload["message"]
+    assert "db.internal" not in payload["message"]

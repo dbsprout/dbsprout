@@ -137,6 +137,13 @@ class WebErrorCode(str, Enum):
     # 503 because the failure is a server-side capability gap, not caller
     # input — the request itself is well-formed.
     SSH_UNAVAILABLE = "SSH_UNAVAILABLE"
+    # P4-9 SSH-tunnel live-failure guard — raised by ``POST /api/connect`` /
+    # ``/api/connect/test`` when the bastion *connect* fails: a rejected SSH key
+    # (``auth`` → 400, caller-actionable), an unreachable bastion (``host`` →
+    # 502), or a remote-bind / channel failure (``forward`` → 502). The envelope
+    # carries the coarse ``kind`` in ``extras`` and a credential-/target-scrubbed
+    # message — never a raw 500.
+    SSH_TUNNEL_FAILED = "SSH_TUNNEL_FAILED"
 
 
 @dataclass(frozen=True)
@@ -863,6 +870,67 @@ def web_error_ssh_unavailable() -> WebError:
 
 
 # ---------------------------------------------------------------------------
+# P4-9 SSH-tunnel live-failure factory helper.
+# ---------------------------------------------------------------------------
+
+
+#: Per-kind copy for a live bastion-connect failure. ``message`` carries **no**
+#: target (the bastion host / remote DB address are scrubbed at the raise site in
+#: :func:`dbsprout.core.ssh_tunnel.open_ssh_tunnel`); ``hint`` is the actionable
+#: nudge; ``status`` is ``auth`` → 400 (caller fixes the key/user) vs
+#: ``host`` / ``forward`` → 502 (the gateway hop to the DB could not be made).
+_SSH_TUNNEL_FAILURE: dict[str, tuple[int, str, str]] = {
+    "auth": (
+        400,
+        "SSH authentication to the bastion failed.",
+        "Check the SSH username and that the private key at the given path is "
+        "the right, unencrypted key for that bastion.",
+    ),
+    "host": (
+        502,
+        "Could not reach the SSH bastion host.",
+        "Check the bastion host and port are correct and reachable from here.",
+    ),
+    "forward": (
+        502,
+        "The SSH tunnel to the database host could not be opened.",
+        "The bastion was reached but the forward to the database failed; check "
+        "the database host/port are reachable from the bastion.",
+    ),
+}
+
+
+def web_error_ssh_tunnel_failed(kind: str) -> WebError:
+    """Surfaced when a live bastion *connect* fails (P4-9) — never a raw 500.
+
+    The SSH-tunnel connect path raises
+    :class:`dbsprout.core.ssh_tunnel.SshTunnelConnectError` carrying a coarse
+    ``kind`` (``"auth"`` / ``"host"`` / ``"forward"``) decided from the original
+    exception's shape, with the bastion / remote target already scrubbed out. This
+    factory turns that ``kind`` into the friendly typed envelope:
+
+    * ``auth`` → **400** — a rejected key / wrong user is caller-actionable.
+    * ``host`` → **502** — the bastion gateway itself is unreachable.
+    * ``forward`` → **502** — the bastion was reached + authed but the forward to
+      the database failed; this also covers any unclassified failure.
+
+    The ``kind`` is echoed into ``extras`` so the SPA can branch (e.g. focus the
+    key field on ``auth``) without re-parsing the message. An unknown ``kind``
+    degrades to the ``forward`` mapping — still a typed 502, never a 500.
+
+    The message + hint never embed the bastion host or the remote DB address.
+    """
+    status_code, message, hint = _SSH_TUNNEL_FAILURE.get(kind, _SSH_TUNNEL_FAILURE["forward"])
+    return WebError(
+        code=WebErrorCode.SSH_TUNNEL_FAILED,
+        message=message,
+        status_code=status_code,
+        hint=hint,
+        extras={"kind": kind},
+    )
+
+
+# ---------------------------------------------------------------------------
 # Renderer: JSON error response, plus logging hook.
 # ---------------------------------------------------------------------------
 
@@ -931,6 +999,7 @@ __all__ = [
     "web_error_no_spec",
     "web_error_not_found",
     "web_error_not_found_tables",
+    "web_error_ssh_tunnel_failed",
     "web_error_ssh_unavailable",
     "web_error_step_gate_blocked",
     "web_error_unknown_parser",

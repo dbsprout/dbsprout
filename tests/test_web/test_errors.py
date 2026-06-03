@@ -77,6 +77,8 @@ def test_web_error_code_enum_is_closed_set() -> None:
         "LLM_UNAVAILABLE",
         # P2a-3 SSH-tunnel connect guard (missing [ssh] extra).
         "SSH_UNAVAILABLE",
+        # P4-9 SSH-tunnel live-failure guard (bad host / auth / forward).
+        "SSH_TUNNEL_FAILED",
     }
     assert {m.name for m in WebErrorCode} == expected
     # Each code is a plain string so it round-trips through JSON unchanged.

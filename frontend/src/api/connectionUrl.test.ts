@@ -1,5 +1,11 @@
 import { afterEach, describe, expect, test, vi } from "vitest";
-import { buildConnectionUrl, defaultPort, SSL_MODES, type ConnectionFields } from "./connectionUrl";
+import {
+  buildConnectionUrl,
+  defaultPort,
+  parseConnectionUrl,
+  SSL_MODES,
+  type ConnectionFields,
+} from "./connectionUrl";
 import { uploadSchema } from "./endpoints";
 
 const base: ConnectionFields = {
@@ -183,6 +189,195 @@ describe("buildConnectionUrl — free-form params", () => {
         "&keepalives=1",
     );
   });
+});
+
+describe("parseConnectionUrl — basic authority", () => {
+  test("parses postgres user/password/host/port/database", () => {
+    const f = parseConnectionUrl("postgresql://admin:secret@db.host:5432/shop");
+    expect(f.type).toBe("postgresql");
+    expect(f.user).toBe("admin");
+    expect(f.password).toBe("secret");
+    expect(f.host).toBe("db.host");
+    expect(f.port).toBe("5432");
+    expect(f.database).toBe("shop");
+  });
+
+  test("decodes percent-encoded credentials", () => {
+    const f = parseConnectionUrl("postgresql://admin:p%40ss%20word@localhost:5432/shop");
+    expect(f.user).toBe("admin");
+    expect(f.password).toBe("p@ss word");
+  });
+
+  test("handles omitted port, credentials and database", () => {
+    const f = parseConnectionUrl("postgresql://localhost/shop");
+    expect(f.user).toBe("");
+    expect(f.password).toBe("");
+    expect(f.port).toBe("");
+    expect(f.host).toBe("localhost");
+    expect(f.database).toBe("shop");
+  });
+
+  test("handles a user with no password", () => {
+    const f = parseConnectionUrl("postgresql://admin@localhost:5432/shop");
+    expect(f.user).toBe("admin");
+    expect(f.password).toBe("");
+  });
+
+  test("parses mysql with its default port", () => {
+    const f = parseConnectionUrl("mysql://admin:secret@localhost:3306/shop");
+    expect(f.type).toBe("mysql");
+    expect(f.port).toBe("3306");
+  });
+
+  test("tolerates a SQLAlchemy +driver scheme suffix", () => {
+    const f = parseConnectionUrl("postgresql+psycopg2://admin:secret@localhost:5432/shop");
+    expect(f.type).toBe("postgresql");
+    expect(f.host).toBe("localhost");
+  });
+
+  test("maps the postgres scheme alias", () => {
+    expect(parseConnectionUrl("postgres://localhost/shop").type).toBe("postgresql");
+  });
+
+  test("returns all ConnectionFields keys populated (drop-in form state)", () => {
+    const f = parseConnectionUrl("postgresql://localhost/shop");
+    expect(Object.keys(f).sort()).toEqual(
+      [
+        "connectTimeout",
+        "database",
+        "filePath",
+        "host",
+        "params",
+        "password",
+        "port",
+        "schema",
+        "sslCa",
+        "sslCert",
+        "sslKey",
+        "sslMode",
+        "type",
+        "user",
+      ].sort(),
+    );
+  });
+
+  test("never throws on a malformed url; falls back to postgresql", () => {
+    const f = parseConnectionUrl("not-a-url");
+    expect(f.type).toBe("postgresql");
+  });
+});
+
+describe("parseConnectionUrl — sqlite", () => {
+  test("extracts the file path as the exact inverse of the builder", () => {
+    const f = parseConnectionUrl("sqlite:////tmp/x.db");
+    expect(f.type).toBe("sqlite");
+    expect(f.filePath).toBe("/tmp/x.db");
+  });
+
+  test("relative sqlite path", () => {
+    expect(parseConnectionUrl("sqlite:///data.db").filePath).toBe("data.db");
+  });
+});
+
+describe("parseConnectionUrl — advanced query (inverse of buildAdvancedQuery)", () => {
+  test("parses sslmode for postgres", () => {
+    expect(parseConnectionUrl("postgresql://h/db?sslmode=require").sslMode).toBe("require");
+  });
+
+  test("keeps an unrecognised sslmode value as a free param (no data loss)", () => {
+    const f = parseConnectionUrl("postgresql://h/db?sslmode=bogus");
+    expect(f.sslMode).toBe("");
+    expect(f.params).toEqual([{ key: "sslmode", value: "bogus" }]);
+  });
+
+  test("parses postgres cert keys into ca/cert/key", () => {
+    const f = parseConnectionUrl(
+      "postgresql://h/db?sslrootcert=%2Fc%2Fca.pem&sslcert=%2Fc%2Fcl.pem&sslkey=%2Fc%2Fcl.key",
+    );
+    expect(f.sslCa).toBe("/c/ca.pem");
+    expect(f.sslCert).toBe("/c/cl.pem");
+    expect(f.sslKey).toBe("/c/cl.key");
+  });
+
+  test("parses mysql cert keys into ca/cert/key", () => {
+    const f = parseConnectionUrl(
+      "mysql://h:3306/db?ssl_ca=%2Fc%2Fca.pem&ssl_cert=%2Fc%2Fcl.pem&ssl_key=%2Fc%2Fcl.key",
+    );
+    expect(f.sslCa).toBe("/c/ca.pem");
+    expect(f.sslCert).toBe("/c/cl.pem");
+    expect(f.sslKey).toBe("/c/cl.key");
+  });
+
+  test("parses schema out of options=-csearch_path", () => {
+    expect(parseConnectionUrl("postgresql://h/db?options=-csearch_path%3Danalytics").schema).toBe(
+      "analytics",
+    );
+  });
+
+  test("decodes a schema name containing a space", () => {
+    expect(
+      parseConnectionUrl("postgresql://h/db?options=-csearch_path%3Dapp%20schema").schema,
+    ).toBe("app schema");
+  });
+
+  test("parses connect_timeout", () => {
+    expect(parseConnectionUrl("postgresql://h/db?connect_timeout=10").connectTimeout).toBe("10");
+  });
+
+  test("collects unrecognised pairs as free params in order", () => {
+    const f = parseConnectionUrl(
+      "postgresql://h/db?application_name=dbsprout&target_session_attrs=read-write",
+    );
+    expect(f.params).toEqual([
+      { key: "application_name", value: "dbsprout" },
+      { key: "target_session_attrs", value: "read-write" },
+    ]);
+  });
+
+  test("decodes percent-encoded param keys and values", () => {
+    const f = parseConnectionUrl("postgresql://h/db?k%20v=a%26b");
+    expect(f.params).toEqual([{ key: "k v", value: "a&b" }]);
+  });
+
+  test("an unknown options= value (not search_path) stays a free param", () => {
+    const f = parseConnectionUrl("postgresql://h/db?options=-cfoo%3Dbar");
+    expect(f.schema).toBe("");
+    expect(f.params).toEqual([{ key: "options", value: "-cfoo=bar" }]);
+  });
+});
+
+describe("parseConnectionUrl ∘ buildConnectionUrl — round trip", () => {
+  const fixtures: ConnectionFields[] = [
+    base,
+    { ...base, port: "", user: "", password: "" },
+    { ...base, type: "sqlite", filePath: "/tmp/x.db" },
+    { ...base, type: "mysql", port: "3306" },
+    { ...base, sslMode: "require" },
+    { ...base, sslCa: "/c/ca.pem", sslCert: "/c/cl.pem", sslKey: "/c/cl.key" },
+    { ...base, type: "mysql", port: "3306", sslCa: "/c/ca.pem" },
+    { ...base, schema: "analytics" },
+    { ...base, connectTimeout: "5" },
+    { ...base, params: [{ key: "application_name", value: "dbsprout" }, { key: "keepalives", value: "1" }] },
+    {
+      ...base,
+      sslMode: "verify-full",
+      sslCa: "/c/ca.pem",
+      schema: "analytics",
+      connectTimeout: "5",
+      params: [
+        { key: "application_name", value: "dbsprout" },
+        { key: "keepalives", value: "1" },
+      ],
+    },
+  ];
+
+  test.each(fixtures.map((f, i) => [i, f] as const))(
+    "build(parse(build(f))) === build(f) — fixture %i",
+    (_i, f) => {
+      const url = buildConnectionUrl(f);
+      expect(buildConnectionUrl(parseConnectionUrl(url))).toBe(url);
+    },
+  );
 });
 
 afterEach(() => vi.unstubAllGlobals());
