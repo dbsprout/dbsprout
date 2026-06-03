@@ -51,6 +51,7 @@ from dbsprout.web.routers.samples import samples_router
 from dbsprout.web.routers.schema import schema_router
 from dbsprout.web.routers.schema_load import schema_load_router
 from dbsprout.web.routers.spec import spec_router
+from dbsprout.web.routers.spec_assist import spec_assist_router
 from dbsprout.web.routers.validate import validate_router
 from dbsprout.web.routes import router
 from dbsprout.web.spa import mount_spa
@@ -275,6 +276,16 @@ def create_app(
     # config_json/secrets; honest empty payloads (200) when the CLI never ran.
     app.include_router(insights_api_router)
     # ─── end P1c-4 region ───
+    # ─── P2b-3 region ───
+    # POST /api/spec/assist — let an LLM propose a full DataSpec for the loaded
+    # schema (offline EmbeddedProvider by default; opt-in CloudProvider). The
+    # proposal is stored on app.state.workspace so GET /api/spec + the configure
+    # grid reflect it, and cached by schema_hash. Provider modules (llama-cpp /
+    # litellm) are lazy-imported inside the handler, so importing this router
+    # pulls neither optional extra; a missing extra / model / key degrades to a
+    # typed 503 LLM_UNAVAILABLE envelope (never a 500).
+    app.include_router(spec_assist_router)
+    # ─── end P2b-3 region ───
     return app
 
 
