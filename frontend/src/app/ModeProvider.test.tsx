@@ -1,6 +1,6 @@
 import { act, renderHook } from "@testing-library/react";
 import type { ReactNode } from "react";
-import { afterEach, beforeEach, expect, test } from "vitest";
+import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { ModeProvider, useMode } from "./ModeProvider";
 
 const STORAGE_KEY = "dbsprout.mode";
@@ -47,4 +47,29 @@ test("setStep clamps to [0, 6]", () => {
 
 test("useMode throws outside a provider", () => {
   expect(() => renderHook(() => useMode())).toThrow(/ModeProvider/);
+});
+
+test("falls back to advanced when localStorage.getItem throws", () => {
+  const spy = vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => {
+    throw new Error("blocked");
+  });
+  try {
+    const { result } = renderHook(() => useMode(), { wrapper });
+    expect(result.current.mode).toBe("advanced");
+  } finally {
+    spy.mockRestore();
+  }
+});
+
+test("setMode tolerates a localStorage.setItem failure (memory-only)", () => {
+  const spy = vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+    throw new Error("quota");
+  });
+  try {
+    const { result } = renderHook(() => useMode(), { wrapper });
+    act(() => result.current.setMode("guided"));
+    expect(result.current.mode).toBe("guided");
+  } finally {
+    spy.mockRestore();
+  }
 });
