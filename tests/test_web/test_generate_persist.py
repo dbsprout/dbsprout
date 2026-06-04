@@ -167,7 +167,9 @@ async def test_generate_succeeds_when_state_write_fails(
 
 @pytest.mark.anyio
 async def test_generate_succeeds_when_integrity_compute_fails(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     """If computing the integrity report raises, the run still persists (no quality
     rows) and the job still SUCCEEDS — integrity is best-effort telemetry."""
@@ -183,7 +185,8 @@ async def test_generate_succeeds_when_integrity_compute_fails(
 
     monkeypatch.setattr(integrity, "validate_integrity", _boom)
 
-    job_id = await _run_generate(app, seed=9)
+    with caplog.at_level(logging.WARNING):
+        job_id = await _run_generate(app, seed=9)
 
     record = app.state.job_manager.get(job_id)
     assert record.status is JobStatus.SUCCEEDED, record.error
@@ -191,3 +194,5 @@ async def test_generate_succeeds_when_integrity_compute_fails(
     runs = app.state.get_state_db().get_runs()
     assert len(runs) == 1
     assert runs[0].quality_results == []
+    # The degrade is logged so operators can see why quality is empty.
+    assert any("integrity" in r.message.lower() for r in caplog.records)

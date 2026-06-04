@@ -27,6 +27,7 @@ The factory wires:
 
 from __future__ import annotations
 
+import logging
 import os
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -62,6 +63,8 @@ if TYPE_CHECKING:
     from dbsprout.generate.orchestrator import GenerateResult
     from dbsprout.quality.integrity import IntegrityReport
     from dbsprout.state.models import RunRecord
+
+logger = logging.getLogger(__name__)
 
 #: Environment variable overriding the state-DB location (used by tests and by
 #: anyone running the dashboard from outside the project root).
@@ -163,7 +166,12 @@ def create_app(
             from dbsprout.quality import integrity  # noqa: PLC0415
 
             return integrity.validate_integrity(result.tables_data, schema)
-        except Exception:  # best-effort — never fail the job over telemetry
+        except Exception as exc:  # best-effort — never fail the job over telemetry
+            logger.warning(
+                "Could not compute integrity report for run telemetry (%s); "
+                "persisting the run without quality results.",
+                exc,
+            )
             return None
 
     def _persist_completed_job(record: JobRecord) -> None:
