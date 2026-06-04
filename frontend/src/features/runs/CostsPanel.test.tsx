@@ -49,7 +49,8 @@ test("shows an empty-state when there were no LLM calls", async () => {
 
   renderWithClient(<CostsPanel />);
 
-  await waitFor(() => expect(screen.getByText(/no llm calls/i)).toBeInTheDocument());
+  await waitFor(() => expect(screen.getByText(/no llm costs yet/i)).toBeInTheDocument());
+  expect(screen.getByText(/cloud\/embedded llm/i)).toBeInTheDocument();
 });
 
 test("shows an error state when the request fails", async () => {

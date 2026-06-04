@@ -45,6 +45,6 @@ test("mounts the runs, quality and costs panels", async () => {
   renderWithClient(<RunsSurface />);
 
   await waitFor(() => expect(screen.getByText(/no runs yet/i)).toBeInTheDocument());
-  expect(screen.getByText(/no quality data/i)).toBeInTheDocument();
-  expect(screen.getByText(/no llm calls/i)).toBeInTheDocument();
+  expect(screen.getByText(/quality metrics are recorded/i)).toBeInTheDocument();
+  expect(screen.getByText(/no llm costs yet/i)).toBeInTheDocument();
 });

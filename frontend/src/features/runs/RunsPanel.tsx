@@ -36,7 +36,9 @@ export function RunsPanel({ onSelectRun }: RunsPanelProps) {
 
   if (total_runs === 0) {
     return (
-      <p className="db-notice-muted">No runs yet. Generate data to populate history.</p>
+      <p className="db-notice-muted">
+        No runs yet — your generation history will appear here after you generate.
+      </p>
     );
   }
 

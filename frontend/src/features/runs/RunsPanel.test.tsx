@@ -112,7 +112,11 @@ test("shows an empty-state when there are no runs", async () => {
 
   renderWithClient(<RunsPanel onSelectRun={() => undefined} />);
 
-  await waitFor(() => expect(screen.getByText(/no runs yet/i)).toBeInTheDocument());
+  await waitFor(() =>
+    expect(
+      screen.getByText(/no runs yet — your generation history will appear here/i),
+    ).toBeInTheDocument(),
+  );
 });
 
 test("shows an error state when the request fails", async () => {
