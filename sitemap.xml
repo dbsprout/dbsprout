@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+    <url>
+         <loc>https://dbsprout.github.io/dbsprout/</loc>
+         <lastmod>2026-06-04</lastmod>
+    </url>
+    <url>
+         <loc>https://dbsprout.github.io/dbsprout/contributing/</loc>
+         <lastmod>2026-06-04</lastmod>
+    </url>
+    <url>
+         <loc>https://dbsprout.github.io/dbsprout/architecture/overview/</loc>
+         <lastmod>2026-06-04</lastmod>
+    </url>
+    <url>
+         <loc>https://dbsprout.github.io/dbsprout/contributing/plugins/</loc>
+         <lastmod>2026-06-04</lastmod>
+    </url>
+    <url>
+         <loc>https://dbsprout.github.io/dbsprout/getting-started/install/</loc>
+         <lastmod>2026-06-04</lastmod>
+    </url>
+    <url>
+         <loc>https://dbsprout.github.io/dbsprout/getting-started/quick-start/</loc>
+         <lastmod>2026-06-04</lastmod>
+    </url>
+    <url>
+         <loc>https://dbsprout.github.io/dbsprout/user-guide/cli/</loc>
+         <lastmod>2026-06-04</lastmod>
+    </url>
+    <url>
+         <loc>https://dbsprout.github.io/dbsprout/user-guide/configuration/</loc>
+         <lastmod>2026-06-04</lastmod>
+    </url>
+</urlset>
