@@ -199,21 +199,28 @@ def build_run_record_from_job(  # noqa: PLR0913
     completed_at: datetime | None = None,
     config_json: str | None = None,
     llm_call: LLMCall | None = None,
+    report: IntegrityReport | None = None,
 ) -> RunRecord:
     """Assemble a :class:`RunRecord` for a completed *web* job.
 
     The web path runs :func:`dbsprout.core.service.generate` only (no
-    integrity validation, by design — S-124 returns immediately and the
-    background job calls just the generator), so we do **not** synthesize
-    fake :class:`~dbsprout.state.models.QualityResult` rows. The mapping
-    therefore mirrors :func:`build_run_record` minus the ``report``
-    argument and writes an empty ``quality_results`` list.
+    integrity validation inline, by design — S-124 returns immediately and
+    the background job calls just the generator). When an
+    :class:`~dbsprout.quality.integrity.IntegrityReport` is supplied (P5-9:
+    the web state-write hook computes it post-generation, reusing the same
+    :func:`dbsprout.quality.integrity.validate_integrity` the
+    ``/api/validate`` route runs), its checks are mapped onto
+    ``quality_results`` so the dashboard's Quality panel populates. When
+    ``report`` is ``None`` (the S-110 default) no quality rows are written —
+    we never synthesize fake :class:`~dbsprout.state.models.QualityResult`
+    rows. The mapping otherwise mirrors :func:`build_run_record`.
     """
     duration_ms: int | None = None
     if completed_at is not None:
         duration_ms = int((completed_at - started_at).total_seconds() * 1000)
 
     llm_calls = [llm_call] if llm_call is not None else []
+    quality_results = _quality_results(report) if report is not None else []
     return RunRecord(
         started_at=started_at,
         completed_at=completed_at,
@@ -226,7 +233,7 @@ def build_run_record_from_job(  # noqa: PLR0913
         seed=seed,
         config_json=config_json,
         table_stats=_table_stats(result),
-        quality_results=[],
+        quality_results=quality_results,
         llm_calls=llm_calls,
     )
 
@@ -240,13 +247,17 @@ def record_job_run(  # noqa: PLR0913
     completed_at: datetime | None = None,
     config_json: str | None = None,
     llm_call: LLMCall | None = None,
+    report: IntegrityReport | None = None,
     db_path: Path | str = _DEFAULT_DB_PATH,
 ) -> int | None:
     """Persist a completed *web* job run to the state DB; never raise.
 
     Web-path analogue of :func:`record_generation_run`. Returns the new
     ``runs.id`` on success, ``None`` on any failure (logged warning).
-    State telemetry is best-effort and never blocks the caller.
+    State telemetry is best-effort and never blocks the caller. An optional
+    ``report`` (P5-9) populates the run's ``quality_results`` so the web
+    dashboard's Quality panel reflects integrity checks; when ``None`` no
+    quality rows are written (the S-110 default).
     """
     try:
         run = build_run_record_from_job(
@@ -257,6 +268,7 @@ def record_job_run(  # noqa: PLR0913
             completed_at=completed_at,
             config_json=config_json,
             llm_call=llm_call,
+            report=report,
         )
         return StateDB(db_path).record_run(run)
     except Exception as exc:

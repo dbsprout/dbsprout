@@ -261,6 +261,34 @@ class TestBuildRunRecordFromJob:
         )
         assert run.quality_results == []
 
+    def test_quality_results_populated_when_report_given(self) -> None:
+        """P5-9: a supplied IntegrityReport maps onto quality_results."""
+        run = build_run_record_from_job(
+            _result(),
+            engine="heuristic",
+            seed=1,
+            started_at=_T0,
+            completed_at=_T1,
+            report=_report(),
+        )
+        assert len(run.quality_results) == 2
+        assert all(qr.metric_type == "integrity" for qr in run.quality_results)
+        names = {qr.metric_name for qr in run.quality_results}
+        assert names == {"pk_uniqueness", "fk_satisfaction"}
+
+    def test_quality_results_reflect_failed_checks(self) -> None:
+        """A failing check is recorded with passed=False (not dropped)."""
+        run = build_run_record_from_job(
+            _result(),
+            engine="heuristic",
+            seed=1,
+            started_at=_T0,
+            report=_report(passed=False),
+        )
+        failed = [qr for qr in run.quality_results if not qr.passed]
+        assert len(failed) == 1
+        assert failed[0].metric_name == "fk_satisfaction"
+
     def test_llm_calls_empty_by_default(self) -> None:
         run = build_run_record_from_job(
             _result(), engine="heuristic", seed=1, started_at=_T0, completed_at=_T1
@@ -295,6 +323,25 @@ class TestRecordJobRun:
         assert runs[0].seed == 7
         assert runs[0].engine == "heuristic"
         assert runs[0].quality_results == []
+
+    def test_persists_quality_results_when_report_given(self, tmp_path: Path) -> None:
+        """P5-9: passing an IntegrityReport persists integrity quality rows."""
+        db_path = tmp_path / "state.db"
+        run_id = record_job_run(
+            _result(),
+            engine="heuristic",
+            seed=7,
+            started_at=_T0,
+            completed_at=_T1,
+            report=_report(),
+            db_path=db_path,
+        )
+
+        assert run_id is not None
+        runs = StateDB(db_path).get_runs()
+        assert len(runs) == 1
+        assert len(runs[0].quality_results) == 2
+        assert all(qr.metric_type == "integrity" for qr in runs[0].quality_results)
 
     def test_state_failure_never_raises(
         self,
