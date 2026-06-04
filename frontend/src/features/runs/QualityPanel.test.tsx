@@ -53,7 +53,12 @@ test("shows an empty-state when no run was found", async () => {
 
   renderWithClient(<QualityPanel runId={undefined} />);
 
-  await waitFor(() => expect(screen.getByText(/no quality data/i)).toBeInTheDocument());
+  await waitFor(() =>
+    expect(screen.getByText(/quality metrics are recorded/i)).toBeInTheDocument(),
+  );
+  // Points the user at the right actions: live check now (Validate) + populate (Generate).
+  expect(screen.getByText("Validate")).toBeInTheDocument();
+  expect(screen.getByText("Generate")).toBeInTheDocument();
 });
 
 test("shows an error state when the request fails", async () => {

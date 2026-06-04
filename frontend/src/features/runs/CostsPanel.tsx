@@ -25,7 +25,10 @@ export function CostsPanel() {
 
   if (total_calls === 0) {
     return (
-      <p className="db-notice-muted">No LLM calls recorded (offline / heuristic runs).</p>
+      <p className="db-notice-muted">
+        No LLM costs yet — costs appear after a run that used a cloud/embedded LLM (e.g. AI
+        spec-assist).
+      </p>
     );
   }
 
