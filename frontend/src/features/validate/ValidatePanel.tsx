@@ -8,11 +8,14 @@ import type {
   ValidateResponse,
 } from "../../api/types";
 import { integritySummary } from "./integritySummary";
+import { drillReason, violationHelp } from "./violationHelp";
 
 /** Where a violation points; the seam the Configure grid can later focus on. */
 export interface DrillTarget {
   table: string;
   column: string | null;
+  /** P5-7: a short cross-panel reason shown in the Configure drill notice. */
+  reason?: string;
 }
 
 interface ValidatePanelProps {
@@ -69,7 +72,7 @@ function IntegrityBlock({ report }: { report: ValidateResponse }) {
         {summary.map((row) => (
           <li
             key={row.check}
-            className="flex items-center justify-between gap-2 rounded-md border border-slate-200 bg-white px-3 py-1.5 text-sm"
+            className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1 rounded-md border border-slate-200 bg-white px-3 py-1.5 text-sm"
           >
             <span className="text-slate-700">{row.label}</span>
             <span className={row.passed ? "db-pill-pass" : "db-pill-fail"}>
@@ -93,25 +96,36 @@ function ViolationRows({
   return (
     <section className="db-subsection">
       <h3 className="db-subsection-title">Violations</h3>
+      {/* ─── P5-7 ─── cheap actionable hint: most violations clear on a re-seed. */}
+      <p className="mb-2 text-xs text-slate-500">
+        Tip: most violations clear by re-generating on the Generate step with a different seed.
+      </p>
       <ul className="flex flex-col gap-1">
-        {details.map((d, i) => (
-          <li
-            key={`${d.table}.${d.column}.${d.check}.${i}`}
-            className="flex flex-wrap items-center gap-2 rounded-md border border-red-200 bg-red-50 px-3 py-1.5 text-sm text-red-800"
-          >
-            <span className="font-mono">
-              {d.check} · {d.table}
-              {d.column ? `.${d.column}` : ""} — {d.details}
-            </span>
-            <button
-              type="button"
-              className="db-btn-secondary ml-auto"
-              onClick={() => onDrill?.({ table: d.table, column: d.column })}
+        {details.map((d, i) => {
+          const help = violationHelp(d.check);
+          return (
+            <li
+              key={`${d.table}.${d.column}.${d.check}.${i}`}
+              className="flex flex-wrap items-center gap-2 rounded-md border border-red-200 bg-red-50 px-3 py-1.5 text-sm text-red-800"
             >
-              Drill to cell
-            </button>
-          </li>
-        ))}
+              <span className="font-mono">
+                {d.check} · {d.table}
+                {d.column ? `.${d.column}` : ""} — {d.details}
+              </span>
+              <button
+                type="button"
+                className="db-btn-secondary ml-auto"
+                onClick={() => onDrill?.({ table: d.table, column: d.column, reason: drillReason(d.check) })}
+              >
+                Drill to cell
+              </button>
+              {/* ─── P5-7 ─── plain-language "what it means" + "how to fix it". */}
+              <p className="basis-full text-xs text-red-700/90">
+                {help.what} <span className="font-semibold">Fix:</span> {help.fix}
+              </p>
+            </li>
+          );
+        })}
       </ul>
     </section>
   );

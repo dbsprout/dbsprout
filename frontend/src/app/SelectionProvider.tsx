@@ -8,6 +8,12 @@ import { createContext, useContext, useState, type ReactNode } from "react";
 export interface SelectionTarget {
   table: string;
   column: string | null;
+  /**
+   * P5-7: an optional short reason explaining WHY this cell was focused (e.g. the
+   * Validate violation that triggered the drill). Consumers may show it as
+   * cross-panel context; it carries no behavior of its own.
+   */
+  reason?: string;
 }
 
 interface SelectionContextValue {
