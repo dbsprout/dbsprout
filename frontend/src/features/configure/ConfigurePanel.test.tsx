@@ -73,9 +73,74 @@ const SPEC = {
 const GENERATORS = {
   providers: ["mimesis", "numpy"],
   methods: [
-    { provider: "mimesis", method: "email", description: "", example: "", dtypes: [], params: [] },
-    { provider: "mimesis", method: "name", description: "", example: "", dtypes: [], params: [] },
-    { provider: "numpy", method: "uniform", description: "", example: "", dtypes: [], params: [] },
+    {
+      provider: "mimesis",
+      method: "email",
+      description: "",
+      example: "",
+      dtypes: ["VARCHAR"],
+      params: [],
+    },
+    {
+      provider: "mimesis",
+      method: "name",
+      description: "",
+      example: "",
+      dtypes: ["VARCHAR"],
+      params: [],
+    },
+    {
+      provider: "numpy",
+      method: "uniform",
+      description: "",
+      example: "",
+      dtypes: ["INTEGER", "FLOAT"],
+      params: [],
+    },
+  ],
+};
+
+// ─── P4-12: schema-tree carries the per-column SQL types that drive the dtype
+// filter. `users.email` is VARCHAR → only VARCHAR generators are compatible;
+// `orders.total` is FLOAT → only numeric generators are compatible. `users`
+// also has a column with no schema entry to exercise the unfiltered fallback.
+const SCHEMA = {
+  table_count: 2,
+  dialect: "sqlite",
+  source: "test",
+  tables: [
+    {
+      name: "users",
+      primary_key: ["email"],
+      foreign_keys: [],
+      columns: [
+        {
+          name: "email",
+          type: "VARCHAR(255)",
+          nullable: false,
+          unique: true,
+          autoincrement: false,
+          default: null,
+          max_length: 255,
+        },
+      ],
+    },
+    {
+      name: "orders",
+      primary_key: [],
+      foreign_keys: [],
+      columns: [
+        {
+          name: "total",
+          type: "FLOAT",
+          nullable: false,
+          unique: false,
+          autoincrement: false,
+          default: null,
+          max_length: null,
+        },
+      ],
+    },
   ],
 };
 
@@ -90,6 +155,7 @@ function router() {
   return vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) => {
     const url = String(input);
     if (url === "/api/spec") return json(SPEC);
+    if (url === "/api/schema") return json(SCHEMA);
     if (url === "/api/generators") return json(GENERATORS);
     if (url.startsWith("/api/preview/users"))
       return json({ table: "users", limit: 100, total: 1, rows: [{ email: "a@b.c" }] });
@@ -238,3 +304,79 @@ test("a drill to a column that no longer exists selects the table but is otherwi
   expect(document.querySelectorAll('[data-focused="true"]').length).toBe(0);
 });
 // ─── end P4-7 ───
+
+// ─── P4-12: ConfigurePanel feeds per-column SQL types into the dormant filter ───
+
+/** Option labels of a `<select>`, in DOM order. */
+function optionValues(select: HTMLElement): string[] {
+  return Array.from(select.querySelectorAll("option")).map((o) => o.value);
+}
+
+test("grid generator dropdown filters to dtype-compatible generators for the column's SQL type", async () => {
+  vi.stubGlobal("fetch", router());
+  renderWithClient(<ConfigurePanel />);
+  // users.email is VARCHAR → only the VARCHAR generators are offered; the FLOAT
+  // generator (numpy/uniform) is filtered out.
+  const select = await screen.findByLabelText(/generator for email/i);
+  await waitFor(() => expect(optionValues(select)).toContain("mimesis/name"));
+  const values = optionValues(select);
+  expect(values).toContain("mimesis/email");
+  expect(values).toContain("mimesis/name");
+  expect(values).not.toContain("numpy/uniform");
+});
+
+test("grid 'show all generators' escape hatch restores the filtered-out generators", async () => {
+  vi.stubGlobal("fetch", router());
+  renderWithClient(<ConfigurePanel />);
+  const select = await screen.findByLabelText(/generator for email/i);
+  await waitFor(() => expect(optionValues(select)).toContain("mimesis/name"));
+  // Ticking "show all generators" in the grid un-filters the dropdown.
+  fireEvent.click(screen.getByLabelText(/show all generators/i));
+  await waitFor(() => expect(optionValues(select)).toContain("numpy/uniform"));
+});
+
+test("inspector generator picker filters by the focused column's SQL type and 'show all' restores", async () => {
+  vi.stubGlobal("fetch", router());
+  renderWithClient(<ConfigurePanel />);
+  fireEvent.click(await screen.findByRole("button", { name: /inspect email/i }));
+  const inspector = await screen.findByLabelText(/inspector for email/i);
+  // The inspector's method picker is present (driven by methods + columnType) and
+  // filtered to VARCHAR generators.
+  const picker = await within(inspector).findByRole("combobox", { name: /generator method/i });
+  await waitFor(() => expect(optionValues(picker)).toContain("mimesis/name"));
+  expect(optionValues(picker)).not.toContain("numpy/uniform");
+  // The inspector's own "show all generators" restores the filtered-out generator.
+  fireEvent.click(within(inspector).getByLabelText(/show all generators/i));
+  await waitFor(() => expect(optionValues(picker)).toContain("numpy/uniform"));
+});
+
+test("a column with no schema-tree entry stays unfiltered (show-all fallback)", async () => {
+  // Schema omits orders.total's type entirely → columnTypes has no entry for it,
+  // so the grid dropdown is unfiltered and offers every generator.
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url === "/api/spec") return json(SPEC);
+      if (url === "/api/generators") return json(GENERATORS);
+      if (url === "/api/schema")
+        return json({
+          table_count: 1,
+          dialect: "sqlite",
+          source: "test",
+          tables: [{ name: "orders", primary_key: [], foreign_keys: [], columns: [] }],
+        });
+      if (url.startsWith("/api/preview/")) return json({ table: "x", limit: 100, total: 0, rows: [] });
+      return json({}, 404);
+    }),
+  );
+  renderWithClient(<ConfigurePanel />);
+  const picker = await screen.findByLabelText(/configure table/i);
+  fireEvent.change(picker, { target: { value: "orders" } });
+  const select = await screen.findByLabelText(/generator for total/i);
+  // Unknown type → every generator stays selectable.
+  await waitFor(() => expect(optionValues(select)).toContain("numpy/uniform"));
+  expect(optionValues(select)).toContain("mimesis/email");
+  expect(optionValues(select)).toContain("mimesis/name");
+});
+// ─── end P4-12 ───
