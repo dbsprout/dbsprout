@@ -92,20 +92,18 @@ def _enforce_unique(
             continue
         _dedup_single_column(table.name, col, rows, rng)
 
-    # Composite UNIQUE indexes
+    # Composite UNIQUE indexes. Junction tables (all-FK composite keys) are
+    # NOT skipped: FK sampling can draw the same parent pair for two rows, so
+    # the dedup must run. Colliding FK columns are re-sampled FK-aware (from
+    # the valid parent-PK pool) inside ``_dedup_composite``.
     for idx in table.indexes:
         if not idx.unique or len(idx.columns) <= 1:
             continue
-        # Skip if all columns are FK columns (junction table)
-        if all(c in fk_cols for c in idx.columns):
-            continue
-        _dedup_composite(table, idx.columns, rows, rng)
+        _dedup_composite(table, idx.columns, rows, rng, fk_cols)
 
-    # Composite PK as implicit UNIQUE
+    # Composite PK as implicit UNIQUE — runs for all-FK junction-table PKs too.
     if len(table.primary_key) > 1:
-        all_pk_cols_are_fk = all(c in fk_cols for c in table.primary_key)
-        if not all_pk_cols_are_fk:
-            _dedup_composite(table, table.primary_key, rows, rng)
+        _dedup_composite(table, table.primary_key, rows, rng, fk_cols)
 
 
 def _dedup_single_column(
@@ -140,18 +138,36 @@ def _dedup_composite(
     col_names: list[str],
     rows: list[dict[str, Any]],
     rng: Generator,
+    fk_cols: set[str],
 ) -> None:
-    """Remove duplicate tuples for composite UNIQUE constraints."""
+    """Remove duplicate tuples for composite UNIQUE / PK constraints.
+
+    FK-aware: a colliding FK column is re-sampled from its *valid parent-PK
+    pool* — the distinct values already present in that column after FK
+    sampling, which is exactly the set of parent PKs that were drawn. This
+    keeps FK integrity intact while driving the tuple toward a new unique
+    combination (junction tables whose entire key is FK columns). Non-FK
+    columns keep the type-appropriate ``_regenerate_value`` fallback. When the
+    combination space is genuinely exhausted (rows > distinct parent combos),
+    ``_MAX_RETRIES`` is hit and a :class:`ConstraintError` is raised rather
+    than emitting a silent duplicate.
+    """
     seen: set[tuple[Any, ...]] = set()
     col_name_set = set(col_names)
     col_schemas = [c for c in table.columns if c.name in col_name_set]
+    fk_pools = _fk_value_pools(col_names, fk_cols, rows)
 
     for row in rows:
         tup = tuple(row[c] for c in col_names)
         if tup in seen:
             for _attempt in range(_MAX_RETRIES):
                 for col_schema in col_schemas:
-                    if not col_schema.autoincrement:
+                    if col_schema.autoincrement:
+                        continue
+                    pool = fk_pools.get(col_schema.name)
+                    if pool is not None:
+                        row[col_schema.name] = pool[int(rng.integers(0, len(pool)))]
+                    else:
                         row[col_schema.name] = _regenerate_value(col_schema, rng)
                 tup = tuple(row[c] for c in col_names)
                 if tup not in seen:
@@ -164,6 +180,29 @@ def _dedup_composite(
                     attempts=_MAX_RETRIES,
                 )
         seen.add(tup)
+
+
+def _fk_value_pools(
+    col_names: list[str],
+    fk_cols: set[str],
+    rows: list[dict[str, Any]],
+) -> dict[str, list[Any]]:
+    """Map each FK column in *col_names* to its valid parent-PK pool.
+
+    The pool is the sorted distinct non-None values present in that column
+    after FK sampling — i.e. the parent PKs already drawn — so re-sampling
+    from it can never invent a value that breaks FK integrity. Columns with an
+    empty pool (parent had 0 rows → all None) are omitted, so the caller falls
+    back to ``_regenerate_value`` instead of sampling an empty sequence.
+    """
+    pools: dict[str, list[Any]] = {}
+    for name in col_names:
+        if name not in fk_cols:
+            continue
+        values = sorted({row[name] for row in rows if row[name] is not None})
+        if values:
+            pools[name] = values
+    return pools
 
 
 def _enforce_not_null(

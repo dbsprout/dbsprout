@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 
 from dbsprout.generate.constraints import ConstraintError, enforce_constraints
+from dbsprout.generate.fk_sampling import sample_fk_values
 from dbsprout.schema.models import (
     ColumnSchema,
     ColumnType,
@@ -493,3 +494,120 @@ class TestCheckConstraintEnforcement:
 
         for row in result:
             assert row["status"] in {"active", "inactive"}
+
+
+def _junction_table(*, unique_index: bool = False) -> TableSchema:
+    """An ``inventory``-style junction table: composite PK = two FK columns.
+
+    When *unique_index* is True the FK pair is enforced via a composite
+    UNIQUE *index* on top of a single-column autoincrement PK instead of a
+    composite PK — the other all-FK code path in ``_enforce_unique``.
+    """
+    if unique_index:
+        return TableSchema(
+            name="inventory",
+            columns=[
+                _col("id", nullable=False, pk=True, autoincrement=True),
+                _col("warehouse_id", nullable=False),
+                _col("product_id", nullable=False),
+                _col("quantity", nullable=False),
+            ],
+            primary_key=["id"],
+            foreign_keys=[
+                ForeignKeySchema(
+                    columns=["warehouse_id"], ref_table="warehouses", ref_columns=["id"]
+                ),
+                ForeignKeySchema(columns=["product_id"], ref_table="products", ref_columns=["id"]),
+            ],
+            indexes=[
+                IndexSchema(
+                    name="uq_inventory",
+                    columns=["warehouse_id", "product_id"],
+                    unique=True,
+                ),
+            ],
+        )
+    return TableSchema(
+        name="inventory",
+        columns=[
+            _col("warehouse_id", nullable=False, pk=True),
+            _col("product_id", nullable=False, pk=True),
+            _col("quantity", nullable=False),
+        ],
+        primary_key=["warehouse_id", "product_id"],
+        foreign_keys=[
+            ForeignKeySchema(columns=["warehouse_id"], ref_table="warehouses", ref_columns=["id"]),
+            ForeignKeySchema(columns=["product_id"], ref_table="products", ref_columns=["id"]),
+        ],
+    )
+
+
+def _seed_and_enforce(
+    table: TableSchema,
+    *,
+    n_warehouses: int,
+    n_products: int,
+    n_rows: int,
+    seed: int,
+) -> list[dict[str, object]]:
+    """FK-sample then enforce constraints for a junction table.
+
+    Mirrors the orchestrator order (``sample_fk_values`` → ``enforce_constraints``).
+    """
+    warehouses = [{"id": i} for i in range(1, n_warehouses + 1)]
+    products = [{"id": i} for i in range(1, n_products + 1)]
+    parent_data = {"warehouses": warehouses, "products": products}
+    rows: list[dict[str, object]] = [
+        {"warehouse_id": None, "product_id": None, "quantity": 1, "id": None} for _ in range(n_rows)
+    ]
+    sample_fk_values(table, parent_data, rows, seed)
+    return enforce_constraints(table, rows, seed)
+
+
+class TestCompositeFKJunctionDedup:
+    """Junction tables: composite PK / UNIQUE index made entirely of FK columns.
+
+    Regression for P5-6: the all-FK composite PK was skipped by the dedup,
+    so FK-sampling collisions (two rows drawing the same parent pair) emitted
+    duplicate PK tuples. The dedup must run AND re-sample FK columns from their
+    valid parent-PK pool (FK-aware) so the tuple becomes unique without
+    breaking FK integrity.
+    """
+
+    def test_junction_composite_pk_no_duplicates_across_seeds(self) -> None:
+        table = _junction_table()
+        for seed in range(10):
+            result = _seed_and_enforce(table, n_warehouses=6, n_products=6, n_rows=20, seed=seed)
+            tuples = [(r["warehouse_id"], r["product_id"]) for r in result]
+            assert len(tuples) == len(set(tuples)), (
+                f"seed={seed}: duplicate composite PK tuples {tuples}"
+            )
+
+    def test_junction_composite_pk_preserves_fk_integrity(self) -> None:
+        table = _junction_table()
+        valid_warehouses = set(range(1, 7))
+        valid_products = set(range(1, 7))
+        for seed in range(10):
+            result = _seed_and_enforce(table, n_warehouses=6, n_products=6, n_rows=20, seed=seed)
+            for row in result:
+                assert row["warehouse_id"] in valid_warehouses, row
+                assert row["product_id"] in valid_products, row
+
+    def test_composite_unique_index_of_fks_deduped(self) -> None:
+        table = _junction_table(unique_index=True)
+        valid_warehouses = set(range(1, 7))
+        valid_products = set(range(1, 7))
+        for seed in range(10):
+            result = _seed_and_enforce(table, n_warehouses=6, n_products=6, n_rows=20, seed=seed)
+            pairs = [(r["warehouse_id"], r["product_id"]) for r in result]
+            assert len(pairs) == len(set(pairs)), f"seed={seed}: dup {pairs}"
+            for w, p in pairs:
+                assert w in valid_warehouses
+                assert p in valid_products
+
+    def test_exhausted_combination_space_raises(self) -> None:
+        """rows > distinct parent-PK combinations → clear ConstraintError,
+        never a silent duplicate."""
+        table = _junction_table()
+        with pytest.raises(ConstraintError, match="UNIQUE"):
+            _seed_and_enforce(table, n_warehouses=1, n_products=1, n_rows=5, seed=42)
