@@ -53,6 +53,42 @@ const VALIDATE_VIOLATION = {
   detection: null,
 };
 
+// ─── P5-7: a minimal spec so ConfigurePanel mounts its grid (not the empty
+// state) after a drill — the drill "why" notice renders alongside the grid, and
+// validating only makes sense once a spec/run exists anyway. ───
+const MINI_SPEC = {
+  version: "1.0",
+  global_seed: 42,
+  schema_hash: "",
+  model_used: null,
+  created_at: null,
+  tables: [
+    {
+      table_name: "orders",
+      row_count: 10,
+      derived: [],
+      correlations: [],
+      cardinality: null,
+      columns: {
+        total: {
+          provider: "numpy",
+          method: "uniform",
+          params: {},
+          distribution: null,
+          distribution_params: {},
+          min_value: null,
+          max_value: null,
+          enum_values: null,
+          format_pattern: null,
+          unique: false,
+          nullable_rate: 0,
+          vectorized: true,
+        },
+      },
+    },
+  ],
+};
+
 function stubValidateFetch() {
   vi.stubGlobal(
     "fetch",
@@ -66,6 +102,11 @@ function stubValidateFetch() {
         });
       if (url.includes("/api/validate") && method === "POST") {
         return json(VALIDATE_VIOLATION);
+      }
+      // Exact /api/spec (not the /api/spec/tables/... PUT seam) yields the mini spec.
+      if (url.endsWith("/api/spec")) return json(MINI_SPEC);
+      if (url.includes("/api/preview/")) {
+        return json({ table: "orders", limit: 100, total: 1, rows: [{ total: 9.5 }] });
       }
       if (url.includes("/api/samples")) return json({ samples: [] });
       if (url.includes("/api/costs")) {
@@ -249,6 +290,11 @@ test("guided mode: drilling a violation navigates the wizard to Configure", asyn
   // Configure is now the active step: no longer hidden / aria-hidden.
   expect(sectionFor("Configure")).not.toHaveClass("hidden");
   expect(sectionFor("Configure")).not.toHaveAttribute("aria-hidden");
+
+  // ─── P5-7 ─── the drill threads a reason through to a Configure "why" notice.
+  const notice = await screen.findByRole("status");
+  expect(notice).toHaveTextContent(/flagged by Validate/i);
+  expect(notice).toHaveTextContent(/orders\.total/);
 });
 
 test("advanced mode: drilling a violation sets selection without wizard navigation", async () => {
@@ -264,5 +310,10 @@ test("advanced mode: drilling a violation sets selection without wizard navigati
   expect(screen.getByRole("heading", { name: "Configure" })).toBeInTheDocument();
   // Configure was already visible in advanced mode — no hidden class to clear.
   expect(sectionFor("Configure")).not.toHaveClass("hidden");
+
+  // ─── P5-7 ─── the Configure "why" notice still appears (reason threaded through).
+  const notice = await screen.findByRole("status");
+  expect(notice).toHaveTextContent(/flagged by Validate/i);
+  expect(notice).toHaveTextContent(/orders\.total/);
 });
 // ─── end P5-5 ───

@@ -92,7 +92,7 @@ test("a clean run reports no violations", async () => {
   await waitFor(() => expect(screen.getByText(/no violations/i)).toBeInTheDocument());
 });
 
-test("a violation row drill button invokes onDrill with the offending table and column", async () => {
+test("a violation row drill button invokes onDrill with the offending table, column, and a reason", async () => {
   vi.stubGlobal("fetch", vi.fn(async () => jsonResponse(BASE)));
   const onDrill = vi.fn();
 
@@ -102,7 +102,60 @@ test("a violation row drill button invokes onDrill with the offending table and 
   await waitFor(() => expect(screen.getByRole("button", { name: /drill/i })).toBeInTheDocument());
   fireEvent.click(screen.getByRole("button", { name: /drill/i }));
 
-  expect(onDrill).toHaveBeenCalledWith({ table: "orders", column: "user_id" });
+  // ─── P5-7: the drill now carries a short cross-panel reason for Configure ───
+  expect(onDrill).toHaveBeenCalledWith(
+    expect.objectContaining({
+      table: "orders",
+      column: "user_id",
+      reason: expect.stringMatching(/foreign key|parent|orphan/i),
+    }),
+  );
+});
+
+// ─── P5-7: each violation explains what it means + how to fix it ───
+test("an fk violation row shows a plain-language explanation and a fix", async () => {
+  vi.stubGlobal("fetch", vi.fn(async () => jsonResponse(BASE)));
+
+  renderWithClient(<ValidatePanel />);
+  await clickRun();
+
+  await waitFor(() => expect(screen.getByText(/1 orphan row/)).toBeInTheDocument());
+  // What it means.
+  expect(screen.getByText(/references a parent row that does not exist/i)).toBeInTheDocument();
+  // How to fix it.
+  expect(screen.getByText(/sampled from real parent rows/i)).toBeInTheDocument();
+});
+
+test("a duplicate-key (unique/pk) violation shows the re-generate remedy", async () => {
+  const dup = {
+    ...BASE,
+    summary: { tables: 1, rows: 10, violations: 1 },
+    by_table: [
+      { table: "users", fk_violations: 0, unique_violations: 1, not_null_violations: 0, check_violations: 0 },
+    ],
+    details: [
+      { check: "pk_uniqueness", table: "users", column: "id", passed: false, details: "2 duplicate keys" },
+    ],
+  };
+  vi.stubGlobal("fetch", vi.fn(async () => jsonResponse(dup)));
+
+  renderWithClient(<ValidatePanel />);
+  await clickRun();
+
+  await waitFor(() => expect(screen.getByText(/2 duplicate keys/)).toBeInTheDocument());
+  expect(screen.getByText(/share the same value/i)).toBeInTheDocument();
+  // The duplicate-key remedy mentions re-generating with a different seed.
+  expect(screen.getAllByText(/re-generate/i).length).toBeGreaterThan(0);
+});
+
+test("the Violations section shows a re-seed tip", async () => {
+  vi.stubGlobal("fetch", vi.fn(async () => jsonResponse(BASE)));
+
+  renderWithClient(<ValidatePanel />);
+  await clickRun();
+
+  await waitFor(() => expect(screen.getByText(/1 orphan row/)).toBeInTheDocument());
+  expect(screen.getByText(/re-generating on the Generate step/i)).toBeInTheDocument();
 });
 
 test("a typed error surfaces as an alert without leaking internals", async () => {

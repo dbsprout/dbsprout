@@ -305,6 +305,69 @@ test("a drill to a column that no longer exists selects the table but is otherwi
 });
 // ─── end P4-7 ───
 
+// ─── P5-7: a drill carrying a reason shows a dismissible "why" notice ───
+test("a drill with a reason shows a status notice naming the cell and the reason", async () => {
+  vi.stubGlobal("fetch", router());
+  renderWithClient(
+    <>
+      <Driller target={{ table: "orders", column: "total", reason: "duplicate key value — re-generate" }} />
+      <ConfigurePanel />
+    </>,
+  );
+  await screen.findByLabelText(/configure table/i);
+  fireEvent.click(screen.getByRole("button", { name: "drill" }));
+  const notice = await screen.findByRole("status");
+  expect(notice).toHaveTextContent(/flagged by Validate/i);
+  expect(notice).toHaveTextContent(/orders\.total/);
+  expect(notice).toHaveTextContent(/duplicate key value/i);
+});
+
+test("the drill notice is removed by its dismiss button", async () => {
+  vi.stubGlobal("fetch", router());
+  renderWithClient(
+    <>
+      <Driller target={{ table: "orders", column: "total", reason: "orphaned foreign key" }} />
+      <ConfigurePanel />
+    </>,
+  );
+  await screen.findByLabelText(/configure table/i);
+  fireEvent.click(screen.getByRole("button", { name: "drill" }));
+  expect(await screen.findByRole("status")).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: /dismiss notice/i }));
+  expect(screen.queryByRole("status")).not.toBeInTheDocument();
+});
+
+test("changing the table dismisses the drill notice", async () => {
+  vi.stubGlobal("fetch", router());
+  renderWithClient(
+    <>
+      <Driller target={{ table: "orders", column: "total", reason: "orphaned foreign key" }} />
+      <ConfigurePanel />
+    </>,
+  );
+  const picker = await screen.findByLabelText(/configure table/i);
+  fireEvent.click(screen.getByRole("button", { name: "drill" }));
+  expect(await screen.findByRole("status")).toBeInTheDocument();
+  // Switch back to users — the cross-panel notice no longer applies.
+  fireEvent.change(picker, { target: { value: "users" } });
+  await waitFor(() => expect(screen.queryByRole("status")).not.toBeInTheDocument());
+});
+
+test("a reason-less drill (P4-7 path) shows no notice", async () => {
+  vi.stubGlobal("fetch", router());
+  renderWithClient(
+    <>
+      <Driller target={{ table: "orders", column: "total" }} />
+      <ConfigurePanel />
+    </>,
+  );
+  const picker = await screen.findByLabelText(/configure table/i);
+  fireEvent.click(screen.getByRole("button", { name: "drill" }));
+  await waitFor(() => expect(picker).toHaveValue("orders"));
+  expect(screen.queryByRole("status")).not.toBeInTheDocument();
+});
+// ─── end P5-7 ───
+
 // ─── P4-12: ConfigurePanel feeds per-column SQL types into the dormant filter ───
 
 /** Option labels of a `<select>`, in DOM order. */

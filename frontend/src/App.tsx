@@ -67,8 +67,10 @@ export function App() {
             P5-5: in guided mode also navigate the wizard to the (otherwise hidden)
             Configure step so the focused cell is visible. */}
         <ValidatePanel
-          onDrill={({ table, column }) => {
-            setSelection({ table, column });
+          onDrill={({ table, column, reason }) => {
+            // P5-7: forward the violation's reason so ConfigurePanel can explain
+            // WHY it focused this cell. P5-5 navigation behaviour is unchanged.
+            setSelection({ table, column, reason });
             if (mode === "guided") setStep(configureStepIndex);
           }}
         />

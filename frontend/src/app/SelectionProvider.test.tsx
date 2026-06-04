@@ -24,6 +24,23 @@ test("setSelection tolerates a null column (table-level violation)", () => {
   expect(result.current.selection).toEqual({ table: "orders", column: null });
 });
 
+// ─── P5-7: an optional cross-panel reason rides along with the target ───
+test("setSelection round-trips an optional reason", () => {
+  const { result } = renderHook(() => useSelection(), { wrapper });
+  act(() =>
+    result.current.setSelection({
+      table: "users",
+      column: "id",
+      reason: "duplicate key value — re-generate",
+    }),
+  );
+  expect(result.current.selection).toEqual({
+    table: "users",
+    column: "id",
+    reason: "duplicate key value — re-generate",
+  });
+});
+
 test("clearSelection resets to null", () => {
   const { result } = renderHook(() => useSelection(), { wrapper });
   act(() => result.current.setSelection({ table: "users", column: "email" }));

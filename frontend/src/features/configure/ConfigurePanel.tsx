@@ -39,6 +39,15 @@ export function ConfigurePanel() {
   const [selectedTable, setSelectedTable] = useState<string | null>(null);
   const [selectedColumn, setSelectedColumn] = useState<string | null>(null);
 
+  // ─── P5-7 ─── snapshot of the cross-panel "why" for the drill notice. The P4-7
+  // effect nulls the global selection immediately, so we must capture the reason
+  // into local state here rather than read it from the (now-cleared) selection.
+  const [drillNote, setDrillNote] = useState<{
+    table: string;
+    column: string | null;
+    reason: string;
+  } | null>(null);
+
   // ─── P4-7 ─── cross-panel drill: a Validate violation (or any caller) can focus
   // this grid on a specific table+column. Apply the target to the table-picker
   // state, then clear it so a later manual table switch isn't overridden.
@@ -47,6 +56,12 @@ export function ConfigurePanel() {
     if (!selection) return;
     setSelectedTable(selection.table);
     setSelectedColumn(selection.column);
+    // ─── P5-7 ─── capture (or clear) the drill notice from the same target.
+    setDrillNote(
+      selection.reason
+        ? { table: selection.table, column: selection.column, reason: selection.reason }
+        : null,
+    );
     clearSelection();
   }, [selection, clearSelection]);
   // ─── end P4-7 ───
@@ -123,6 +138,8 @@ export function ConfigurePanel() {
           onChange={(e) => {
             setSelectedTable(e.target.value);
             setSelectedColumn(null);
+            // ─── P5-7 ─── a manual table switch ends the cross-panel context.
+            setDrillNote(null);
           }}
         >
           {tables.map((t) => (
@@ -132,6 +149,28 @@ export function ConfigurePanel() {
           ))}
         </select>
       </label>
+
+      {/* ─── P5-7 ─── explain WHY a cell was focused after a Validate drill. */}
+      {drillNote && (
+        <div role="status" className="db-notice-status flex items-start justify-between gap-2">
+          <span>
+            Focused{" "}
+            <span className="font-mono">
+              {drillNote.table}
+              {drillNote.column ? `.${drillNote.column}` : ""}
+            </span>{" "}
+            — flagged by Validate: {drillNote.reason}
+          </span>
+          <button
+            type="button"
+            aria-label="dismiss notice"
+            className="db-btn-secondary"
+            onClick={() => setDrillNote(null)}
+          >
+            ×
+          </button>
+        </div>
+      )}
 
       {mutation.isError && <p role="alert" className="db-notice-alert">Failed to save column.</p>}
 
@@ -143,7 +182,11 @@ export function ConfigurePanel() {
         columnTypes={columnTypes}
         // ─── P4-7 ─── scroll/highlight the drilled-into column (no-op if absent).
         focusColumn={selectedColumn}
-        onSelect={(c) => setSelectedColumn(c)}
+        onSelect={(c) => {
+          setSelectedColumn(c);
+          // ─── P5-7 ─── picking another column ends the cross-panel context.
+          setDrillNote(null);
+        }}
         onGeneratorChange={(column, cfg) => mutation.mutate({ column, cfg })}
       />
 
