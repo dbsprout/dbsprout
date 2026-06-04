@@ -14,6 +14,8 @@ from typing import TYPE_CHECKING
 import typer
 from rich.console import Console
 
+from dbsprout.output.dialect import detect_direct_dialect as _detect_direct_dialect
+
 if TYPE_CHECKING:
     from dbsprout.generate.orchestrator import GenerateResult
     from dbsprout.output.models import InsertResult
@@ -21,19 +23,7 @@ if TYPE_CHECKING:
 
 console = Console()
 
-
-def _detect_direct_dialect(url: str) -> str:
-    """Detect database dialect from a connection URL prefix."""
-    lower = url.lower()
-    if lower.startswith(("postgresql", "postgres")):
-        return "postgresql"
-    if lower.startswith("mysql"):
-        return "mysql"
-    if lower.startswith("sqlite"):
-        return "sqlite"
-    if lower.startswith("mssql"):
-        return "mssql"
-    return lower.split("://")[0].split("+")[0] if "://" in lower else "unknown"
+__all__ = ["_detect_direct_dialect", "_run_direct_insert"]
 
 
 def _run_direct_insert(  # noqa: PLR0913

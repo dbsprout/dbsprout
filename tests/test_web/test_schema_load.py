@@ -242,18 +242,17 @@ def test_unexpected_parser_exception_returns_internal_500(
     assert "Traceback" not in resp.text
 
 
-def test_schema_load_htmx_request_returns_html_fragment(tmp_path: Path) -> None:
-    """S-116 AC: HTMX swap target gets HTML fragment for parse failures."""
+def test_schema_load_htmx_request_returns_json_envelope(tmp_path: Path) -> None:
+    """JSON-only since P1c-5: parse-failure errors are JSON even under HX-Request."""
     client = _make_client(tmp_path / "state.db")
     files = {"file": ("empty.sql", b"", "application/octet-stream")}
     resp = client.post("/api/schema/load", files=files, headers={"HX-Request": "true"})
     assert resp.status_code == 400
-    assert resp.headers["content-type"].startswith("text/html")
-    body = resp.text
-    assert "EMPTY_FILE" in body
-    assert 'data-code="EMPTY_FILE"' in body
-    assert "Correlation ID" in body
-    assert "Traceback" not in body
+    assert resp.headers["content-type"].startswith("application/json")
+    detail = resp.json()["detail"]
+    assert detail["code"] == "EMPTY_FILE"
+    assert detail["correlation_id"]
+    assert "Traceback" not in resp.text
 
 
 # ── router registration contract ────────────────────────────────────────

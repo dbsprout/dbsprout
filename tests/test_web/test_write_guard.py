@@ -454,26 +454,6 @@ def test_validate_real_round_trip(tmp_path: Path) -> None:
     assert ok2 is False
 
 
-def test_modal_template_renders(tmp_path: Path) -> None:
-    """The new modal template loads + renders without error."""
-    app = _make_app(tmp_path / "state.db")
-    templates = app.state.templates
-    # The template must exist and render with the expected mount point.
-    rendered = templates.get_template("studio/write_guard_modal.html").render()
-    assert "write-guard" in rendered.lower()
-    assert "confirm" in rendered.lower()
-
-
-def test_studio_page_includes_modal(tmp_path: Path) -> None:
-    """The Studio page must mount the modal once at page level (mirrors method_picker)."""
-    app = _make_app(tmp_path / "state.db")
-    client = TestClient(app)
-    resp = client.get("/studio")
-    assert resp.status_code == 200, resp.text
-    # The mount itself is what we lock — the modal element id will live in the template.
-    assert "write-guard-modal" in resp.text
-
-
 def test_write_guard_issued_registry_garbage_collects_expired(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

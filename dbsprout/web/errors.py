@@ -39,17 +39,15 @@ matches on ``type(exc).__name__`` plus a lowercase substring sweep of
 touching this code, and the test suite locks behaviour by raising stand-in
 exceptions with the right *names*.
 
-When the request carries ``HX-Request: true`` the renderer returns an
-:class:`~starlette.responses.HTMLResponse` built from the ``error_fragment.html``
-template (suitable for an ``hx-swap`` target). Without the header it raises an
-:class:`~fastapi.HTTPException` with the JSON envelope as ``detail`` — so the
-existing JSON contract (``{"detail": …}``) is preserved for curl / scripted
-callers and the existing tests.
+The renderer raises an :class:`~fastapi.HTTPException` with the JSON envelope as
+``detail`` — so the JSON contract (``{"detail": …}``) is the single response shape
+for curl / scripted callers, the React SPA, and the existing tests. (The legacy
+``HX-Request``/``error_fragment.html`` HTML branch was removed in the P1c-5
+cutover along with the rest of the server-rendered UI.)
 
-This module never imports from :mod:`dbsprout.web.app` at module level (only
-the renderer's ``request.app.state.templates`` access pulls in templates lazily
-at call time), so siblings can import :func:`classify_connect_error` /
-:func:`classify_parse_error` without circularity.
+This module never imports from :mod:`dbsprout.web.app` at module level, so
+siblings can import :func:`classify_connect_error` / :func:`classify_parse_error`
+without circularity.
 """
 
 from __future__ import annotations
@@ -59,7 +57,7 @@ import re
 import uuid
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, NoReturn
 
 from fastapi import HTTPException
 
@@ -67,14 +65,9 @@ if TYPE_CHECKING:
     from collections.abc import Iterable
 
     from starlette.requests import Request
-    from starlette.responses import HTMLResponse
 
 
 _LOGGER = logging.getLogger("dbsprout.web.errors")
-
-#: Header that marks an HTMX-driven request. When present, the renderer returns
-#: an HTML fragment instead of raising the JSON-shaped ``HTTPException``.
-_HTMX_HEADER = "hx-request"
 
 
 class WebErrorCode(str, Enum):
@@ -138,6 +131,19 @@ class WebErrorCode(str, Enum):
     # because the failure is server-side capability, not caller input;
     # the existing heuristic spec on the workspace stays in place.
     LLM_UNAVAILABLE = "LLM_UNAVAILABLE"
+    # P2a-3 SSH-tunnel connect guard — raised by ``POST /api/connect`` /
+    # ``/api/connect/test`` when the request carries an ``ssh`` block but the
+    # optional ``[ssh]`` extra (``sshtunnel`` → ``paramiko``) is not installed.
+    # 503 because the failure is a server-side capability gap, not caller
+    # input — the request itself is well-formed.
+    SSH_UNAVAILABLE = "SSH_UNAVAILABLE"
+    # P4-9 SSH-tunnel live-failure guard — raised by ``POST /api/connect`` /
+    # ``/api/connect/test`` when the bastion *connect* fails: a rejected SSH key
+    # (``auth`` → 400, caller-actionable), an unreachable bastion (``host`` →
+    # 502), or a remote-bind / channel failure (``forward`` → 502). The envelope
+    # carries the coarse ``kind`` in ``extras`` and a credential-/target-scrubbed
+    # message — never a raw 500.
+    SSH_TUNNEL_FAILED = "SSH_TUNNEL_FAILED"
 
 
 @dataclass(frozen=True)
@@ -360,6 +366,10 @@ _CODE_HINTS: dict[WebErrorCode, str] = {
     WebErrorCode.LLM_UNAVAILABLE: (
         "Install an LLM provider extra (e.g. pip install 'dbsprout[llm]') or "
         "use the heuristic spec which is already populated."
+    ),
+    # P2a-3 — the SSH-tunnel connect path needs the optional [ssh] extra.
+    WebErrorCode.SSH_UNAVAILABLE: (
+        "Install the SSH-tunnel extra and retry: pip install dbsprout[ssh]."
     ),
 }
 
@@ -832,14 +842,97 @@ def web_error_llm_unavailable(reason: str) -> WebError:
 
 
 # ---------------------------------------------------------------------------
-# Renderer: HTMX-aware response, plus logging hook.
+# P2a-3 SSH-tunnel connect factory helper.
 # ---------------------------------------------------------------------------
 
 
-def _wants_htmx(request: Request) -> bool:
-    """Return ``True`` if the request carries ``HX-Request: true``."""
-    value = request.headers.get(_HTMX_HEADER)
-    return value is not None and value.lower() == "true"
+def web_error_ssh_unavailable() -> WebError:
+    """Surfaced when an ``ssh`` block is supplied but the ``[ssh]`` extra is absent.
+
+    The SSH-tunnel connect path lazy-imports ``sshtunnel`` (which pulls
+    ``paramiko``) only when a request carries an ``ssh`` block — the dep is kept
+    behind the optional ``[ssh]`` extra so the default install stays slim and the
+    web routers import clean without it. When the lazy import fails, the connect /
+    test handlers translate the ``ImportError`` into this typed 503 envelope
+    (never a 500) so the user gets an actionable install hint instead of a
+    traceback. The failure is well-formed-request-but-server-can't-serve, hence
+    503, mirroring :func:`web_error_llm_unavailable`.
+
+    The message intentionally carries **no** tunnel target — the bastion host and
+    the remote DB address never reach the user-facing string.
+    """
+    return WebError(
+        code=WebErrorCode.SSH_UNAVAILABLE,
+        message=("SSH tunnelling is not available: the optional 'ssh' extra is not installed."),
+        status_code=503,
+        hint=_CODE_HINTS[WebErrorCode.SSH_UNAVAILABLE],
+    )
+
+
+# ---------------------------------------------------------------------------
+# P4-9 SSH-tunnel live-failure factory helper.
+# ---------------------------------------------------------------------------
+
+
+#: Per-kind copy for a live bastion-connect failure. ``message`` carries **no**
+#: target (the bastion host / remote DB address are scrubbed at the raise site in
+#: :func:`dbsprout.core.ssh_tunnel.open_ssh_tunnel`); ``hint`` is the actionable
+#: nudge; ``status`` is ``auth`` → 400 (caller fixes the key/user) vs
+#: ``host`` / ``forward`` → 502 (the gateway hop to the DB could not be made).
+_SSH_TUNNEL_FAILURE: dict[str, tuple[int, str, str]] = {
+    "auth": (
+        400,
+        "SSH authentication to the bastion failed.",
+        "Check the SSH username and that the private key at the given path is "
+        "the right, unencrypted key for that bastion.",
+    ),
+    "host": (
+        502,
+        "Could not reach the SSH bastion host.",
+        "Check the bastion host and port are correct and reachable from here.",
+    ),
+    "forward": (
+        502,
+        "The SSH tunnel to the database host could not be opened.",
+        "The bastion was reached but the forward to the database failed; check "
+        "the database host/port are reachable from the bastion.",
+    ),
+}
+
+
+def web_error_ssh_tunnel_failed(kind: str) -> WebError:
+    """Surfaced when a live bastion *connect* fails (P4-9) — never a raw 500.
+
+    The SSH-tunnel connect path raises
+    :class:`dbsprout.core.ssh_tunnel.SshTunnelConnectError` carrying a coarse
+    ``kind`` (``"auth"`` / ``"host"`` / ``"forward"``) decided from the original
+    exception's shape, with the bastion / remote target already scrubbed out. This
+    factory turns that ``kind`` into the friendly typed envelope:
+
+    * ``auth`` → **400** — a rejected key / wrong user is caller-actionable.
+    * ``host`` → **502** — the bastion gateway itself is unreachable.
+    * ``forward`` → **502** — the bastion was reached + authed but the forward to
+      the database failed; this also covers any unclassified failure.
+
+    The ``kind`` is echoed into ``extras`` so the SPA can branch (e.g. focus the
+    key field on ``auth``) without re-parsing the message. An unknown ``kind``
+    degrades to the ``forward`` mapping — still a typed 502, never a 500.
+
+    The message + hint never embed the bastion host or the remote DB address.
+    """
+    status_code, message, hint = _SSH_TUNNEL_FAILURE.get(kind, _SSH_TUNNEL_FAILURE["forward"])
+    return WebError(
+        code=WebErrorCode.SSH_TUNNEL_FAILED,
+        message=message,
+        status_code=status_code,
+        hint=hint,
+        extras={"kind": kind},
+    )
+
+
+# ---------------------------------------------------------------------------
+# Renderer: JSON error response, plus logging hook.
+# ---------------------------------------------------------------------------
 
 
 def _log_error(
@@ -872,32 +965,16 @@ def raise_web_error(
     err: WebError,
     *,
     original: BaseException | None = None,
-) -> HTMLResponse:
-    """Log + raise/return the user-facing error response.
+) -> NoReturn:
+    """Log the failure, then raise the user-facing JSON error response.
 
-    Behaviour depends on the ``HX-Request`` header on *request*:
-
-    * **No header** — logs the failure, then raises :class:`fastapi.HTTPException`
-      with status ``err.status_code`` and ``detail = err.to_dict()``. FastAPI
-      serialises that into the canonical ``{"detail": …}`` JSON envelope.
-    * **Header set** — logs the failure and returns an :class:`HTMLResponse`
-      rendered from ``error_fragment.html``. Callers using this branch are
-      responsible for returning the response from their handler (raising would
-      bypass the HTMX swap target).
+    Logs the failure with structured context, then raises
+    :class:`fastapi.HTTPException` with status ``err.status_code`` and
+    ``detail = err.to_dict()``. FastAPI serialises that into the canonical
+    ``{"detail": …}`` JSON envelope — the single response shape since the P1c-5
+    cutover (the legacy ``HX-Request`` HTML-fragment branch was removed).
     """
     _log_error(request, err, original)
-    if _wants_htmx(request):
-        from fastapi.templating import (  # noqa: PLC0415, TC002 — lazy + needed at runtime
-            Jinja2Templates,
-        )
-
-        templates = cast("Jinja2Templates", request.app.state.templates)
-        return templates.TemplateResponse(
-            request,
-            "error_fragment.html",
-            {"error": err.to_dict(), "status_code": err.status_code},
-            status_code=err.status_code,
-        )
     raise HTTPException(status_code=err.status_code, detail=err.to_dict())
 
 
@@ -922,6 +999,8 @@ __all__ = [
     "web_error_no_spec",
     "web_error_not_found",
     "web_error_not_found_tables",
+    "web_error_ssh_tunnel_failed",
+    "web_error_ssh_unavailable",
     "web_error_step_gate_blocked",
     "web_error_unknown_parser",
     "web_error_write_guard_rejected",

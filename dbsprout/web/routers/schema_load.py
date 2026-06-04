@@ -64,6 +64,7 @@ from typing import TYPE_CHECKING, Annotated, Any, cast
 
 from fastapi import APIRouter, File, Form, Request, UploadFile
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from dbsprout.web.errors import (
     classify_parse_error,
@@ -314,3 +315,64 @@ def _is_database_schema(obj: object) -> bool:
     from dbsprout.schema.models import DatabaseSchema  # noqa: PLC0415
 
     return isinstance(obj, DatabaseSchema)
+
+
+class PasteRequest(BaseModel):
+    """Request body for ``POST /api/schema/paste`` — pasted schema text.
+
+    Validated at the boundary: a missing, blank, or whitespace-only ``text``
+    (or any unexpected field) yields FastAPI's ``422`` before the handler
+    runs. Mirrors the ``ConnectRequest`` validator pattern.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    text: str = Field(min_length=1, description="Pasted schema text.")
+    parser: str | None = Field(
+        default=None, description="Optional parser override (sql, dbml, mermaid, …)."
+    )
+
+    @field_validator("text")
+    @classmethod
+    def _non_blank(cls, value: str) -> str:
+        stripped = value.strip()
+        if not stripped:
+            msg = "text must not be blank"
+            raise ValueError(msg)
+        return stripped
+
+
+@schema_load_router.post("/api/schema/paste", response_class=JSONResponse)
+async def paste_schema(request: Request, body: PasteRequest) -> Any:
+    """Parse pasted schema text and store it in the session workspace.
+
+    The text is encoded to UTF-8, sniffed / suffix-resolved exactly like an
+    uploaded file (reusing :func:`_resolve_suffix` and
+    :func:`_detect_suffix_from_content`), then handed to :func:`_parse_upload`
+    which writes a temp file and delegates to ``parse_schema_file``.  Every
+    failure mode flows through the S-116 error layer:
+
+    * blank text → ``422`` (rejected by the Pydantic validator);
+    * unknown ``parser`` override → ``400 UNKNOWN_PARSER``;
+    * parser exceptions → ``400 PARSE_ERROR``;
+    * anything else → ``500 INTERNAL``.
+    """
+    content = body.text.encode("utf-8")
+
+    suffix = _resolve_suffix(None, body.parser, content_head=content[:_SNIFF_HEAD_BYTES])
+    if suffix is None:
+        assert body.parser is not None
+        return raise_web_error(
+            request, web_error_unknown_parser(body.parser, sorted(_PARSER_SUFFIXES))
+        )
+
+    schema_or_response = _parse_upload(request, content, suffix, None)
+    if not _is_database_schema(schema_or_response):
+        return schema_or_response
+    schema = cast("DatabaseSchema", schema_or_response)
+
+    workspace = _workspace(request)
+    workspace.set_schema(schema)
+    workspace.set_source("paste")
+    workspace.hydrate_from_cache(schema.schema_hash())
+    return JSONResponse(_summary(schema, "paste"))

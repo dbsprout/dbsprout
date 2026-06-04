@@ -57,3 +57,11 @@ dbsprout.local.toml
 
 # Transient benchmark run output (only benchmarks/baseline.json is committed)
 /benchmark-results.json
+
+# Superpowers brainstorm scratch (visual companion mockups, session state)
+.superpowers/
+
+# Frontend (React/Vite Workbench)
+frontend/node_modules/
+frontend/coverage/
+dbsprout/web/spa/

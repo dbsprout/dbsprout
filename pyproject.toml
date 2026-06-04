@@ -3,7 +3,8 @@ name = "dbsprout"
 version = "0.1.8"
 description = "CLI tool that reads database schemas and generates realistic seed data"
 readme = "README.md"
-license = "MIT"
+license = "AGPL-3.0-or-later"
+license-files = ["LICENSE"]
 requires-python = ">=3.10"
 authors = [{ name = "Fernando Flores" }]
 keywords = ["database", "seed-data", "schema", "cli", "testing"]
@@ -11,7 +12,7 @@ classifiers = [
     "Development Status :: 3 - Alpha",
     "Environment :: Console",
     "Intended Audience :: Developers",
-    "License :: OSI Approved :: MIT License",
+    "License :: OSI Approved :: GNU Affero General Public License v3 or later (AGPLv3+)",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
@@ -168,6 +169,13 @@ tui = [
 data = [
     "polars>=1.0,<2.0",
 ]
+# SSH tunnelling to reach a DB behind a bastion host (P2a-3). Native-dep
+# convention: kept OUT of `all` and the CI extras set; sshtunnel/paramiko are
+# lazy-imported inside the connect path, never at module import time, so the
+# web routers stay import-clean without this extra installed.
+ssh = [
+    "sshtunnel>=0.4",
+]
 train = [
     "polars>=1.0,<2.0",
     "sqlalchemy>=2.0",
@@ -180,6 +188,17 @@ all = [
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
+
+# ─── Frontend bundling (Web SPA, P0) ─────────────────────────────────────────
+# The wheel build runs the custom hook (hatch_build.py) to compile the React
+# Workbench into dbsprout/web/spa/, then force-includes it via `artifacts`
+# (the dir is git-ignored as a build output). Registered on the WHEEL target
+# only, so editable `uv sync` is unaffected.
+[tool.hatch.build.targets.wheel]
+artifacts = ["dbsprout/web/spa/**"]
+
+[tool.hatch.build.targets.wheel.hooks.custom]
+path = "hatch_build.py"
 
 # ─── Ruff ──────────────────────────────────────────────────────────────
 [tool.ruff]
@@ -248,7 +267,7 @@ module = "tests.*"
 disallow_untyped_defs = false
 
 [[tool.mypy.overrides]]
-module = ["polars", "polars.*", "alembic", "alembic.*", "psycopg", "psycopg.*", "unsloth", "unsloth.*", "trl", "trl.*", "datasets", "datasets.*", "torch", "torch.*", "mlx", "mlx.*", "mlx_lm", "mlx_lm.*", "litellm", "litellm.*", "instructor", "instructor.*", "llama_cpp", "llama_cpp.*", "huggingface_hub", "huggingface_hub.*", "peft", "peft.*", "transformers", "transformers.*", "scipy", "scipy.*", "presidio_analyzer", "presidio_analyzer.*", "presidio_anonymizer", "presidio_anonymizer.*", "opacus", "opacus.*", "pymongo", "pymongo.*", "pymongo_schema", "pymongo_schema.*", "mongomock", "mongomock.*"]
+module = ["polars", "polars.*", "alembic", "alembic.*", "psycopg", "psycopg.*", "unsloth", "unsloth.*", "trl", "trl.*", "datasets", "datasets.*", "torch", "torch.*", "mlx", "mlx.*", "mlx_lm", "mlx_lm.*", "litellm", "litellm.*", "instructor", "instructor.*", "llama_cpp", "llama_cpp.*", "huggingface_hub", "huggingface_hub.*", "peft", "peft.*", "transformers", "transformers.*", "scipy", "scipy.*", "presidio_analyzer", "presidio_analyzer.*", "presidio_anonymizer", "presidio_anonymizer.*", "opacus", "opacus.*", "pymongo", "pymongo.*", "pymongo_schema", "pymongo_schema.*", "mongomock", "mongomock.*", "sshtunnel", "sshtunnel.*"]
 ignore_missing_imports = true
 
 # ─── Bandit ────────────────────────────────────────────────────────────

@@ -205,23 +205,20 @@ def test_connect_returns_typed_envelope_on_failure(tmp_path: Path) -> None:
     assert "Traceback" not in resp.text
 
 
-def test_connect_htmx_request_returns_html_fragment(tmp_path: Path) -> None:
-    """S-116 AC: HTMX swap target receives an HTML fragment, never JSON."""
+def test_connect_htmx_request_returns_json_envelope(tmp_path: Path) -> None:
+    """JSON-only since P1c-5: an ``HX-Request`` header no longer yields HTML."""
     resp = TestClient(_make_app(tmp_path / "state.db")).post(
         "/api/connect",
         json={"url": "redis://localhost:6379/0"},
         headers={"HX-Request": "true"},
     )
     assert resp.status_code == 400
-    assert resp.headers["content-type"].startswith("text/html")
-    # Code, message, and correlation id all rendered into the fragment.
-    body = resp.text
-    assert "UNKNOWN_DIALECT" in body
-    assert 'data-code="UNKNOWN_DIALECT"' in body
-    assert "Correlation ID" in body
-    # No stack frame leaks into the HTML.
-    assert "Traceback" not in body
-    assert 'File "' not in body
+    assert resp.headers["content-type"].startswith("application/json")
+    detail = resp.json()["detail"]
+    assert detail["code"] == "UNKNOWN_DIALECT"
+    assert detail["correlation_id"]
+    # No stack frame leaks into the body.
+    assert "Traceback" not in resp.text
 
 
 def test_connect_unexpected_exception_returns_internal_500(

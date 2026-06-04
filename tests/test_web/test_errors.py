@@ -2,14 +2,14 @@
 
 These tests lock the *shape* of the friendly web-error layer: the closed enum of
 error codes, the :class:`WebError` data class, the per-failure classifier
-mappings (connect + parse), and the HTMX-aware response renderer. Router-level
-wiring lives in ``test_connect.py`` / ``test_schema_load.py`` / ``test_errors_ac.py``.
+mappings (connect + parse), and the JSON response renderer (JSON-only since the
+P1c-5 cutover). Router-level wiring lives in ``test_connect.py`` /
+``test_schema_load.py`` / ``test_errors_ac.py``.
 """
 
 from __future__ import annotations
 
 import logging
-import re
 
 import pytest
 
@@ -18,9 +18,7 @@ pytest.importorskip("fastapi", reason="fastapi absent (pip install dbsprout[web]
 import sqlalchemy as sa
 from fastapi import HTTPException
 from starlette.requests import Request
-from starlette.responses import HTMLResponse
 
-from dbsprout.web.app import create_app
 from dbsprout.web.errors import (
     WebError,
     WebErrorCode,
@@ -34,12 +32,12 @@ from dbsprout.web.errors import (
     web_error_export_multi_table_unsupported,
     web_error_file_too_large,
     web_error_internal,
+    web_error_llm_unavailable,
     web_error_not_found_tables,
+    web_error_ssh_unavailable,
     web_error_step_gate_blocked,
     web_error_unknown_parser,
 )
-
-_TRACEBACK_RE = re.compile(r'Traceback|File "[^"]+", line \d+')
 
 
 def test_web_error_code_enum_is_closed_set() -> None:
@@ -77,6 +75,10 @@ def test_web_error_code_enum_is_closed_set() -> None:
         "STEP_GATE_BLOCKED",
         # S-145 wizard Step 3 LLM opt-in guard.
         "LLM_UNAVAILABLE",
+        # P2a-3 SSH-tunnel connect guard (missing [ssh] extra).
+        "SSH_UNAVAILABLE",
+        # P4-9 SSH-tunnel live-failure guard (bad host / auth / forward).
+        "SSH_TUNNEL_FAILED",
     }
     assert {m.name for m in WebErrorCode} == expected
     # Each code is a plain string so it round-trips through JSON unchanged.
@@ -287,7 +289,7 @@ def test_web_error_internal_factory() -> None:
 
 
 # ---------------------------------------------------------------------------
-# raise_web_error / response renderer — HTMX-aware.
+# raise_web_error / response renderer — JSON-only (P1c-5 cutover).
 # ---------------------------------------------------------------------------
 
 
@@ -345,25 +347,60 @@ def test_raise_web_error_internal_logs_at_exception_level(
     assert "RuntimeError" not in detail.getMessage()
 
 
-def test_raise_web_error_returns_htmx_fragment_when_header_present() -> None:
-    """With HX-Request, the call returns an :class:`HTMLResponse` (no exception)."""
-    app = create_app()
-    scope = dict(_bare_scope(hx=True))
-    scope["app"] = app
-    request = Request(scope)
+def test_raise_web_error_raises_json_even_with_htmx_header() -> None:
+    """Since the P1c-5 cutover the HX-Request HTML branch is gone — always JSON.
+
+    A request carrying ``HX-Request: true`` no longer gets an HTML fragment;
+    ``raise_web_error`` raises ``HTTPException`` (JSON envelope) unconditionally.
+    """
+    request = Request(_bare_scope(hx=True))
     err = WebError(
         code=WebErrorCode.AUTH_FAILED, message="bad creds", status_code=400, hint="try again"
     )
-    response = raise_web_error(request, err)
-    assert isinstance(response, HTMLResponse)
-    assert response.status_code == 400
-    body = response.body.decode("utf-8")
-    assert "bad creds" in body
-    assert "try again" in body
-    assert err.correlation_id in body
-    assert "AUTH_FAILED" in body
-    # Plain HTML never carries a stack frame.
-    assert not _TRACEBACK_RE.search(body)
+    with pytest.raises(HTTPException) as excinfo:
+        raise_web_error(request, err)
+    assert excinfo.value.status_code == 400
+    detail = excinfo.value.detail
+    assert isinstance(detail, dict)
+    assert detail["code"] == "AUTH_FAILED"
+
+
+# ── S-145 wizard LLM opt-in factory (kept; now orphan of the removed wizard) ──
+
+
+def test_web_error_code_llm_unavailable_is_member() -> None:
+    """``LLM_UNAVAILABLE`` is part of the closed taxonomy."""
+    assert WebErrorCode.LLM_UNAVAILABLE.value == "LLM_UNAVAILABLE"
+
+
+def test_web_error_llm_unavailable_factory_shape() -> None:
+    """The factory builds a 503 envelope embedding the reason + an actionable hint."""
+    err = web_error_llm_unavailable("llama-cpp-python not installed")
+    assert err.code is WebErrorCode.LLM_UNAVAILABLE
+    assert err.status_code == 503
+    payload = err.to_dict()
+    assert payload["code"] == "LLM_UNAVAILABLE"
+    assert "llama-cpp-python not installed" in payload["message"]
+    assert payload["hint"]
+
+
+# ── P2a-3 SSH-tunnel unavailable factory ────────────────────────────────
+
+
+def test_web_error_code_ssh_unavailable_is_member() -> None:
+    """``SSH_UNAVAILABLE`` is part of the closed taxonomy."""
+    assert WebErrorCode.SSH_UNAVAILABLE.value == "SSH_UNAVAILABLE"
+
+
+def test_web_error_ssh_unavailable_factory_shape() -> None:
+    """The factory builds a 503 envelope with a `pip install dbsprout[ssh]` hint."""
+    err = web_error_ssh_unavailable()
+    assert err.code is WebErrorCode.SSH_UNAVAILABLE
+    assert err.status_code == 503
+    payload = err.to_dict()
+    assert payload["code"] == "SSH_UNAVAILABLE"
+    assert payload["message"]
+    assert "pip install dbsprout[ssh]" in str(payload["hint"])
 
 
 # ── S-136 factory helpers ───────────────────────────────────────────────

@@ -1,4 +1,4 @@
-"""FastAPI web dashboard skeleton tests (S-090).
+"""FastAPI web app tests (S-090; P1c-5 cutover).
 
 The web stack lives in the optional ``[web]`` extra, so every test guards with
 ``pytest.importorskip("fastapi")`` *before* importing FastAPI symbols. A
@@ -6,6 +6,12 @@ subprocess probe verifies the CLI lazy-import contract — importing
 ``dbsprout.cli.app`` must never pull FastAPI/uvicorn (mirrors the textual probe
 in ``tests/test_tui/test_app.py``). Help-text assertions use ``_strip_ansi`` plus
 ``COLUMNS``/``NO_COLOR`` env so they pass in CI's TTY-less environment.
+
+Since the P1c-5 cutover the server exposes only the SPA at ``/app`` and the JSON
+``/api/*`` API (plus the progress WebSocket). ``GET /`` redirects to ``/app``;
+the legacy server-rendered pages (``/``, ``/wizard*``, ``/studio``, ``/quality``,
+``/preview``, ``/costs``, ``/history``, ``/schema``, ``/progress``) and the
+``POST /api/update-column`` endpoint are gone (404), as is the ``/static`` mount.
 """
 
 from __future__ import annotations
@@ -13,7 +19,6 @@ from __future__ import annotations
 import re
 import subprocess
 import sys
-from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
 import pytest
@@ -21,9 +26,6 @@ import pytest
 pytest.importorskip("fastapi", reason="fastapi absent (pip install dbsprout[web])")
 
 from fastapi.testclient import TestClient
-
-from dbsprout.state.db import StateDB
-from dbsprout.state.models import RunRecord, TableStats
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -42,61 +44,56 @@ def _make_client(state_db: Path) -> TestClient:
     return TestClient(app)
 
 
-def _seed_run(state_db: Path) -> None:
-    db = StateDB(state_db)
-    db.record_run(
-        RunRecord(
-            started_at=datetime(2026, 5, 20, 12, 0, tzinfo=timezone.utc),
-            completed_at=datetime(2026, 5, 20, 12, 0, 5, tzinfo=timezone.utc),
-            duration_ms=5000,
-            engine="heuristic",
-            total_rows=4242,
-            total_tables=3,
-            seed=42,
-            table_stats=[TableStats(table_name="users", row_count=100)],
-        )
+# ── `/` redirects to the SPA (P1c-5) ──────────────────────────────────
+
+
+def test_root_redirects_to_app(tmp_path: Path) -> None:
+    """``GET /`` is a 308 permanent redirect to the SPA front door ``/app``."""
+    resp = _make_client(tmp_path / "state.db").get("/", follow_redirects=False)
+    assert resp.status_code == 308
+    assert resp.headers["location"] == "/app"
+
+
+def test_app_serves_spa(tmp_path: Path) -> None:
+    """``/app`` serves the SPA (the placeholder page in a Python-only checkout)."""
+    resp = _make_client(tmp_path / "state.db").get("/app")
+    assert resp.status_code == 200
+    assert "DBSprout Workbench" in resp.text
+
+
+# ── legacy server-rendered surfaces are gone (404) ────────────────────
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/wizard",
+        "/wizard/step/1",
+        "/studio",
+        "/quality",
+        "/preview",
+        "/costs",
+        "/history",
+        "/schema",
+        "/progress",
+        "/progress/stream",
+        "/static/style.css",
+    ],
+)
+def test_legacy_get_routes_return_404(tmp_path: Path, path: str) -> None:
+    resp = _make_client(tmp_path / "state.db").get(path)
+    assert resp.status_code == 404, f"{path} should be gone after the P1c-5 cutover"
+
+
+def test_legacy_update_column_route_returns_404(tmp_path: Path) -> None:
+    """``POST /api/update-column`` was removed (superseded by PUT spec column)."""
+    resp = _make_client(tmp_path / "state.db").post(
+        "/api/update-column", json={"table": "t", "column": "c"}
     )
+    assert resp.status_code == 404
 
 
-# ── home dashboard ──────────────────────────────────────────────────
-
-
-def test_index_returns_200_and_nav(tmp_path: Path) -> None:
-    client = _make_client(tmp_path / "state.db")
-    resp = client.get("/")
-    assert resp.status_code == 200
-    body = resp.text
-    for nav_id in ('id="nav-home"', 'id="nav-schema"', 'id="nav-progress"', 'id="nav-quality"'):
-        assert nav_id in body, f"missing stable nav id {nav_id} (sibling extension seam)"
-
-
-def test_index_loads_cdn_assets_no_build_step(tmp_path: Path) -> None:
-    body = _make_client(tmp_path / "state.db").get("/").text
-    assert "daisyui" in body.lower(), "DaisyUI must load via CDN"
-    assert "htmx" in body.lower(), "HTMX must load via CDN"
-    assert "cdn.tailwindcss.com" in body or "tailwind" in body.lower()
-
-
-def test_index_shows_no_runs_when_state_empty(tmp_path: Path) -> None:
-    body = _make_client(tmp_path / "state.db").get("/").text
-    assert "No runs yet" in body
-
-
-def test_index_shows_runs_when_state_has_runs(tmp_path: Path) -> None:
-    state_db = tmp_path / "state.db"
-    _seed_run(state_db)
-    body = _make_client(state_db).get("/").text
-    assert "heuristic" in body
-    assert "4,242" in body or "4242" in body
-
-
-def test_index_works_when_state_db_missing(tmp_path: Path) -> None:
-    """AC: dashboard works even when the CLI has never run (no state.db yet)."""
-    resp = _make_client(tmp_path / "never_created.db").get("/")
-    assert resp.status_code == 200
-
-
-# ── health probe ──────────────────────────────────────────────────────
+# ── JSON API + WebSocket are intact ───────────────────────────────────
 
 
 def test_health_returns_ok_json(tmp_path: Path) -> None:
@@ -105,34 +102,34 @@ def test_health_returns_ok_json(tmp_path: Path) -> None:
     assert resp.json() == {"status": "ok"}
 
 
-# ── sibling-view tabs (all real now) ──────────────────────────────────
-# /schema (S-091 ERD), /progress (S-092 SSE) and /quality (S-093) are all
-# real views — exercised in test_erd.py / test_progress_view.py /
-# test_insights_views.py. No "Coming soon" placeholders remain.
+def test_representative_json_route_returns_json(tmp_path: Path) -> None:
+    """A data route returns JSON (no HTML branch) — `/api/spec` with no schema."""
+    resp = _make_client(tmp_path / "state.db").get("/api/spec")
+    assert resp.status_code == 409
+    assert resp.headers["content-type"].startswith("application/json")
+    assert resp.json()["detail"]["code"] == "NO_SCHEMA"
 
 
-def test_progress_tab_is_real_view_not_placeholder(tmp_path: Path) -> None:
-    """S-092 replaced the ``/progress`` placeholder with the real SSE view."""
-    resp = _make_client(tmp_path / "state.db").get("/progress")
-    assert resp.status_code == 200
-    assert "Coming soon" not in resp.text
-    assert "/progress/stream" in resp.text
+def test_progress_ws_route_is_registered(tmp_path: Path) -> None:
+    """The progress WebSocket survives the cutover (only the SSE page went)."""
+    app = _make_client(tmp_path / "state.db").app
+    paths = {getattr(r, "path", "") for r in app.routes}
+    assert "/ws/jobs/{job_id}" in paths
+    assert "/app" in paths
 
 
-# ── static assets ─────────────────────────────────────────────────────
-
-
-def test_static_css_served(tmp_path: Path) -> None:
-    resp = _make_client(tmp_path / "state.db").get("/static/style.css")
-    assert resp.status_code == 200
-    assert "css" in resp.headers["content-type"]
+def test_no_static_mount(tmp_path: Path) -> None:
+    """The legacy ``/static`` mount was removed with the Jinja2/HTMX assets."""
+    app = _make_client(tmp_path / "state.db").app
+    names = {getattr(r, "name", None) for r in app.routes}
+    assert "static" not in names
 
 
 # ── extension seam contract ───────────────────────────────────────────
 
 
 def test_router_is_importable_and_extensible() -> None:
-    """Siblings (S-091/092/093) mount routes onto this shared router."""
+    """The shared router still exists (now carries only /health)."""
     from fastapi import APIRouter  # noqa: PLC0415
 
     from dbsprout.web.routes import router  # noqa: PLC0415
@@ -142,12 +139,14 @@ def test_router_is_importable_and_extensible() -> None:
 
 def test_state_db_path_honors_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     state_db = tmp_path / "env.db"
-    _seed_run(state_db)
     monkeypatch.setenv("DBSPROUT_STATE_DB", str(state_db))
     from dbsprout.web.app import create_app  # noqa: PLC0415
 
     client = TestClient(create_app())
-    assert "heuristic" in client.get("/").text
+    # The env-resolved DB is used: the runs JSON endpoint reads it without error.
+    resp = client.get("/api/runs")
+    assert resp.status_code == 200
+    assert resp.json()["total_runs"] == 0
 
 
 # ── CLI `serve` command ───────────────────────────────────────────────
