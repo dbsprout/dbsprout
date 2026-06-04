@@ -27,6 +27,7 @@ The factory wires:
 
 from __future__ import annotations
 
+import logging
 import os
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -59,7 +60,11 @@ from dbsprout.web.spa import mount_spa
 from dbsprout.web.workspace import Workspace
 
 if TYPE_CHECKING:
+    from dbsprout.generate.orchestrator import GenerateResult
+    from dbsprout.quality.integrity import IntegrityReport
     from dbsprout.state.models import RunRecord
+
+logger = logging.getLogger(__name__)
 
 #: Environment variable overriding the state-DB location (used by tests and by
 #: anyone running the dashboard from outside the project root).
@@ -136,25 +141,53 @@ def create_app(
     progress_hub = ProgressHub()
     app.state.progress_hub = progress_hub
 
-    # ── S-110 state-write hook ──
+    # ── S-110 state-write hook (+ P5-9 quality) ──
     # On SUCCEEDED completion the JobManager calls this closure with the
     # final JobRecord; we lazy-import the writer (preserving the
     # ``dbsprout serve`` lazy-import contract for the manager module
     # itself) and persist a RunRecord against the resolved state DB.
     # FAILED / CANCELLED jobs are NOT written (the manager guards). A
     # raise from the writer is swallowed (best-effort telemetry).
+    #
+    # P5-9: compute the IntegrityReport for the finished run here (off the
+    # request hot path — this runs on the job's worker thread after the job
+    # completes) by reusing the same ``validate_integrity`` the
+    # ``/api/validate`` route runs, then thread it into ``record_job_run`` so
+    # the run's ``quality_results`` populate the dashboard's Quality panel.
+    # The schema comes from the shared session workspace (which produced the
+    # result). Computing it is best-effort: a missing schema or a raised
+    # validator degrades to ``report=None`` (the run still persists, just
+    # without quality rows) — telemetry must never fail generation.
+    def _integrity_report_for(result: GenerateResult) -> IntegrityReport | None:
+        schema = app.state.workspace.get_schema()
+        if schema is None:
+            return None
+        try:
+            from dbsprout.quality import integrity  # noqa: PLC0415
+
+            return integrity.validate_integrity(result.tables_data, schema)
+        except Exception as exc:  # best-effort — never fail the job over telemetry
+            logger.warning(
+                "Could not compute integrity report for run telemetry (%s); "
+                "persisting the run without quality results.",
+                exc,
+            )
+            return None
+
     def _persist_completed_job(record: JobRecord) -> None:
         from dbsprout.generate.orchestrator import GenerateResult  # noqa: PLC0415
         from dbsprout.state.writer import record_job_run  # noqa: PLC0415
 
         if not isinstance(record.result, GenerateResult):
             return  # opaque/non-generate result — nothing meaningful to persist
+        report = _integrity_report_for(record.result)
         record_job_run(
             record.result,
             engine=record.engine or "heuristic",
             seed=record.seed if record.seed is not None else 0,
             started_at=record.started_at,
             completed_at=record.finished_at,
+            report=report,
             db_path=resolved,
         )
 
