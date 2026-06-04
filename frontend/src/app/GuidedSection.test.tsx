@@ -35,15 +35,20 @@ test("guided mode: the active step (currentStep=0 -> start) is interactive", () 
   expect(screen.getByRole("button", { name: "inner" })).toBeInTheDocument();
 });
 
-test("guided mode: a non-active section is dimmed, aria-hidden and inert", () => {
+test("guided mode: a non-active section is hidden (display:none) but mounted", () => {
   const { container } = renderSection("guided", "schema"); // currentStep=0=start
   const section = container.querySelector("section")!;
+  // True wizard: the non-active section is removed from layout via the `hidden`
+  // (display:none) utility — NOT dimmed (no opacity). aria-hidden/inert remain
+  // (harmless on a display:none node, and keep it out of the accessibility tree).
+  expect(section).toHaveClass("hidden");
+  expect(section.style.opacity).toBe("");
   expect(section).toHaveAttribute("aria-hidden", "true");
   expect(section).toHaveAttribute("inert");
-  expect(section.style.opacity).toBe("0.4");
   // Still mounted — children present (state preserved across step changes). The
   // button is removed from the accessibility tree by aria-hidden, so query it as
-  // hidden / by text to prove it is in the DOM (not unmounted).
+  // hidden / by text to prove it is in the DOM (not unmounted). `getByText` finds
+  // display:none nodes because jsdom does not apply layout.
   expect(screen.getByText("inner")).toBeInTheDocument();
   expect(
     screen.getByRole("button", { name: "inner", hidden: true }),

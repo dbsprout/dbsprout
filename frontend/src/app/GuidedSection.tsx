@@ -19,12 +19,14 @@ interface GuidedSectionProps {
 }
 
 /**
- * Wraps an App `<section>` with the guided focus overlay. In advanced mode it is
+ * Wraps an App `<section>` with the guided wizard overlay. In advanced mode it is
  * a plain `<section>` (byte-identical — no overlay attributes), so the advanced
- * regression stays green. In guided mode the active step's section stays
- * interactive; every other section is dimmed, `aria-hidden`, and `inert`
- * (non-tabbable / non-interactive) — but ALWAYS MOUNTED, so panel/query state
- * survives step changes (dim via attributes/style, never unmount).
+ * regression stays green. In guided mode this is a true one-step-at-a-time wizard:
+ * only the active step's section is visible; every other section is HIDDEN via the
+ * `hidden` (display:none) utility — removed from layout, not merely dimmed — while
+ * staying `aria-hidden` and `inert` (out of the accessibility tree, non-tabbable).
+ * Hidden sections are ALWAYS MOUNTED (children still rendered), so each panel's
+ * query/UI state survives step changes — hide via display:none, never unmount.
  */
 /** The card frame shared by every workbench section. */
 const CARD = "db-card";
@@ -42,13 +44,11 @@ export function GuidedSection({ stepId, children }: GuidedSectionProps) {
     return <section className={`${CARD} ring-2 ring-accent-500`}>{children}</section>;
   }
 
+  // Non-active guided section: hidden (display:none) but mounted, so its panel
+  // state survives step changes. aria-hidden/inert stay (harmless + keep it out
+  // of the accessibility tree).
   return (
-    <section
-      aria-hidden="true"
-      inert=""
-      style={{ opacity: 0.4 }}
-      className={CARD}
-    >
+    <section aria-hidden="true" inert="" className={`${CARD} hidden`}>
       {children}
     </section>
   );
