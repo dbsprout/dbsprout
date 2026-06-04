@@ -1,4 +1,6 @@
-import { useState } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { useEffect, useState } from "react";
+import { getSchema, queryKeys } from "../../api/endpoints";
 import { ConnectForm } from "./ConnectForm";
 import { PasteForm } from "./PasteForm";
 import { SamplePicker } from "./SamplePicker";
@@ -28,9 +30,38 @@ export function StartPanel({ onLoaded }: StartPanelProps) {
   // ═══ P2a-2 ═══ — the URL of the most recently loaded saved connection.
   const [loadedUrl, setLoadedUrl] = useState<string | null>(null);
 
+  // ═══ P5-3 ═══ — collapse the picker once a schema is loaded. Every loader
+  // invalidates queryKeys.schema, so the loaded schema is the single, mode-
+  // agnostic signal; the user can re-open the picker via "Change source".
+  const { data: schema } = useQuery({ queryKey: queryKeys.schema, queryFn: getSchema });
+  const hasSchema = (schema?.tables.length ?? 0) > 0;
+  const [expanded, setExpanded] = useState(false);
+  // Recollapse whenever the loaded schema changes (a new source replaces it).
+  useEffect(() => {
+    setExpanded(false);
+  }, [schema?.source, schema?.table_count]);
+
   function handleLoadConnection(url: string) {
     setLoadedUrl(url);
     setActiveTab("connect");
+  }
+
+  // Compact summary supersedes the full picker once a schema is loaded.
+  if (hasSchema && !expanded) {
+    return (
+      <div>
+        <p role="status" className="db-notice-status">
+          ✓ Schema loaded · {schema?.table_count} tables
+        </p>
+        <button
+          type="button"
+          onClick={() => setExpanded(true)}
+          className="db-btn-secondary mt-3"
+        >
+          Change source
+        </button>
+      </div>
+    );
   }
 
   return (

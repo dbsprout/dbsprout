@@ -1,5 +1,4 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
 import { ApiError } from "../../api/client";
 import { listSamples, loadSample, queryKeys } from "../../api/endpoints";
 
@@ -13,16 +12,13 @@ export function SamplePicker({ onLoaded }: SamplePickerProps) {
     queryFn: listSamples,
   });
 
-  // ═══ P5-2 ═══ — title of the most recently loaded sample, used to confirm the
-  // load (a visible status) instead of changing the schema silently.
-  const [loadedTitle, setLoadedTitle] = useState<string | null>(null);
-
   const qc = useQueryClient();
   const mutation = useMutation({
     mutationFn: loadSample,
-    onSuccess: (_result, name) => {
-      const title = data?.samples.find((s) => s.name === name)?.title ?? name;
-      setLoadedTitle(title);
+    // ═══ P5-3 ═══ — the post-load confirmation moved up to the StartPanel
+    // collapse (the single, non-duplicated load signal); SamplePicker only
+    // invalidates the schema query and fires onLoaded.
+    onSuccess: () => {
       qc.invalidateQueries({ queryKey: queryKeys.schema });
       onLoaded();
     },
@@ -61,12 +57,6 @@ export function SamplePicker({ onLoaded }: SamplePickerProps) {
           </li>
         ))}
       </ul>
-      {/* ═══ P5-2 ═══ — confirm the load explicitly and point the way forward. */}
-      {loadedTitle && (
-        <p role="status" className="db-notice-status mt-3">
-          Loaded the {loadedTitle} sample — head to Configure &amp; Generate.
-        </p>
-      )}
     </div>
   );
 }
