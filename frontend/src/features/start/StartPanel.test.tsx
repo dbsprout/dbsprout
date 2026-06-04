@@ -29,20 +29,33 @@ test("renders source tabs and switches to Paste", () => {
   expect(screen.getByLabelText(/paste schema/i)).toBeInTheDocument();
 });
 
-test("mounts SavedConnections (P2a-2)", async () => {
+test("mounts SavedConnections on the Live database tab (P2a-2)", async () => {
   stubFetch([]);
   renderWithClient(<StartPanel onLoaded={() => undefined} />);
+  // The connect (Live database) tab is the default — SavedConnections is here.
   const region = await screen.findByRole("region", { name: /saved connections/i });
   await waitFor(() =>
     expect(within(region).getByText(/no saved connections/i)).toBeInTheDocument(),
   );
 });
 
-test("loading a saved connection surfaces the URL and switches to the Live tab", async () => {
+test("hides SavedConnections on non-Live tabs (P5-2)", async () => {
+  stubFetch([]);
+  renderWithClient(<StartPanel onLoaded={() => undefined} />);
+  // Present on the default connect tab…
+  await screen.findByRole("region", { name: /saved connections/i });
+  // …and gone once another source tab is active.
+  fireEvent.click(screen.getByRole("tab", { name: /paste/i }));
+  expect(
+    screen.queryByRole("region", { name: /saved connections/i }),
+  ).not.toBeInTheDocument();
+});
+
+test("loading a saved connection surfaces the URL on the Live tab", async () => {
   stubFetch([{ name: "prod", url: "postgresql://u:@db/app" }]);
   renderWithClient(<StartPanel onLoaded={() => undefined} />);
 
-  fireEvent.click(screen.getByRole("tab", { name: /paste/i }));
+  // SavedConnections lives on the default Live database tab (P5-2 scoping).
   const region = await screen.findByRole("region", { name: /saved connections/i });
   await waitFor(() => expect(within(region).getByText("prod")).toBeInTheDocument());
   fireEvent.click(within(region).getByRole("button", { name: /^load$/i }));

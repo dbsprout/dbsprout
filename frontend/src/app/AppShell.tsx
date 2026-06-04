@@ -2,7 +2,6 @@ import type { ReactNode } from "react";
 import { useMode } from "./ModeProvider";
 import { Stepper } from "./Stepper";
 import { CoachPanel } from "./CoachPanel";
-import { FirstRunSample } from "./FirstRunSample";
 
 interface AppShellProps {
   children: ReactNode;
@@ -62,7 +61,6 @@ export function AppShell({ children }: AppShellProps) {
             header stays byte-identical. ═══ */}
         <div className="mx-auto max-w-5xl px-6 pb-3 empty:hidden">
           <Stepper />
-          <FirstRunSample />
           <CoachPanel />
         </div>
       </header>

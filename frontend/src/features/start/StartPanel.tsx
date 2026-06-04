@@ -60,11 +60,15 @@ export function StartPanel({ onLoaded }: StartPanelProps) {
         {activeTab === "sample" && <SamplePicker onLoaded={onLoaded} />}
       </div>
 
-      {/* ═══ P2a-2 ═══ */}
-      {loadedUrl !== null && (
-        <p role="status" className="db-notice-status mt-3">{`Loaded connection: ${loadedUrl}`}</p>
+      {/* ═══ P2a-2 · scoped to the Live database tab in P5-2 ═══ */}
+      {activeTab === "connect" && (
+        <>
+          {loadedUrl !== null && (
+            <p role="status" className="db-notice-status mt-3">{`Loaded connection: ${loadedUrl}`}</p>
+          )}
+          <SavedConnections onLoad={handleLoadConnection} />
+        </>
       )}
-      <SavedConnections onLoad={handleLoadConnection} />
       {/* ═══ end P2a-2 ═══ */}
     </div>
   );

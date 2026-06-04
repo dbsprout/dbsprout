@@ -26,3 +26,38 @@ test("lists samples and loads one on click", async () => {
   await waitFor(() => expect(onLoaded).toHaveBeenCalled());
   expect(fetchMock.mock.calls.some(([u]) => String(u).endsWith("/api/schema/sample"))).toBe(true);
 });
+
+test("explains the sample purpose before any load", async () => {
+  const fetchMock = vi.fn(async () =>
+    new Response(
+      JSON.stringify({ samples: [{ name: "ecommerce", title: "E-commerce", description: "demo", dialect: "sqlite", table_count: 7 }] }),
+      { status: 200, headers: { "Content-Type": "application/json" } },
+    ),
+  );
+  vi.stubGlobal("fetch", fetchMock);
+  renderWithClient(<SamplePicker onLoaded={vi.fn()} />);
+  await waitFor(() => expect(screen.getByText("E-commerce")).toBeInTheDocument());
+  expect(screen.getByText(/no real database/i)).toBeInTheDocument();
+});
+
+test("confirms with a status message naming the loaded sample", async () => {
+  const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+    const url = String(input);
+    if (url.endsWith("/api/samples")) {
+      return new Response(
+        JSON.stringify({ samples: [{ name: "ecommerce", title: "E-commerce", description: "demo", dialect: "sqlite", table_count: 7 }] }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      );
+    }
+    return new Response(JSON.stringify({ source: "sample:ecommerce", table_count: 7, tables: [], dialect: "sqlite" }), {
+      status: 200, headers: { "Content-Type": "application/json" },
+    });
+  });
+  vi.stubGlobal("fetch", fetchMock);
+  renderWithClient(<SamplePicker onLoaded={vi.fn()} />);
+  await waitFor(() => expect(screen.getByText("E-commerce")).toBeInTheDocument());
+  fireEvent.click(screen.getByRole("button", { name: /E-commerce/i }));
+  await waitFor(() =>
+    expect(screen.getByRole("status")).toHaveTextContent(/Loaded the E-commerce sample/i),
+  );
+});
