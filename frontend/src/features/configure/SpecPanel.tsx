@@ -18,19 +18,20 @@ export function SpecPanel() {
   });
 
   if (isLoading) {
-    return <p>Loading spec…</p>;
+    return <p className="db-notice-muted">Loading spec…</p>;
   }
 
   if (isError) {
-    return <p>No schema loaded — pick a source first.</p>;
+    return <p className="db-notice-muted">No schema loaded — pick a source first.</p>;
   }
 
   return (
-    <div>
+    <div className="db-subsection">
+      <p className="db-subsection-title">Rows per table</p>
       {mutation.isError && (
-        <p role="alert">{(mutation.error as ApiError).message}</p>
+        <p role="alert" className="db-notice-alert mb-2">{(mutation.error as ApiError).message}</p>
       )}
-      <ul>
+      <ul className="flex flex-col gap-1">
         {data?.tables.map((t: TableSpec) => (
           <TableRow key={t.table_name} spec={t} onCommit={(rowCount) => mutation.mutate({ table: t.table_name, rowCount })} />
         ))}
@@ -57,8 +58,8 @@ function TableRow({ spec, onCommit }: { spec: TableSpec; onCommit: (rowCount: nu
   }
 
   return (
-    <li>
-      <span>{spec.table_name}</span>
+    <li className="flex items-center justify-between gap-3 rounded-md border border-slate-200 bg-white px-3 py-1.5 text-sm">
+      <span className="font-mono text-slate-700">{spec.table_name}</span>
       <input
         ref={inputRef}
         type="number"
@@ -67,6 +68,7 @@ function TableRow({ spec, onCommit }: { spec: TableSpec; onCommit: (rowCount: nu
         min={1}
         onBlur={commit}
         onKeyDown={handleKeyDown}
+        className="w-28 rounded-md border border-slate-300 px-2 py-1 text-right text-sm outline-none focus:border-accent-500 focus:ring-2 focus:ring-accent-500/40"
       />
     </li>
   );

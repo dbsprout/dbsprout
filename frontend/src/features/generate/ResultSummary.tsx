@@ -21,18 +21,18 @@ function RealSummary({ jobId }: { jobId: string }) {
   });
 
   if (result.isLoading) {
-    return <p>Summarising…</p>;
+    return <p className="db-notice-muted">Summarising…</p>;
   }
   if (result.isError || !result.data || !Array.isArray(result.data.tables)) {
-    return <p>No summary available.</p>;
+    return <p className="db-notice-muted">No summary available.</p>;
   }
 
   const { tables, total_rows, total_tables, total_duration_ms } = result.data;
 
   return (
-    <div>
-      <h3>Result summary</h3>
-      <ul>
+    <div className="db-subsection">
+      <h3 className="db-subsection-title">Result summary</h3>
+      <ul className="mb-2 flex flex-col gap-1 font-mono text-sm text-slate-700">
         {tables.map((t: JobTableResult) => (
           <li key={t.table_name}>
             {t.table_name} — {t.row_count.toLocaleString()} rows ·{" "}
@@ -40,8 +40,8 @@ function RealSummary({ jobId }: { jobId: string }) {
           </li>
         ))}
       </ul>
-      <p>
-        Total: <strong>{total_rows.toLocaleString()}</strong> rows across {total_tables} tables in{" "}
+      <p className="text-sm text-slate-600">
+        Total: <strong className="text-slate-900">{total_rows.toLocaleString()}</strong> rows across {total_tables} tables in{" "}
         {total_duration_ms.toLocaleString()} ms
       </p>
     </div>
@@ -53,27 +53,27 @@ function SpecSummary() {
   const spec = useQuery({ queryKey: queryKeys.spec, queryFn: getSpec });
 
   if (spec.isLoading) {
-    return <p>Summarising…</p>;
+    return <p className="db-notice-muted">Summarising…</p>;
   }
   if (spec.isError || !spec.data) {
-    return <p>No summary available.</p>;
+    return <p className="db-notice-muted">No summary available.</p>;
   }
 
   const tables = spec.data.tables;
   const total = tables.reduce((sum, t) => sum + t.row_count, 0);
 
   return (
-    <div>
-      <h3>Result summary</h3>
-      <ul>
+    <div className="db-subsection">
+      <h3 className="db-subsection-title">Result summary</h3>
+      <ul className="mb-2 flex flex-col gap-1 font-mono text-sm text-slate-700">
         {tables.map((t: TableSpec) => (
           <li key={t.table_name}>
             {t.table_name} — {t.row_count.toLocaleString()} rows
           </li>
         ))}
       </ul>
-      <p>
-        Total: <strong>{total.toLocaleString()}</strong> rows across {tables.length} tables
+      <p className="text-sm text-slate-600">
+        Total: <strong className="text-slate-900">{total.toLocaleString()}</strong> rows across {tables.length} tables
       </p>
     </div>
   );

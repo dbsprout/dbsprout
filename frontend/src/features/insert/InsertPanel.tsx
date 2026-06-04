@@ -65,9 +65,10 @@ export function InsertPanel({ pollMs }: InsertPanelProps) {
   }
 
   return (
-    <div>
+    <div className="flex flex-col gap-3">
       <button
         type="button"
+        className="db-btn-secondary self-start"
         disabled={previewMutation.isPending}
         onClick={handlePreview}
       >
@@ -75,35 +76,36 @@ export function InsertPanel({ pollMs }: InsertPanelProps) {
       </button>
 
       {previewMutation.isError && (
-        <p role="alert">{(previewMutation.error as ApiError).message}</p>
+        <p role="alert" className="db-notice-alert">{(previewMutation.error as ApiError).message}</p>
       )}
 
       {preview && !job && (
-        <div>
-          <p>
-            Target: {preview.target} · {preview.dialect}
+        <div className="db-subsection flex flex-col gap-2">
+          <p className="text-sm text-slate-600">
+            Target: <span className="font-mono">{preview.target}</span> · {preview.dialect}
           </p>
-          <ul>
+          <ul className="flex flex-col gap-1 font-mono text-sm text-slate-700">
             {preview.scope.map((s) => (
               <li key={s.table}>
                 {s.table} — {s.row_count.toLocaleString()} rows
               </li>
             ))}
           </ul>
-          <p>
-            Total: <strong>{preview.total_rows.toLocaleString()}</strong> rows
+          <p className="text-sm text-slate-600">
+            Total: <strong className="text-slate-900">{preview.total_rows.toLocaleString()}</strong> rows
           </p>
           {preview.warnings && preview.warnings.length > 0 && (
-            <ul aria-label="insert warnings">
+            <ul aria-label="insert warnings" className="db-notice-status flex flex-col gap-1">
               {preview.warnings.map((w) => (
                 <li key={w}>{w}</li>
               ))}
             </ul>
           )}
-          <label>
-            insert method
+          <label className="db-field mb-0">
+            <span className="db-label">insert method</span>
             <select
               aria-label="insert method"
+              className="db-input"
               value={method}
               onChange={(e) => setMethod(e.target.value as InsertMethod)}
             >
@@ -116,13 +118,14 @@ export function InsertPanel({ pollMs }: InsertPanelProps) {
           </label>
           <button
             type="button"
+            className="db-btn-danger self-start"
             disabled={insertMutation.isPending}
             onClick={handleConfirm}
           >
             Confirm &amp; insert
           </button>
           {insertMutation.isError && (
-            <p role="alert">{(insertMutation.error as ApiError).message}</p>
+            <p role="alert" className="db-notice-alert">{(insertMutation.error as ApiError).message}</p>
           )}
         </div>
       )}
@@ -136,14 +139,14 @@ export function InsertPanel({ pollMs }: InsertPanelProps) {
       )}
 
       {job && succeeded && (
-        <div>
-          <h3>Inserted</h3>
-          <p>
+        <div className="db-subsection">
+          <h3 className="db-subsection-title">Inserted</h3>
+          <p className="text-sm text-slate-700">
             {job.total_rows.toLocaleString()} rows across {job.scope.length} tables via{" "}
             {job.writer} ({job.method}).
           </p>
           {job.scope_warnings.length > 0 && (
-            <ul aria-label="scope warnings">
+            <ul aria-label="scope warnings" className="db-notice-status mt-2 flex flex-col gap-1">
               {job.scope_warnings.map((w) => (
                 <li key={w}>{w}</li>
               ))}

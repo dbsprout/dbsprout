@@ -276,15 +276,20 @@ function InspectorForm({ column, cfg, methods, columnType, onSave }: ColumnInspe
     : null;
 
   return (
-    <aside aria-label={`inspector for ${column}`}>
-      <h3>{column}</h3>
-      <p>{genLabel(cfg.provider, cfg.method)}</p>
+    <aside
+      aria-label={`inspector for ${column}`}
+      className="db-subsection flex flex-col gap-3"
+    >
+      <div>
+        <h3 className="text-sm font-semibold text-slate-900">{column}</h3>
+        <p className="font-mono text-xs text-slate-500">{genLabel(cfg.provider, cfg.method)}</p>
+      </div>
 
       {pickerOptions && (
         <>
-          <label>
-            generator method
-            <select value={generator} onChange={(e) => setGenerator(e.target.value)}>
+          <label className="db-field mb-0">
+            <span className="db-label">generator method</span>
+            <select className="db-input" value={generator} onChange={(e) => setGenerator(e.target.value)}>
               {pickerOptions.map((o) => (
                 <option key={o.value} value={o.value}>
                   {o.label}
@@ -292,10 +297,11 @@ function InspectorForm({ column, cfg, methods, columnType, onSave }: ColumnInspe
               ))}
             </select>
           </label>
-          <label>
+          <label className="flex items-center gap-2 text-sm text-slate-600">
             <input
               type="checkbox"
               aria-label="show all generators"
+              className="accent-accent-600"
               checked={showAllGenerators}
               onChange={(e) => setShowAllGenerators(e.target.checked)}
             />
@@ -305,38 +311,40 @@ function InspectorForm({ column, cfg, methods, columnType, onSave }: ColumnInspe
       )}
 
       {externalChange && (
-        <div role="status">
+        <div role="status" className="db-notice-status flex items-center justify-between gap-2">
           <span>This column changed elsewhere — your edits are preserved.</span>
-          <button type="button" onClick={() => applySeed(cfg)}>
+          <button type="button" className="db-btn-secondary" onClick={() => applySeed(cfg)}>
             Refresh
           </button>
         </div>
       )}
 
-      <label>
-        null %
+      <label className="db-field mb-0">
+        <span className="db-label">null %</span>
         <input
           type="number"
           step="0.01"
           min={0}
           max={1}
+          className="db-input"
           value={nullableRate}
           onChange={(e) => setNullableRate(e.target.value)}
         />
       </label>
 
-      <label>
-        unique
+      <label className="flex items-center gap-2 text-sm text-slate-600">
         <input
           type="checkbox"
+          className="accent-accent-600"
           checked={unique}
           onChange={(e) => setUnique(e.target.checked)}
         />
+        unique
       </label>
 
-      <label>
-        distribution
-        <select value={distribution} onChange={(e) => setDistribution(e.target.value)}>
+      <label className="db-field mb-0">
+        <span className="db-label">distribution</span>
+        <select className="db-input" value={distribution} onChange={(e) => setDistribution(e.target.value)}>
           <option value="">(none)</option>
           {DISTRIBUTIONS.map((d) => (
             <option key={d} value={d}>
@@ -346,12 +354,13 @@ function InspectorForm({ column, cfg, methods, columnType, onSave }: ColumnInspe
         </select>
       </label>
 
-      <fieldset>
-        <legend>distribution params</legend>
+      <fieldset className="db-fieldset">
+        <legend className="db-legend">distribution params</legend>
         {paramRows.map((row, i) => (
-          <div key={i}>
+          <div key={i} className="mb-2 flex items-center gap-2">
             <input
               aria-label={`param name ${i}`}
+              className="db-input flex-1"
               value={row.key}
               placeholder="name"
               onChange={(e) => patchRow(i, { key: e.target.value })}
@@ -360,12 +369,14 @@ function InspectorForm({ column, cfg, methods, columnType, onSave }: ColumnInspe
               type="text"
               inputMode="decimal"
               aria-label={`value for ${row.key || `param ${i}`}`}
+              className="db-input flex-1"
               value={row.value}
               placeholder="number"
               onChange={(e) => patchRow(i, { value: e.target.value })}
             />
             <button
               type="button"
+              className="db-btn-danger"
               aria-label={`remove param ${row.key || i}`}
               onClick={() => removeRow(i)}
             >
@@ -373,53 +384,58 @@ function InspectorForm({ column, cfg, methods, columnType, onSave }: ColumnInspe
             </button>
           </div>
         ))}
-        <button type="button" onClick={addRow}>
+        <button type="button" className="db-btn-secondary" onClick={addRow}>
           Add param
         </button>
       </fieldset>
 
-      <label>
-        min
+      <label className="db-field mb-0">
+        <span className="db-label">min</span>
         <input
           type="text"
           inputMode="decimal"
+          className="db-input"
           value={minText}
           onChange={(e) => setMinText(e.target.value)}
         />
       </label>
 
-      <label>
-        max
+      <label className="db-field mb-0">
+        <span className="db-label">max</span>
         <input
           type="text"
           inputMode="decimal"
+          className="db-input"
           value={maxText}
           onChange={(e) => setMaxText(e.target.value)}
         />
       </label>
 
-      <label>
-        enum values
+      <label className="db-field mb-0">
+        <span className="db-label">enum values</span>
         <textarea
+          className="db-input"
           value={enumValuesText}
           placeholder="one value per line"
           onChange={(e) => setEnumValuesText(e.target.value)}
         />
       </label>
 
-      <label>
-        params
-        <textarea value={paramsText} onChange={(e) => setParamsText(e.target.value)} />
+      <label className="db-field mb-0">
+        <span className="db-label">params</span>
+        <textarea className="db-input font-mono" value={paramsText} onChange={(e) => setParamsText(e.target.value)} />
       </label>
 
-      {error && <p role="alert">{error}</p>}
+      {error && <p role="alert" className="db-notice-alert">{error}</p>}
 
-      <button type="button" onClick={handleSave}>
-        Save
-      </button>
-      <button type="button" onClick={() => onSave(cfg)}>
-        Re-roll
-      </button>
+      <div className="flex gap-2">
+        <button type="button" className="db-btn-primary" onClick={handleSave}>
+          Save
+        </button>
+        <button type="button" className="db-btn-secondary" onClick={() => onSave(cfg)}>
+          Re-roll
+        </button>
+      </div>
     </aside>
   );
 }

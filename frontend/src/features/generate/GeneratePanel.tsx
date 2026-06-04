@@ -28,11 +28,12 @@ export function GeneratePanel({ onStarted }: GeneratePanelProps) {
   });
 
   return (
-    <div>
-      <label>
-        engine
+    <div className="flex flex-wrap items-end gap-3">
+      <label className="db-field mb-0">
+        <span className="db-label">engine</span>
         <select
           aria-label="generate engine"
+          className="db-input"
           value={engine}
           onChange={(e) => setEngine(e.target.value as Engine)}
         >
@@ -43,22 +44,23 @@ export function GeneratePanel({ onStarted }: GeneratePanelProps) {
           ))}
         </select>
       </label>
-      <label>
-        seed
+      <label className="db-field mb-0">
+        <span className="db-label">seed</span>
         <input
           aria-label="generate seed"
           type="text"
           inputMode="numeric"
           placeholder="auto"
+          className="db-input"
           value={seed}
           onChange={(e) => setSeed(e.target.value)}
         />
       </label>
-      <button type="button" disabled={mutation.isPending} onClick={() => mutation.mutate()}>
+      <button type="button" className="db-btn-primary" disabled={mutation.isPending} onClick={() => mutation.mutate()}>
         Generate
       </button>
       {mutation.isError && (
-        <p role="alert">{(mutation.error as ApiError).message}</p>
+        <p role="alert" className="db-notice-alert w-full">{(mutation.error as ApiError).message}</p>
       )}
     </div>
   );

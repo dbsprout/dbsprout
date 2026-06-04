@@ -36,15 +36,15 @@ export function ValidatePanel({ onDrill }: ValidatePanelProps) {
   const report = mutation.data;
 
   return (
-    <div>
-      <button type="button" disabled={mutation.isPending} onClick={() => mutation.mutate()}>
+    <div className="flex flex-col gap-3">
+      <button type="button" className="db-btn-primary self-start" disabled={mutation.isPending} onClick={() => mutation.mutate()}>
         Validate
       </button>
 
-      {mutation.isError && <p role="alert">{(mutation.error as ApiError).message}</p>}
+      {mutation.isError && <p role="alert" className="db-notice-alert">{(mutation.error as ApiError).message}</p>}
 
       {report && (
-        <div>
+        <div className="flex flex-col gap-4">
           <IntegrityBlock report={report} />
           <ViolationRows details={report.details} onDrill={onDrill} />
           {report.fidelity && <FidelityBlock report={report.fidelity} />}
@@ -58,17 +58,23 @@ export function ValidatePanel({ onDrill }: ValidatePanelProps) {
 function IntegrityBlock({ report }: { report: ValidateResponse }) {
   const summary = integritySummary(report.by_table);
   return (
-    <section>
-      <h3>Integrity</h3>
-      <p>
+    <section className="db-subsection">
+      <h3 className="db-subsection-title">Integrity</h3>
+      <p className="mb-2 text-sm text-slate-600">
         {report.summary.violations === 0
           ? "No violations — every check passed."
           : `${report.summary.violations} violation${report.summary.violations === 1 ? "" : "s"} across ${report.summary.tables} tables.`}
       </p>
-      <ul>
+      <ul className="flex flex-col gap-1">
         {summary.map((row) => (
-          <li key={row.check}>
-            {row.label}: {row.passed ? "pass" : `fail (${row.count})`}
+          <li
+            key={row.check}
+            className="flex items-center justify-between gap-2 rounded-md border border-slate-200 bg-white px-3 py-1.5 text-sm"
+          >
+            <span className="text-slate-700">{row.label}</span>
+            <span className={row.passed ? "db-pill-pass" : "db-pill-fail"}>
+              {row.passed ? "pass" : `fail (${row.count})`}
+            </span>
           </li>
         ))}
       </ul>
@@ -85,15 +91,21 @@ function ViolationRows({
 }) {
   if (details.length === 0) return null;
   return (
-    <section>
-      <h3>Violations</h3>
-      <ul>
+    <section className="db-subsection">
+      <h3 className="db-subsection-title">Violations</h3>
+      <ul className="flex flex-col gap-1">
         {details.map((d, i) => (
-          <li key={`${d.table}.${d.column}.${d.check}.${i}`}>
-            {d.check} · {d.table}
-            {d.column ? `.${d.column}` : ""} — {d.details}
+          <li
+            key={`${d.table}.${d.column}.${d.check}.${i}`}
+            className="flex flex-wrap items-center gap-2 rounded-md border border-red-200 bg-red-50 px-3 py-1.5 text-sm text-red-800"
+          >
+            <span className="font-mono">
+              {d.check} · {d.table}
+              {d.column ? `.${d.column}` : ""} — {d.details}
+            </span>
             <button
               type="button"
+              className="db-btn-secondary ml-auto"
               onClick={() => onDrill?.({ table: d.table, column: d.column })}
             >
               Drill to cell
@@ -107,12 +119,15 @@ function ViolationRows({
 
 function FidelityBlock({ report }: { report: FidelityReport }) {
   return (
-    <section>
-      <h3>Fidelity</h3>
-      <p>
-        Score: {report.overall_score} — {report.passed ? "pass" : "fail"}
+    <section className="db-subsection">
+      <h3 className="db-subsection-title">Fidelity</h3>
+      <p className="mb-2 flex items-center gap-2 text-sm text-slate-600">
+        Score: {report.overall_score}
+        <span className={report.passed ? "db-pill-pass" : "db-pill-fail"}>
+          {report.passed ? "pass" : "fail"}
+        </span>
       </p>
-      <ul>
+      <ul className="flex flex-col gap-1 font-mono text-sm text-slate-700">
         {report.metrics.map((m, i) => (
           <li key={`${m.metric}.${m.table}.${m.column}.${i}`}>
             {m.metric} · {m.table}
@@ -126,12 +141,15 @@ function FidelityBlock({ report }: { report: FidelityReport }) {
 
 function DetectionBlock({ report }: { report: DetectionReport }) {
   return (
-    <section>
-      <h3>Detection</h3>
-      <p>
-        Score: {report.overall_score} — {report.passed ? "pass" : "fail"}
+    <section className="db-subsection">
+      <h3 className="db-subsection-title">Detection</h3>
+      <p className="mb-2 flex items-center gap-2 text-sm text-slate-600">
+        Score: {report.overall_score}
+        <span className={report.passed ? "db-pill-pass" : "db-pill-fail"}>
+          {report.passed ? "pass" : "fail"}
+        </span>
       </p>
-      <ul>
+      <ul className="flex flex-col gap-1 font-mono text-sm text-slate-700">
         {report.metrics.map((m, i) => (
           <li key={`${m.metric}.${m.table}.${i}`}>
             {m.metric} · {m.table}: {m.accuracy}

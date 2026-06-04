@@ -11,22 +11,28 @@ export function CostsPanel() {
   const costs = useQuery({ queryKey: queryKeys.costs, queryFn: getCosts });
 
   if (costs.isLoading) {
-    return <p>Loading costs…</p>;
+    return <p className="db-notice-muted">Loading costs…</p>;
   }
   if (costs.isError || !costs.data) {
-    return <p role="alert">Could not load costs.</p>;
+    return (
+      <p role="alert" className="db-notice-alert">
+        Could not load costs.
+      </p>
+    );
   }
 
   const { total_cost, total_tokens, total_calls, avg_cost_per_run, per_provider } = costs.data;
 
   if (total_calls === 0) {
-    return <p>No LLM calls recorded (offline / heuristic runs).</p>;
+    return (
+      <p className="db-notice-muted">No LLM calls recorded (offline / heuristic runs).</p>
+    );
   }
 
   return (
-    <div>
-      <h3>LLM costs</h3>
-      <ul>
+    <div className="mt-4">
+      <h3 className="db-subsection-title">LLM costs</h3>
+      <ul className="mb-3 grid grid-cols-2 gap-2 text-sm text-slate-700 sm:grid-cols-4">
         <li>
           Total cost: <strong>${total_cost.toFixed(4)}</strong>
         </li>
@@ -34,7 +40,8 @@ export function CostsPanel() {
         <li>Total calls: {total_calls.toLocaleString()}</li>
         <li>Avg cost / run: ${avg_cost_per_run.toFixed(4)}</li>
       </ul>
-      <table>
+      <div className="overflow-x-auto rounded-md border border-slate-200">
+      <table className="db-table">
         <thead>
           <tr>
             <th>Provider</th>
@@ -54,6 +61,7 @@ export function CostsPanel() {
           ))}
         </tbody>
       </table>
+      </div>
     </div>
   );
 }

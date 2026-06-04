@@ -51,17 +51,21 @@ function Editor({ table, columns, tables, rules, onSave }: CorrelationsEditorPro
   }
 
   return (
-    <section aria-label={`correlations for ${table}`}>
-      <h4>Correlations</h4>
-      <ul aria-label={`correlation rules for ${table}`}>
-        {rules.length === 0 && <li>No correlation rules.</li>}
+    <section aria-label={`correlations for ${table}`} className="db-subsection">
+      <h4 className="db-subsection-title">Correlations</h4>
+      <ul aria-label={`correlation rules for ${table}`} className="mb-3 flex flex-col gap-1">
+        {rules.length === 0 && <li className="text-sm text-slate-500">No correlation rules.</li>}
         {rules.map((rule, i) => (
-          <li key={`${rule.columns.join(",")}-${i}`}>
-            <span>{rule.columns.join(", ")}</span>
-            {rule.lookup_table && <span> → {rule.lookup_table}</span>}
-            <span> ({rule.strategy})</span>
+          <li
+            key={`${rule.columns.join(",")}-${i}`}
+            className="flex flex-wrap items-center gap-1 rounded-md border border-slate-200 bg-white px-3 py-1.5 text-sm"
+          >
+            <span className="font-mono text-slate-700">{rule.columns.join(", ")}</span>
+            {rule.lookup_table && <span className="text-slate-500"> → {rule.lookup_table}</span>}
+            <span className="text-slate-400"> ({rule.strategy})</span>
             <button
               type="button"
+              className="db-btn-danger ml-auto"
               aria-label={`remove correlation ${i + 1}`}
               onClick={() => handleRemove(i)}
             >
@@ -71,13 +75,14 @@ function Editor({ table, columns, tables, rules, onSave }: CorrelationsEditorPro
         ))}
       </ul>
 
-      <fieldset>
-        <legend>Add correlation</legend>
-        <label>
-          columns
+      <fieldset className="db-fieldset flex flex-col gap-2">
+        <legend className="db-legend">Add correlation</legend>
+        <label className="db-field mb-0">
+          <span className="db-label">columns</span>
           <select
             multiple
             aria-label="columns for new correlation"
+            className="db-input"
             value={draftColumns}
             onChange={(e) =>
               setDraftColumns(Array.from(e.target.selectedOptions, (o) => o.value))
@@ -90,10 +95,11 @@ function Editor({ table, columns, tables, rules, onSave }: CorrelationsEditorPro
             ))}
           </select>
         </label>
-        <label>
-          lookup table
+        <label className="db-field mb-0">
+          <span className="db-label">lookup table</span>
           <select
             aria-label="lookup table"
+            className="db-input"
             value={lookupTable}
             onChange={(e) => setLookupTable(e.target.value)}
           >
@@ -105,16 +111,17 @@ function Editor({ table, columns, tables, rules, onSave }: CorrelationsEditorPro
             ))}
           </select>
         </label>
-        <label>
-          strategy
+        <label className="db-field mb-0">
+          <span className="db-label">strategy</span>
           <input
             aria-label="correlation strategy"
+            className="db-input"
             value={strategy}
             onChange={(e) => setStrategy(e.target.value)}
           />
         </label>
-        {error && <p role="alert">{error}</p>}
-        <button type="button" onClick={handleAdd}>
+        {error && <p role="alert" className="db-notice-alert">{error}</p>}
+        <button type="button" className="db-btn-secondary self-start" onClick={handleAdd}>
           add correlation
         </button>
       </fieldset>

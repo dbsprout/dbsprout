@@ -24,7 +24,7 @@ export function GenerateSurface({ pollMs }: GenerateSurfaceProps) {
   }
 
   return (
-    <div>
+    <div className="flex flex-col gap-4">
       <GeneratePanel onStarted={handleStarted} />
       {jobId && (
         <ProgressConsole

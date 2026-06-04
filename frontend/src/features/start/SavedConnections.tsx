@@ -52,21 +52,25 @@ export function SavedConnections({ onLoad }: SavedConnectionsProps) {
   const error = (saveM.error ?? deleteM.error) as ApiError | null;
 
   return (
-    <section aria-label="Saved connections">
-      <h3>Saved connections</h3>
+    <section aria-label="Saved connections" className="db-subsection">
+      <h3 className="db-subsection-title">Saved connections</h3>
 
-      {error && <p role="alert">{error.message}</p>}
+      {error && <p role="alert" className="db-notice-alert mb-3">{error.message}</p>}
 
       {isLoading ? (
-        <p>Loading saved connections…</p>
+        <p className="db-notice-muted">Loading saved connections…</p>
       ) : data && data.connections.length > 0 ? (
-        <ul>
+        <ul className="mb-3 flex flex-col gap-2">
           {data.connections.map((c) => (
-            <li key={c.name}>
-              <span>{c.name}</span>{" "}
-              <code>{c.url}</code>{" "}
+            <li
+              key={c.name}
+              className="flex flex-wrap items-center gap-2 rounded-md border border-slate-200 bg-white px-3 py-2 text-sm"
+            >
+              <span className="font-medium text-slate-900">{c.name}</span>{" "}
+              <code className="font-mono text-xs text-slate-500">{c.url}</code>{" "}
               <button
                 type="button"
+                className="db-btn-secondary ml-auto"
                 onClick={() => onLoad(c.url)}
                 disabled={isPending}
               >
@@ -74,6 +78,7 @@ export function SavedConnections({ onLoad }: SavedConnectionsProps) {
               </button>{" "}
               <button
                 type="button"
+                className="db-btn-danger"
                 onClick={() => deleteM.mutate(c.name)}
                 disabled={isPending}
               >
@@ -83,25 +88,31 @@ export function SavedConnections({ onLoad }: SavedConnectionsProps) {
           ))}
         </ul>
       ) : (
-        <p>No saved connections yet.</p>
+        <p className="db-notice-muted mb-3">No saved connections yet.</p>
       )}
 
-      <div>
-        <label htmlFor="saved-name">Name</label>
-        <input
-          id="saved-name"
-          type="text"
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-        />
-        <label htmlFor="saved-url">Connection URL</label>
-        <input
-          id="saved-url"
-          type="text"
-          value={url}
-          onChange={(e) => setUrl(e.target.value)}
-        />
-        <button type="button" onClick={() => saveM.mutate()} disabled={!canSave}>
+      <div className="flex flex-wrap items-end gap-2">
+        <div className="db-field mb-0">
+          <label htmlFor="saved-name" className="db-label">Name</label>
+          <input
+            id="saved-name"
+            type="text"
+            className="db-input"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+          />
+        </div>
+        <div className="db-field mb-0 flex-1">
+          <label htmlFor="saved-url" className="db-label">Connection URL</label>
+          <input
+            id="saved-url"
+            type="text"
+            className="db-input font-mono"
+            value={url}
+            onChange={(e) => setUrl(e.target.value)}
+          />
+        </div>
+        <button type="button" className="db-btn-primary" onClick={() => saveM.mutate()} disabled={!canSave}>
           Save connection
         </button>
       </div>

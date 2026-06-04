@@ -22,22 +22,23 @@ export function SamplePicker({ onLoaded }: SamplePickerProps) {
   });
 
   if (isLoading) {
-    return <p>Loading samples…</p>;
+    return <p className="db-notice-muted">Loading samples…</p>;
   }
 
   return (
     <div>
       {mutation.isError && (
-        <p role="alert">{(mutation.error as ApiError).message}</p>
+        <p role="alert" className="db-notice-alert mb-3">{(mutation.error as ApiError).message}</p>
       )}
-      <ul>
+      <ul className="flex flex-col gap-2">
         {data?.samples.map((s) => (
           <li key={s.name}>
             <button
               onClick={() => mutation.mutate(s.name)}
               disabled={mutation.isPending}
+              className="w-full cursor-pointer rounded-md border border-slate-200 bg-white px-3 py-2 text-left text-sm transition hover:border-accent-400 hover:bg-accent-50 disabled:opacity-50"
             >
-              <span>{s.title}</span>
+              <span className="font-medium text-slate-900">{s.title}</span>
               {" — "}
               <span>{s.description}</span>
               {" ("}
