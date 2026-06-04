@@ -40,7 +40,10 @@ test("explains the sample purpose before any load", async () => {
   expect(screen.getByText(/no real database/i)).toBeInTheDocument();
 });
 
-test("confirms with a status message naming the loaded sample", async () => {
+// ═══ P5-3 ═══ — the post-load confirmation moved up to the StartPanel collapse
+// (a single, non-duplicated load signal), so SamplePicker no longer renders its
+// own `role="status"` confirmation after a load.
+test("does not render its own post-load confirmation (P5-3)", async () => {
   const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
     const url = String(input);
     if (url.endsWith("/api/samples")) {
@@ -54,10 +57,10 @@ test("confirms with a status message naming the loaded sample", async () => {
     });
   });
   vi.stubGlobal("fetch", fetchMock);
-  renderWithClient(<SamplePicker onLoaded={vi.fn()} />);
+  const onLoaded = vi.fn();
+  renderWithClient(<SamplePicker onLoaded={onLoaded} />);
   await waitFor(() => expect(screen.getByText("E-commerce")).toBeInTheDocument());
   fireEvent.click(screen.getByRole("button", { name: /E-commerce/i }));
-  await waitFor(() =>
-    expect(screen.getByRole("status")).toHaveTextContent(/Loaded the E-commerce sample/i),
-  );
+  await waitFor(() => expect(onLoaded).toHaveBeenCalled());
+  expect(screen.queryByRole("status")).not.toBeInTheDocument();
 });
