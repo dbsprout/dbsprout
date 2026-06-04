@@ -1,4 +1,4 @@
-import { screen } from "@testing-library/react";
+import { fireEvent, screen, waitFor } from "@testing-library/react";
 import type { ReactElement } from "react";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { ModeProvider } from "./app/ModeProvider";
@@ -22,6 +22,91 @@ function stubSamplesFetch() {
         }),
     ),
   );
+}
+
+// ─── P5-5: a fetch stub that lets the real ValidatePanel render one violation ───
+// Routes by URL/method: POST /api/validate returns a single not-null violation on
+// orders.total; every other request gets a benign empty payload so the rest of the
+// shell mounts crash-free. Lets a real "Drill to cell" click flow through
+// ValidatePanel → App.onDrill → Mode/Selection without a backend.
+const VALIDATE_VIOLATION = {
+  summary: { tables: 1, rows: 10, violations: 1 },
+  by_table: [
+    {
+      table: "orders",
+      fk_violations: 0,
+      unique_violations: 0,
+      not_null_violations: 1,
+      check_violations: 0,
+    },
+  ],
+  details: [
+    {
+      check: "not_null",
+      table: "orders",
+      column: "total",
+      passed: false,
+      details: "1 null row",
+    },
+  ],
+  fidelity: null,
+  detection: null,
+};
+
+function stubValidateFetch() {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === "string" ? input : input.toString();
+      const method = (init?.method ?? "GET").toUpperCase();
+      const json = (body: unknown) =>
+        new Response(JSON.stringify(body), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      if (url.includes("/api/validate") && method === "POST") {
+        return json(VALIDATE_VIOLATION);
+      }
+      if (url.includes("/api/samples")) return json({ samples: [] });
+      if (url.includes("/api/costs")) {
+        // Zero-shaped so CostsPanel takes its "no LLM calls" branch (total_calls
+        // === 0) instead of calling .toFixed on an undefined total.
+        return json({
+          total_cost: 0,
+          total_tokens: 0,
+          total_calls: 0,
+          avg_cost_per_run: 0,
+          per_provider: [],
+        });
+      }
+      // schema / spec / generators / preview / connections / runs etc. — a superset
+      // of benign empties so whichever field a panel reads is an empty array/object.
+      return json({ tables: [], methods: [], rows: [], connections: [], samples: [], runs: [] });
+    }),
+  );
+}
+
+/**
+ * The `<section>` wrapping a heading, for asserting guided hidden/active state.
+ * `hidden: true` so a heading inside a `hidden`/`aria-hidden` (guided) section is
+ * still matched — otherwise role queries drop inaccessible nodes by default.
+ */
+function sectionFor(headingName: string): HTMLElement {
+  return screen
+    .getByRole("heading", { name: headingName, hidden: true })
+    .closest("section")!;
+}
+
+async function drillFirstViolation() {
+  // `hidden: true` — in guided mode the Validate section is hidden (display:none)
+  // but still mounted, so its buttons exist; default role queries would skip them.
+  fireEvent.click(screen.getByRole("button", { name: /^validate$/i, hidden: true }));
+  await waitFor(() =>
+    expect(
+      screen.getByRole("button", { name: /drill to cell/i, hidden: true }),
+    ).toBeInTheDocument(),
+  );
+  fireEvent.click(screen.getByRole("button", { name: /drill to cell/i, hidden: true }));
 }
 
 beforeEach(() => localStorage.clear());
@@ -140,3 +225,44 @@ test("mounts the full shell inside the SelectionProvider without regressions", (
   expect(screen.getByRole("button", { name: /^validate$/i })).toBeInTheDocument();
 });
 // ─── end P4-7 ───
+
+// ─── P5-5: Validate drill navigates to Configure in guided mode ───
+// In the guided wizard only the active step is visible; Configure (step 3) is
+// hidden while you're on Validate (step 5). Drilling a violation must navigate the
+// wizard to Configure so the now-visible ConfigurePanel shows the focused cell.
+test("guided mode: drilling a violation navigates the wizard to Configure", async () => {
+  stubValidateFetch();
+  localStorage.setItem("dbsprout.mode", "guided");
+  renderApp();
+
+  // Configure starts hidden (we're on the Start step, idx 0).
+  expect(sectionFor("Configure")).toHaveClass("hidden");
+  expect(sectionFor("Configure")).toHaveAttribute("aria-hidden");
+  expect(screen.getByText(/Step 1 of 7/)).toBeInTheDocument();
+
+  // To reach the Validate panel's run button it must be mounted — guided keeps all
+  // steps mounted, so the Validate button exists even though its section is hidden.
+  await drillFirstViolation();
+
+  // The wizard has navigated to the Configure step (idx 2 → "Step 3 of 7").
+  await waitFor(() => expect(screen.getByText(/Step 3 of 7/)).toBeInTheDocument());
+  // Configure is now the active step: no longer hidden / aria-hidden.
+  expect(sectionFor("Configure")).not.toHaveClass("hidden");
+  expect(sectionFor("Configure")).not.toHaveAttribute("aria-hidden");
+});
+
+test("advanced mode: drilling a violation sets selection without wizard navigation", async () => {
+  stubValidateFetch();
+  // Default advanced mode — no stepper at all.
+  renderApp();
+  expect(screen.queryByText(/Step \d+ of 7/)).not.toBeInTheDocument();
+
+  await drillFirstViolation();
+
+  // Advanced shows every section; no wizard navigation occurs (still no stepper).
+  expect(screen.queryByText(/Step \d+ of 7/)).not.toBeInTheDocument();
+  expect(screen.getByRole("heading", { name: "Configure" })).toBeInTheDocument();
+  // Configure was already visible in advanced mode — no hidden class to clear.
+  expect(sectionFor("Configure")).not.toHaveClass("hidden");
+});
+// ─── end P5-5 ───
