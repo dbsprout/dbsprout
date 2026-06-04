@@ -2,6 +2,13 @@ import { useQuery } from "@tanstack/react-query";
 import { getQuality, queryKeys } from "../../api/endpoints";
 import type { QualityRow } from "../../api/types";
 
+/** Map a quality status to its pill colour class (pass/warn/fail). */
+function statusPill(status: string): string {
+  if (status === "pass") return "db-pill-pass";
+  if (status === "warn") return "db-pill-warn";
+  return "db-pill-fail";
+}
+
 interface QualityPanelProps {
   /** Run to show metrics for; the latest run when undefined. */
   runId: number | undefined;
@@ -19,19 +26,24 @@ export function QualityPanel({ runId }: QualityPanelProps) {
   });
 
   if (quality.isLoading) {
-    return <p>Loading quality…</p>;
+    return <p className="db-notice-muted">Loading quality…</p>;
   }
   if (quality.isError || !quality.data) {
-    return <p role="alert">Could not load quality.</p>;
+    return (
+      <p role="alert" className="db-notice-alert">
+        Could not load quality.
+      </p>
+    );
   }
   if (!quality.data.found || quality.data.rows.length === 0) {
-    return <p>No quality data for this run.</p>;
+    return <p className="db-notice-muted">No quality data for this run.</p>;
   }
 
   return (
-    <div>
-      <h3>Quality metrics</h3>
-      <table>
+    <div className="mt-4">
+      <h3 className="db-subsection-title">Quality metrics</h3>
+      <div className="overflow-x-auto rounded-md border border-slate-200">
+      <table className="db-table">
         <thead>
           <tr>
             <th>Type</th>
@@ -46,11 +58,14 @@ export function QualityPanel({ runId }: QualityPanelProps) {
               <td>{r.metric_type}</td>
               <td>{r.metric_name}</td>
               <td>{r.score.toFixed(4)}</td>
-              <td>{r.status}</td>
+              <td>
+                <span className={statusPill(r.status)}>{r.status}</span>
+              </td>
             </tr>
           ))}
         </tbody>
       </table>
+      </div>
     </div>
   );
 }

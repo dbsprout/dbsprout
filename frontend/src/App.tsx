@@ -21,36 +21,36 @@ export function App() {
           <section>; guided = dim non-active steps). The Output step owns both the
           Export and Insert sections (design spec §6 "Output (Export+Insert)"). ═══ */}
       <GuidedSection stepId="start">
-        <h2>Start</h2>
+        <h2 className="db-card-title">Start</h2>
         <StartPanel onLoaded={() => undefined} />
       </GuidedSection>
       <GuidedSection stepId="schema">
         <SchemaTree />
       </GuidedSection>
       <GuidedSection stepId="configure">
-        <h2>Configure</h2>
+        <h2 className="db-card-title">Configure</h2>
         <SpecPanel />
         <ConfigurePanel />
       </GuidedSection>
       <GuidedSection stepId="generate">
-        <h2>Generate</h2>
+        <h2 className="db-card-title">Generate</h2>
         <GenerateSurface />
       </GuidedSection>
       {/* ═══ P1c-1: Export ═══ */}
       <GuidedSection stepId="output">
-        <h2>Output</h2>
+        <h2 className="db-card-title">Output</h2>
         <ExportPanel />
       </GuidedSection>
       {/* ═══ /P1c-1 ═══ */}
       {/* ═══ P1c-2: Insert ═══ */}
       <GuidedSection stepId="output">
-        <h2>Insert</h2>
+        <h2 className="db-card-title">Insert</h2>
         <InsertPanel />
       </GuidedSection>
       {/* ═══ /P1c-2 ═══ */}
       {/* ═══ P1c-3: Validate ═══ */}
       <GuidedSection stepId="validate">
-        <h2>Validate</h2>
+        <h2 className="db-card-title">Validate</h2>
         {/* P4-7: a violation's "Drill to cell" sets the cross-panel selection,
             which ConfigurePanel applies to focus the offending table+column. */}
         <ValidatePanel
@@ -60,7 +60,7 @@ export function App() {
       {/* ═══ /P1c-3 ═══ */}
       {/* ═══ P1c-4: Runs & Quality ═══ */}
       <GuidedSection stepId="runs">
-        <h2>Runs & Quality</h2>
+        <h2 className="db-card-title">Runs & Quality</h2>
         <RunsSurface />
       </GuidedSection>
       {/* ═══ /P1c-4 ═══ */}

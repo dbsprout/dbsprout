@@ -55,11 +55,11 @@ export function ProgressConsole({ jobId, pollMs = 500, onSucceeded }: ProgressCo
   }, [succeeded, onSucceeded]);
 
   if (job.isError) {
-    return <p role="alert">{(job.error as ApiError).message}</p>;
+    return <p role="alert" className="db-notice-alert">{(job.error as ApiError).message}</p>;
   }
 
   if (!job.data && !progress) {
-    return <p>Starting job…</p>;
+    return <p className="db-notice-muted">Starting job…</p>;
   }
 
   const engine = job.data?.engine;
@@ -68,26 +68,26 @@ export function ProgressConsole({ jobId, pollMs = 500, onSucceeded }: ProgressCo
   const error = progress?.status === "failed" ? progress.error : job.data?.error;
 
   return (
-    <div>
-      <p>
-        Status: <strong>{status}</strong>
+    <div className="db-subsection flex flex-col gap-2">
+      <p className="text-sm text-slate-700">
+        Status: <strong className="text-slate-900">{status}</strong>
       </p>
-      <p>
+      <p className="text-sm text-slate-500">
         Engine: {engine ?? "—"} · Seed: {seed ?? "—"}
       </p>
       {progress && progress.table && (
-        <p>
+        <p className="font-mono text-sm text-slate-600">
           Table: <strong>{progress.table}</strong> · {progress.tablesDone} / {progress.tablesTotal}{" "}
           tables · {progress.totalRows} rows
         </p>
       )}
       {!isTerminal(status) && (
-        <button type="button" disabled={cancel.isPending} onClick={() => cancel.mutate()}>
+        <button type="button" className="db-btn-danger self-start" disabled={cancel.isPending} onClick={() => cancel.mutate()}>
           Cancel
         </button>
       )}
-      {status === "failed" && error && <p role="alert">{error}</p>}
-      {status === "cancelled" && <p>Run cancelled.</p>}
+      {status === "failed" && error && <p role="alert" className="db-notice-alert">{error}</p>}
+      {status === "cancelled" && <p className="db-notice-muted">Run cancelled.</p>}
     </div>
   );
 }

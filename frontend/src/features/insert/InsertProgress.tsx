@@ -41,28 +41,28 @@ export function InsertProgress({ jobId, pollMs = 500, onSucceeded }: InsertProgr
   }, [succeeded, onSucceeded]);
 
   if (job.isError) {
-    return <p role="alert">{(job.error as ApiError).message}</p>;
+    return <p role="alert" className="db-notice-alert">{(job.error as ApiError).message}</p>;
   }
 
   if (!job.data) {
-    return <p>Starting insert…</p>;
+    return <p className="db-notice-muted">Starting insert…</p>;
   }
 
   const terminal = isTerminal(status);
   const { error } = job.data;
 
   return (
-    <div>
-      <p>
-        Status: <strong>{status}</strong>
+    <div className="db-subsection flex flex-col gap-2">
+      <p className="text-sm text-slate-700">
+        Status: <strong className="text-slate-900">{status}</strong>
       </p>
       {!terminal && (
-        <button type="button" disabled={cancel.isPending} onClick={() => cancel.mutate()}>
+        <button type="button" className="db-btn-danger self-start" disabled={cancel.isPending} onClick={() => cancel.mutate()}>
           Cancel
         </button>
       )}
-      {status === "failed" && error && <p role="alert">{error}</p>}
-      {status === "cancelled" && <p>Insert cancelled.</p>}
+      {status === "failed" && error && <p role="alert" className="db-notice-alert">{error}</p>}
+      {status === "cancelled" && <p className="db-notice-muted">Insert cancelled.</p>}
     </div>
   );
 }

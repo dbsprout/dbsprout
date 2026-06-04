@@ -26,20 +26,29 @@ interface GuidedSectionProps {
  * (non-tabbable / non-interactive) — but ALWAYS MOUNTED, so panel/query state
  * survives step changes (dim via attributes/style, never unmount).
  */
+/** The card frame shared by every workbench section. */
+const CARD = "db-card";
+
 export function GuidedSection({ stepId, children }: GuidedSectionProps) {
   const { mode, currentStep } = useMode();
 
   if (mode !== "guided") {
-    return <section>{children}</section>;
+    return <section className={CARD}>{children}</section>;
   }
 
   const active = STEPS[currentStep]?.id === stepId;
   if (active) {
-    return <section>{children}</section>;
+    // The active guided step gets an accent ring/emphasis.
+    return <section className={`${CARD} ring-2 ring-accent-500`}>{children}</section>;
   }
 
   return (
-    <section aria-hidden="true" inert="" style={{ opacity: 0.4 }}>
+    <section
+      aria-hidden="true"
+      inert=""
+      style={{ opacity: 0.4 }}
+      className={CARD}
+    >
       {children}
     </section>
   );

@@ -206,18 +206,19 @@ export function ConnectForm({ onLoaded }: ConnectFormProps) {
 
   function renderProbeResult(data: ConnectionProbe) {
     return (
-      <p>
+      <p className="db-notice-status">
         {`Connected · ${data.dialect} ${data.server_version} · ${data.table_count} tables · ${data.latency_ms} ms`}
       </p>
     );
   }
 
   return (
-    <div>
-      <div>
-        <label htmlFor="db-type">Database type</label>
+    <div className="flex flex-col gap-3">
+      <div className="db-field">
+        <label htmlFor="db-type" className="db-label">Database type</label>
         <select
           id="db-type"
+          className="db-input"
           value={fields.type}
           onChange={(e) => handleTypeChange(e.target.value as DbType)}
         >
@@ -231,8 +232,9 @@ export function ConnectForm({ onLoaded }: ConnectFormProps) {
 
       {fields.type === "sqlite" ? (
         <div>
-          <label htmlFor="file-path">File path</label>
+          <label htmlFor="file-path" className="db-label">File path</label>
           <input
+            className="db-input"
             id="file-path"
             type="text"
             value={fields.filePath}
@@ -242,8 +244,9 @@ export function ConnectForm({ onLoaded }: ConnectFormProps) {
       ) : (
         <>
           <div>
-            <label htmlFor="host">Host</label>
+            <label htmlFor="host" className="db-label">Host</label>
             <input
+              className="db-input"
               id="host"
               type="text"
               value={fields.host}
@@ -251,8 +254,9 @@ export function ConnectForm({ onLoaded }: ConnectFormProps) {
             />
           </div>
           <div>
-            <label htmlFor="port">Port</label>
+            <label htmlFor="port" className="db-label">Port</label>
             <input
+              className="db-input"
               id="port"
               type="text"
               value={fields.port}
@@ -260,8 +264,9 @@ export function ConnectForm({ onLoaded }: ConnectFormProps) {
             />
           </div>
           <div>
-            <label htmlFor="user">User</label>
+            <label htmlFor="user" className="db-label">User</label>
             <input
+              className="db-input"
               id="user"
               type="text"
               value={fields.user}
@@ -269,8 +274,9 @@ export function ConnectForm({ onLoaded }: ConnectFormProps) {
             />
           </div>
           <div>
-            <label htmlFor="password">Password</label>
+            <label htmlFor="password" className="db-label">Password</label>
             <input
+              className="db-input"
               id="password"
               type="password"
               value={fields.password}
@@ -278,8 +284,9 @@ export function ConnectForm({ onLoaded }: ConnectFormProps) {
             />
           </div>
           <div>
-            <label htmlFor="database">Database</label>
+            <label htmlFor="database" className="db-label">Database</label>
             <input
+              className="db-input"
               id="database"
               type="text"
               value={fields.database}
@@ -287,11 +294,12 @@ export function ConnectForm({ onLoaded }: ConnectFormProps) {
             />
           </div>
 
-          <details>
-            <summary>Advanced</summary>
-            <div>
-              <label htmlFor="ssl-mode">SSL mode</label>
+          <details className="rounded-md border border-slate-200 p-3">
+            <summary className="cursor-pointer text-sm font-medium text-slate-700">Advanced</summary>
+            <div className="mt-3 flex flex-col gap-3">
+              <label htmlFor="ssl-mode" className="db-label">SSL mode</label>
               <select
+                className="db-input"
                 id="ssl-mode"
                 value={fields.sslMode}
                 onChange={(e) => handleFieldChange("sslMode", e.target.value)}
@@ -305,8 +313,9 @@ export function ConnectForm({ onLoaded }: ConnectFormProps) {
               </select>
             </div>
             <div>
-              <label htmlFor="ssl-ca">CA certificate path</label>
+              <label htmlFor="ssl-ca" className="db-label">CA certificate path</label>
               <input
+                className="db-input"
                 id="ssl-ca"
                 type="text"
                 value={fields.sslCa}
@@ -314,8 +323,9 @@ export function ConnectForm({ onLoaded }: ConnectFormProps) {
               />
             </div>
             <div>
-              <label htmlFor="ssl-cert">Client certificate path</label>
+              <label htmlFor="ssl-cert" className="db-label">Client certificate path</label>
               <input
+                className="db-input"
                 id="ssl-cert"
                 type="text"
                 value={fields.sslCert}
@@ -323,8 +333,9 @@ export function ConnectForm({ onLoaded }: ConnectFormProps) {
               />
             </div>
             <div>
-              <label htmlFor="ssl-key">Client key path</label>
+              <label htmlFor="ssl-key" className="db-label">Client key path</label>
               <input
+                className="db-input"
                 id="ssl-key"
                 type="text"
                 value={fields.sslKey}
@@ -332,8 +343,9 @@ export function ConnectForm({ onLoaded }: ConnectFormProps) {
               />
             </div>
             <div>
-              <label htmlFor="schema">Schema / search_path</label>
+              <label htmlFor="schema" className="db-label">Schema / search_path</label>
               <input
+                className="db-input"
                 id="schema"
                 type="text"
                 value={fields.schema}
@@ -341,8 +353,9 @@ export function ConnectForm({ onLoaded }: ConnectFormProps) {
               />
             </div>
             <div>
-              <label htmlFor="connect-timeout">Connect timeout (s)</label>
+              <label htmlFor="connect-timeout" className="db-label">Connect timeout (s)</label>
               <input
+                className="db-input"
                 id="connect-timeout"
                 type="text"
                 inputMode="numeric"
@@ -351,19 +364,21 @@ export function ConnectForm({ onLoaded }: ConnectFormProps) {
               />
             </div>
             <div>
-              <label htmlFor="extra-params">Extra parameters (one key=value per line)</label>
+              <label htmlFor="extra-params" className="db-label">Extra parameters (one key=value per line)</label>
               <textarea
+                className="db-input"
                 id="extra-params"
                 value={paramsText}
                 onChange={(e) => handleParamsChange(e.target.value)}
               />
             </div>
             {/* ═══ P2a-3 ═══ SSH tunnel (bastion). Sent only when a host is set. */}
-            <fieldset>
-              <legend>SSH tunnel (optional)</legend>
+            <fieldset className="db-fieldset flex flex-col gap-3">
+              <legend className="db-legend">SSH tunnel (optional)</legend>
               <div>
-                <label htmlFor="ssh-host">SSH bastion host</label>
+                <label htmlFor="ssh-host" className="db-label">SSH bastion host</label>
                 <input
+                  className="db-input"
                   id="ssh-host"
                   type="text"
                   value={ssh.host}
@@ -372,14 +387,15 @@ export function ConnectForm({ onLoaded }: ConnectFormProps) {
                   onChange={(e) => handleSshChange("host", e.target.value)}
                 />
                 {sshFieldErrors.host && (
-                  <p id="ssh-host-error" role="alert">
+                  <p id="ssh-host-error" role="alert" className="mt-1 text-xs text-red-600">
                     {sshFieldErrors.host}
                   </p>
                 )}
               </div>
               <div>
-                <label htmlFor="ssh-port">SSH bastion port</label>
+                <label htmlFor="ssh-port" className="db-label">SSH bastion port</label>
                 <input
+                  className="db-input"
                   id="ssh-port"
                   type="text"
                   inputMode="numeric"
@@ -389,8 +405,9 @@ export function ConnectForm({ onLoaded }: ConnectFormProps) {
                 />
               </div>
               <div>
-                <label htmlFor="ssh-user">SSH user</label>
+                <label htmlFor="ssh-user" className="db-label">SSH user</label>
                 <input
+                  className="db-input"
                   id="ssh-user"
                   type="text"
                   value={ssh.user}
@@ -399,14 +416,15 @@ export function ConnectForm({ onLoaded }: ConnectFormProps) {
                   onChange={(e) => handleSshChange("user", e.target.value)}
                 />
                 {sshFieldErrors.user && (
-                  <p id="ssh-user-error" role="alert">
+                  <p id="ssh-user-error" role="alert" className="mt-1 text-xs text-red-600">
                     {sshFieldErrors.user}
                   </p>
                 )}
               </div>
               <div>
-                <label htmlFor="ssh-key-path">SSH key path</label>
+                <label htmlFor="ssh-key-path" className="db-label">SSH key path</label>
                 <input
+                  className="db-input"
                   id="ssh-key-path"
                   type="text"
                   value={ssh.keyPath}
@@ -415,7 +433,7 @@ export function ConnectForm({ onLoaded }: ConnectFormProps) {
                   onChange={(e) => handleSshChange("keyPath", e.target.value)}
                 />
                 {sshFieldErrors.keyPath && (
-                  <p id="ssh-key-path-error" role="alert">
+                  <p id="ssh-key-path-error" role="alert" className="mt-1 text-xs text-red-600">
                     {sshFieldErrors.keyPath}
                   </p>
                 )}
@@ -426,9 +444,10 @@ export function ConnectForm({ onLoaded }: ConnectFormProps) {
         </>
       )}
 
-      <div>
-        <label htmlFor="connection-url">Connection URL</label>
+      <div className="db-field">
+        <label htmlFor="connection-url" className="db-label">Connection URL</label>
         <input
+          className="db-input font-mono"
           id="connection-url"
           type="text"
           aria-label="Connection URL"
@@ -439,7 +458,7 @@ export function ConnectForm({ onLoaded }: ConnectFormProps) {
 
       {testM.data && renderProbeResult(testM.data)}
       {testM.isError && (
-        <p role="alert">
+        <p role="alert" className="db-notice-alert">
           {(testM.error as ApiError).message}
           {(testM.error as ApiError).hint && (
             <span> — {(testM.error as ApiError).hint}</span>
@@ -447,7 +466,7 @@ export function ConnectForm({ onLoaded }: ConnectFormProps) {
         </p>
       )}
       {connectM.isError && (
-        <p role="alert">
+        <p role="alert" className="db-notice-alert">
           {(connectM.error as ApiError).message}
           {(connectM.error as ApiError).hint && (
             <span> — {(connectM.error as ApiError).hint}</span>
@@ -455,9 +474,10 @@ export function ConnectForm({ onLoaded }: ConnectFormProps) {
         </p>
       )}
 
-      <div>
+      <div className="flex gap-2">
         <button
           type="button"
+          className="db-btn-secondary"
           onClick={() => testM.mutate()}
           disabled={submitBlocked}
         >
@@ -465,6 +485,7 @@ export function ConnectForm({ onLoaded }: ConnectFormProps) {
         </button>
         <button
           type="button"
+          className="db-btn-primary"
           onClick={() => connectM.mutate()}
           disabled={submitBlocked}
         >

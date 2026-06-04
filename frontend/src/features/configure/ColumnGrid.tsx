@@ -119,29 +119,35 @@ export function ColumnGrid({
   }
 
   return (
-    <div>
-      <label>
+    <div className="db-subsection">
+      <label className="mb-2 flex items-center gap-2 text-sm text-slate-600">
         <input
           type="checkbox"
           aria-label="show all generators"
           checked={showAll}
           onChange={(e) => setShowAll(e.target.checked)}
+          className="accent-accent-600"
         />
         show all generators
       </label>
-      <table aria-label={`columns of ${spec.table_name}`} style={{ display: "block", width: "100%" }}>
-        <thead style={{ display: "block" }}>
+      <table
+        aria-label={`columns of ${spec.table_name}`}
+        style={{ display: "block", width: "100%" }}
+        className="rounded-md border border-slate-200 text-sm"
+      >
+        <thead style={{ display: "block" }} className="bg-slate-100">
         <tr style={ROW_STYLE}>
-          <th style={CELL_STYLE}>name</th>
-          <th style={CELL_STYLE}>generator</th>
-          <th style={CELL_STYLE}>params</th>
-          <th style={CELL_STYLE}>sample</th>
-          <th style={CELL_STYLE}>key</th>
+          <th style={CELL_STYLE} className="px-2 text-xs font-semibold uppercase tracking-wide text-slate-500">name</th>
+          <th style={CELL_STYLE} className="px-2 text-xs font-semibold uppercase tracking-wide text-slate-500">generator</th>
+          <th style={CELL_STYLE} className="px-2 text-xs font-semibold uppercase tracking-wide text-slate-500">params</th>
+          <th style={CELL_STYLE} className="px-2 text-xs font-semibold uppercase tracking-wide text-slate-500">sample</th>
+          <th style={CELL_STYLE} className="px-2 text-xs font-semibold uppercase tracking-wide text-slate-500">key</th>
         </tr>
       </thead>
       <tbody
         ref={parentRef}
         style={{ display: "block", position: "relative", height: VIEWPORT_HEIGHT, overflow: "auto" }}
+        className="bg-white"
       >
         <tr style={{ display: "block", height: virtualizer.getTotalSize(), position: "relative" }}>
           <td style={{ display: "block", padding: 0, border: 0 }}>
@@ -156,6 +162,7 @@ export function ColumnGrid({
                 <div
                   key={name}
                   data-focused={focused}
+                  className="border-b border-slate-100 px-2 hover:bg-slate-50"
                   style={{
                     ...ROW_STYLE,
                     position: "absolute",
@@ -167,16 +174,22 @@ export function ColumnGrid({
                     background: focused ? "#eff6ff" : undefined,
                   }}
                 >
-                  <span style={CELL_STYLE}>
-                    <button type="button" aria-label={`inspect ${name}`} onClick={() => onSelect(name)}>
+                  <span style={CELL_STYLE} className="px-1">
+                    <button
+                      type="button"
+                      aria-label={`inspect ${name}`}
+                      onClick={() => onSelect(name)}
+                      className="font-mono text-[13px] font-medium text-accent-700 hover:underline"
+                    >
                       {name}
                     </button>
                   </span>
-                  <span style={CELL_STYLE}>
+                  <span style={CELL_STYLE} className="px-1">
                     <select
                       aria-label={`generator for ${name}`}
                       value={current}
                       onChange={(e) => handleChange(name, cfg, e)}
+                      className="w-full rounded border border-slate-300 bg-white px-1 py-0.5 text-xs outline-none focus:border-accent-500 focus:ring-1 focus:ring-accent-500/40"
                     >
                       {options.map((o) => (
                         <option key={o.value} value={o.value}>
@@ -185,9 +198,11 @@ export function ColumnGrid({
                       ))}
                     </select>
                   </span>
-                  <span style={CELL_STYLE}>{paramSummary}</span>
-                  <span style={CELL_STYLE}>{sample}</span>
-                  <span style={CELL_STYLE}>{cfg.unique ? "unique" : ""}</span>
+                  <span style={CELL_STYLE} className="px-1 font-mono text-xs text-slate-500">{paramSummary}</span>
+                  <span style={CELL_STYLE} className="px-1 font-mono text-xs text-slate-700">{sample}</span>
+                  <span style={CELL_STYLE} className="px-1">
+                    {cfg.unique ? <span className="db-badge bg-violet-100 text-violet-700">unique</span> : ""}
+                  </span>
                 </div>
               );
             })}

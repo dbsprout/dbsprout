@@ -8,29 +8,39 @@ export function SchemaTree() {
   });
 
   if (isLoading) {
-    return <p>Loading schema…</p>;
+    return <p className="db-notice-muted">Loading schema…</p>;
   }
 
   if (isError || !data) {
-    return <p>No schema loaded yet — pick a source to begin.</p>;
+    return <p className="db-notice-muted">No schema loaded yet — pick a source to begin.</p>;
   }
 
   return (
-    <ul>
+    <ul className="flex flex-col gap-3">
       {data.tables.map((table) => {
         const fkColumns = new Set(table.foreign_keys.flatMap((fk) => fk.columns));
         return (
           <li key={table.name}>
-            <strong>{table.name}</strong>
-            <ul>
+            <strong className="font-mono text-sm font-semibold text-slate-900">{table.name}</strong>
+            <ul className="mt-1 flex flex-col gap-0.5 border-l border-slate-200 pl-3">
               {table.columns.map((col) => {
                 const isPk = table.primary_key.includes(col.name);
                 const isFk = fkColumns.has(col.name);
                 return (
-                  <li key={col.name}>
-                    {isPk && "🔑 "}
-                    {isFk && "↗ "}
-                    {col.name}: {col.type}
+                  <li key={col.name} className="flex items-center gap-2 text-sm">
+                    {isPk && (
+                      <span className="db-badge-pk" title="Primary key" aria-hidden="true">
+                        🔑 PK
+                      </span>
+                    )}
+                    {isFk && (
+                      <span className="db-badge-fk" title="Foreign key" aria-hidden="true">
+                        ↗ FK
+                      </span>
+                    )}
+                    <span className="font-mono text-slate-700">
+                      {col.name}: <span className="text-slate-400">{col.type}</span>
+                    </span>
                   </li>
                 );
               })}

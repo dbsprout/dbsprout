@@ -46,11 +46,13 @@ export function SpecAssist() {
   const error = mutation.isError ? (mutation.error as ApiError) : null;
 
   return (
-    <section aria-label="AI spec assist">
-      <label>
-        provider
+    <section aria-label="AI spec assist" className="db-subsection">
+      <p className="db-subsection-title">AI spec assist</p>
+      <label className="db-field">
+        <span className="db-label">provider</span>
         <select
           aria-label="spec-assist provider"
+          className="db-input"
           value={provider}
           onChange={(e) => setProvider(e.target.value as SpecProvider)}
           disabled={mutation.isPending}
@@ -62,28 +64,30 @@ export function SpecAssist() {
 
       {/* ─── P4-11 ─── cloud key-entry sub-panel (revealed only for cloud). */}
       {isCloud && (
-        <fieldset aria-label="cloud provider settings">
-          <label>
-            cloud model
+        <fieldset aria-label="cloud provider settings" className="db-fieldset flex flex-col gap-2">
+          <label className="db-field mb-0">
+            <span className="db-label">cloud model</span>
             <input
               aria-label="cloud model"
               type="text"
+              className="db-input"
               value={model}
               onChange={(e) => setModel(e.target.value)}
               disabled={mutation.isPending}
             />
           </label>
-          <label>
-            API key env var
+          <label className="db-field mb-0">
+            <span className="db-label">API key env var</span>
             <input
               aria-label="api key env var"
               type="text"
+              className="db-input font-mono"
               value={apiKeyEnv}
               onChange={(e) => setApiKeyEnv(e.target.value)}
               disabled={mutation.isPending}
             />
           </label>
-          <p>
+          <p className="text-xs text-slate-500">
             The API key is read from this environment variable on the dbsprout
             server. Its value is never sent from the browser or stored.
           </p>
@@ -92,16 +96,17 @@ export function SpecAssist() {
 
       <button
         type="button"
+        className="db-btn-secondary mt-2"
         onClick={() => mutation.mutate()}
         disabled={mutation.isPending}
       >
         AI assist
       </button>
-      {mutation.isPending && <span>Proposing…</span>}
+      {mutation.isPending && <span className="ml-2 text-sm text-slate-500">Proposing…</span>}
       {error && (
-        <div role="alert">
+        <div role="alert" className="db-notice-alert mt-2">
           <p>{error.message}</p>
-          {error.hint && <p>{error.hint}</p>}
+          {error.hint && <p className="mt-1 text-xs">{error.hint}</p>}
         </div>
       )}
     </section>

@@ -35,13 +35,18 @@ export function StartPanel({ onLoaded }: StartPanelProps) {
 
   return (
     <div>
-      <div role="tablist">
+      <div role="tablist" className="mb-4 inline-flex gap-1 rounded-lg border border-slate-200 bg-slate-100 p-1">
         {TABS.map(({ id, label }) => (
           <button
             key={id}
             role="tab"
             aria-selected={activeTab === id}
             onClick={() => setActiveTab(id)}
+            className={`cursor-pointer rounded-md px-3 py-1 text-sm font-medium transition focus:outline-none focus:ring-2 focus:ring-accent-500 ${
+              activeTab === id
+                ? "bg-white text-accent-700 shadow-sm"
+                : "text-slate-600 hover:text-slate-900"
+            }`}
           >
             {label}
           </button>
@@ -57,7 +62,7 @@ export function StartPanel({ onLoaded }: StartPanelProps) {
 
       {/* ═══ P2a-2 ═══ */}
       {loadedUrl !== null && (
-        <p role="status">{`Loaded connection: ${loadedUrl}`}</p>
+        <p role="status" className="db-notice-status mt-3">{`Loaded connection: ${loadedUrl}`}</p>
       )}
       <SavedConnections onLoad={handleLoadConnection} />
       {/* ═══ end P2a-2 ═══ */}

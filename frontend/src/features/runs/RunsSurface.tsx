@@ -13,7 +13,7 @@ export function RunsSurface() {
   const [selectedRun, setSelectedRun] = useState<number | undefined>(undefined);
 
   return (
-    <div>
+    <div className="flex flex-col gap-4">
       <RunsPanel onSelectRun={setSelectedRun} />
       <QualityPanel runId={selectedRun} />
       <CostsPanel />

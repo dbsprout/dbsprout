@@ -48,18 +48,24 @@ function Editor({ table, columns, derived, onSave }: DerivedColumnsProps) {
   }
 
   return (
-    <section aria-label={`derived for ${table}`}>
-      <h4>Derived columns</h4>
-      <ul aria-label={`derived columns for ${table}`}>
-        {derived.length === 0 && <li>No derived columns.</li>}
+    <section aria-label={`derived for ${table}`} className="db-subsection">
+      <h4 className="db-subsection-title">Derived columns</h4>
+      <ul aria-label={`derived columns for ${table}`} className="mb-3 flex flex-col gap-1">
+        {derived.length === 0 && <li className="text-sm text-slate-500">No derived columns.</li>}
         {derived.map((col, i) => (
-          <li key={`${col.column}-${i}`}>
-            <span>
+          <li
+            key={`${col.column}-${i}`}
+            className="flex flex-wrap items-center gap-1 rounded-md border border-slate-200 bg-white px-3 py-1.5 text-sm"
+          >
+            <span className="font-mono text-slate-700">
               {col.column} = {col.expression}
             </span>
-            {col.depends_on.length > 0 && <span> [{col.depends_on.join(", ")}]</span>}
+            {col.depends_on.length > 0 && (
+              <span className="text-slate-400"> [{col.depends_on.join(", ")}]</span>
+            )}
             <button
               type="button"
+              className="db-btn-danger ml-auto"
               aria-label={`remove derived ${col.column}`}
               onClick={() => handleRemove(i)}
             >
@@ -69,29 +75,32 @@ function Editor({ table, columns, derived, onSave }: DerivedColumnsProps) {
         ))}
       </ul>
 
-      <fieldset>
-        <legend>Add derived column</legend>
-        <label>
-          name
+      <fieldset className="db-fieldset flex flex-col gap-2">
+        <legend className="db-legend">Add derived column</legend>
+        <label className="db-field mb-0">
+          <span className="db-label">name</span>
           <input
             aria-label="derived column name"
+            className="db-input"
             value={name}
             onChange={(e) => setName(e.target.value)}
           />
         </label>
-        <label>
-          expression
+        <label className="db-field mb-0">
+          <span className="db-label">expression</span>
           <input
             aria-label="derived expression"
+            className="db-input font-mono"
             value={expression}
             onChange={(e) => setExpression(e.target.value)}
           />
         </label>
-        <label>
-          depends on
+        <label className="db-field mb-0">
+          <span className="db-label">depends on</span>
           <select
             multiple
             aria-label="depends on"
+            className="db-input"
             value={dependsOn}
             onChange={(e) =>
               setDependsOn(Array.from(e.target.selectedOptions, (o) => o.value))
@@ -104,8 +113,8 @@ function Editor({ table, columns, derived, onSave }: DerivedColumnsProps) {
             ))}
           </select>
         </label>
-        {error && <p role="alert">{error}</p>}
-        <button type="button" onClick={handleAdd}>
+        {error && <p role="alert" className="db-notice-alert">{error}</p>}
+        <button type="button" className="db-btn-secondary self-start" onClick={handleAdd}>
           add derived
         </button>
       </fieldset>

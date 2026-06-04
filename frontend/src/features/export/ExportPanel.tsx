@@ -36,11 +36,12 @@ export function ExportPanel() {
   const ready = spec.isSuccess;
 
   return (
-    <div>
-      <label>
-        format
+    <div className="flex flex-wrap items-end gap-3">
+      <label className="db-field mb-0">
+        <span className="db-label">format</span>
         <select
           aria-label="export format"
+          className="db-input"
           value={format}
           onChange={(e) => setFormat(e.target.value as ExportFormat)}
         >
@@ -51,10 +52,11 @@ export function ExportPanel() {
           ))}
         </select>
       </label>
-      <label>
-        tables (optional — default all)
+      <label className="db-field mb-0">
+        <span className="db-label">tables (optional — default all)</span>
         <select
           aria-label="export tables"
+          className="db-input"
           multiple
           value={selected}
           onChange={handleTablesChange}
@@ -68,12 +70,13 @@ export function ExportPanel() {
       </label>
       <button
         type="button"
+        className="db-btn-primary"
         disabled={!ready || mutation.isPending}
         onClick={() => mutation.mutate()}
       >
         Export
       </button>
-      {mutation.isError && <p role="alert">{(mutation.error as ApiError).message}</p>}
+      {mutation.isError && <p role="alert" className="db-notice-alert w-full">{(mutation.error as ApiError).message}</p>}
     </div>
   );
 }

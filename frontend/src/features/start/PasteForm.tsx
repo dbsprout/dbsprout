@@ -20,19 +20,21 @@ export function PasteForm({ onLoaded }: PasteFormProps) {
   });
 
   return (
-    <div>
-      <label htmlFor="paste-schema">Paste schema</label>
+    <div className="flex flex-col gap-3">
+      <label htmlFor="paste-schema" className="db-label">Paste schema</label>
       <textarea
         id="paste-schema"
+        className="db-input font-mono"
         value={text}
         onChange={(e) => setText(e.target.value)}
         rows={10}
       />
       {mutation.isError && (
-        <p role="alert">{(mutation.error as ApiError).message}</p>
+        <p role="alert" className="db-notice-alert">{(mutation.error as ApiError).message}</p>
       )}
       <button
         type="button"
+        className="db-btn-primary self-start"
         onClick={() => mutation.mutate(text)}
         disabled={mutation.isPending || text.trim().length === 0}
       >

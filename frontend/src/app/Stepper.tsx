@@ -42,24 +42,34 @@ export function Stepper() {
   const canAdvance = !isLast && step.gate(qc);
 
   return (
-    <nav aria-label="Guided steps">
-      <p>
-        Step {currentStep + 1} of {STEPS.length}: <strong>{step.title}</strong>
+    <nav
+      aria-label="Guided steps"
+      className="mt-3 flex flex-wrap items-center gap-3 rounded-lg border border-slate-200 bg-white px-4 py-2"
+    >
+      <p className="text-sm text-slate-600">
+        <span className="mr-2 inline-flex items-center rounded-full bg-accent-100 px-2 py-0.5 text-xs font-semibold text-accent-800">
+          Step {currentStep + 1} of {STEPS.length}
+        </span>
+        <strong className="text-slate-900">{step.title}</strong>
       </p>
-      <button
-        type="button"
-        onClick={() => setStep(currentStep - 1)}
-        disabled={isFirst}
-      >
-        Back
-      </button>
-      <button
-        type="button"
-        onClick={() => setStep(currentStep + 1)}
-        disabled={!canAdvance}
-      >
-        Next
-      </button>
+      <div className="ml-auto flex gap-2">
+        <button
+          type="button"
+          className="db-btn-secondary"
+          onClick={() => setStep(currentStep - 1)}
+          disabled={isFirst}
+        >
+          Back
+        </button>
+        <button
+          type="button"
+          className="db-btn-primary"
+          onClick={() => setStep(currentStep + 1)}
+          disabled={!canAdvance}
+        >
+          Next
+        </button>
+      </div>
     </nav>
   );
 }

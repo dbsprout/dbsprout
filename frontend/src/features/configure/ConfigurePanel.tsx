@@ -98,26 +98,27 @@ export function ConfigurePanel() {
   }, [schema.data, table?.table_name]);
 
   if (spec.isLoading) {
-    return <p>Loading spec…</p>;
+    return <p className="db-notice-muted">Loading spec…</p>;
   }
   if (spec.isError || !table) {
-    return <p>No schema loaded — pick a source first.</p>;
+    return <p className="db-notice-muted">No schema loaded — pick a source first.</p>;
   }
 
   const activeTable: TableSpec = table;
   const focusedCfg = selectedColumn ? activeTable.columns[selectedColumn] : null;
 
   return (
-    <div>
+    <div className="flex flex-col gap-4">
       {/* ═══ P2b-3 ═══ */}
       {/* AI spec-assist: an LLM proposes a full DataSpec for the loaded schema;
           on success the spec query is invalidated so this grid repaints. */}
       <SpecAssist />
       {/* ═══ end P2b-3 ═══ */}
-      <label>
-        table
+      <label className="db-field">
+        <span className="db-label">table</span>
         <select
           aria-label="configure table"
+          className="db-input"
           value={activeTable.table_name}
           onChange={(e) => {
             setSelectedTable(e.target.value);
@@ -132,7 +133,7 @@ export function ConfigurePanel() {
         </select>
       </label>
 
-      {mutation.isError && <p role="alert">Failed to save column.</p>}
+      {mutation.isError && <p role="alert" className="db-notice-alert">Failed to save column.</p>}
 
       <ColumnGrid
         spec={activeTable}
@@ -158,7 +159,7 @@ export function ConfigurePanel() {
       )}
 
       {/* ═══ P2b-2 ═══ advanced packs: correlations + derived columns */}
-      {advancedMutation.isError && <p role="alert">Failed to save advanced packs.</p>}
+      {advancedMutation.isError && <p role="alert" className="db-notice-alert">Failed to save advanced packs.</p>}
       <CorrelationsEditor
         table={activeTable.table_name}
         columns={Object.keys(activeTable.columns)}

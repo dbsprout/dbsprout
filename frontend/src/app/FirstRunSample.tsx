@@ -73,11 +73,21 @@ export function FirstRunSample() {
   const first = samples[0];
 
   return (
-    <aside aria-label="Get started with a sample">
-      <p>New here? Load a sample database to walk through the steps.</p>
-      {mutation.isError && <p role="alert">{(mutation.error as ApiError).message}</p>}
+    <aside
+      aria-label="Get started with a sample"
+      className="mt-3 flex flex-wrap items-center gap-3 rounded-lg border border-accent-300 bg-accent-50 px-4 py-3"
+    >
+      <p className="text-sm text-accent-900">
+        New here? Load a sample database to walk through the steps.
+      </p>
+      {mutation.isError && (
+        <p role="alert" className="db-notice-alert w-full">
+          {(mutation.error as ApiError).message}
+        </p>
+      )}
       <button
         type="button"
+        className="db-btn-primary ml-auto"
         onClick={() => mutation.mutate(first.name)}
         disabled={mutation.isPending}
       >

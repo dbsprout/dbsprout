@@ -22,22 +22,29 @@ export function RunsPanel({ onSelectRun }: RunsPanelProps) {
   });
 
   if (runs.isLoading) {
-    return <p>Loading runs…</p>;
+    return <p className="db-notice-muted">Loading runs…</p>;
   }
   if (runs.isError || !runs.data) {
-    return <p role="alert">Could not load runs.</p>;
+    return (
+      <p role="alert" className="db-notice-alert">
+        Could not load runs.
+      </p>
+    );
   }
 
   const { rows, has_prev, has_next, page: current, total_pages, total_runs } = runs.data;
 
   if (total_runs === 0) {
-    return <p>No runs yet. Generate data to populate history.</p>;
+    return (
+      <p className="db-notice-muted">No runs yet. Generate data to populate history.</p>
+    );
   }
 
   return (
     <div>
-      <h3>Run history</h3>
-      <table>
+      <h3 className="db-subsection-title">Run history</h3>
+      <div className="overflow-x-auto rounded-md border border-slate-200">
+      <table className="db-table">
         <thead>
           <tr>
             <th>Started</th>
@@ -54,6 +61,7 @@ export function RunsPanel({ onSelectRun }: RunsPanelProps) {
               key={r.id ?? r.started_at}
               onClick={() => r.id != null && onSelectRun(r.id)}
               style={{ cursor: r.id != null ? "pointer" : "default" }}
+              className="hover:bg-accent-50"
             >
               <td>{r.started_at}</td>
               <td>{r.engine}</td>
@@ -65,14 +73,25 @@ export function RunsPanel({ onSelectRun }: RunsPanelProps) {
           ))}
         </tbody>
       </table>
-      <div>
-        <button type="button" disabled={!has_prev} onClick={() => setPage((p) => Math.max(1, p - 1))}>
+      </div>
+      <div className="mt-3 flex items-center gap-3">
+        <button
+          type="button"
+          className="db-btn-secondary"
+          disabled={!has_prev}
+          onClick={() => setPage((p) => Math.max(1, p - 1))}
+        >
           Prev
         </button>
-        <span>
+        <span className="text-sm text-slate-500">
           Page {current} of {total_pages}
         </span>
-        <button type="button" disabled={!has_next} onClick={() => setPage((p) => p + 1)}>
+        <button
+          type="button"
+          className="db-btn-secondary"
+          disabled={!has_next}
+          onClick={() => setPage((p) => p + 1)}
+        >
           Next
         </button>
       </div>

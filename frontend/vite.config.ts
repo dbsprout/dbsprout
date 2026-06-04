@@ -1,5 +1,6 @@
 /// <reference types="vitest/config" />
 import { fileURLToPath } from "node:url";
+import tailwindcss from "@tailwindcss/vite";
 import react from "@vitejs/plugin-react";
 import { defineConfig } from "vite";
 
@@ -7,7 +8,7 @@ import { defineConfig } from "vite";
 // emitted INTO the Python package so hatchling bundles it into the wheel.
 export default defineConfig({
   base: "/app/",
-  plugins: [react()],
+  plugins: [react(), tailwindcss()],
   build: {
     outDir: fileURLToPath(new URL("../dbsprout/web/spa", import.meta.url)),
     emptyOutDir: true,
