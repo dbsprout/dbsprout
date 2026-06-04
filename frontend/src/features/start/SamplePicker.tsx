@@ -1,4 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useState } from "react";
 import { ApiError } from "../../api/client";
 import { listSamples, loadSample, queryKeys } from "../../api/endpoints";
 
@@ -12,10 +13,16 @@ export function SamplePicker({ onLoaded }: SamplePickerProps) {
     queryFn: listSamples,
   });
 
+  // ═══ P5-2 ═══ — title of the most recently loaded sample, used to confirm the
+  // load (a visible status) instead of changing the schema silently.
+  const [loadedTitle, setLoadedTitle] = useState<string | null>(null);
+
   const qc = useQueryClient();
   const mutation = useMutation({
     mutationFn: loadSample,
-    onSuccess: () => {
+    onSuccess: (_result, name) => {
+      const title = data?.samples.find((s) => s.name === name)?.title ?? name;
+      setLoadedTitle(title);
       qc.invalidateQueries({ queryKey: queryKeys.schema });
       onLoaded();
     },
@@ -27,6 +34,10 @@ export function SamplePicker({ onLoaded }: SamplePickerProps) {
 
   return (
     <div>
+      {/* ═══ P5-2 ═══ — explain what a sample is for, so the action is not a leap. */}
+      <p className="db-notice-muted mb-3">
+        A sample loads an example schema so you can try Configure → Generate with no real database.
+      </p>
       {mutation.isError && (
         <p role="alert" className="db-notice-alert mb-3">{(mutation.error as ApiError).message}</p>
       )}
@@ -50,6 +61,12 @@ export function SamplePicker({ onLoaded }: SamplePickerProps) {
           </li>
         ))}
       </ul>
+      {/* ═══ P5-2 ═══ — confirm the load explicitly and point the way forward. */}
+      {loadedTitle && (
+        <p role="status" className="db-notice-status mt-3">
+          Loaded the {loadedTitle} sample — head to Configure &amp; Generate.
+        </p>
+      )}
     </div>
   );
 }
