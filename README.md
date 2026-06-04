@@ -319,4 +319,4 @@ uv run dbsprout --help
 
 ## License
 
-MIT
+[GNU Affero General Public License v3.0 or later](LICENSE) (AGPL-3.0-or-later).
