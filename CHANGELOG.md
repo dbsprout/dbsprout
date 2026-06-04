@@ -1,5 +1,145 @@
 # Changelog
 
+## [0.2.0](https://github.com/dbsprout/dbsprout/compare/v0.1.8...v0.2.0) (2026-06-04)
+
+
+### Features
+
+* **core:** add probe_connection() primitive (P1a) ([a87efc3](https://github.com/dbsprout/dbsprout/commit/a87efc3da0e61179173aa9f81c11a5fc2452d33b))
+* **core:** bundle sample schemas + registry (P1a) ([a96ba23](https://github.com/dbsprout/dbsprout/commit/a96ba230e68fbf802a8bd4240376e1848f3ab08b))
+* **S-152:** bump GitHub Actions to Node24-compatible ([bbba5be](https://github.com/dbsprout/dbsprout/commit/bbba5be9a3ff596e5c61f6529dfb09a492064fc2))
+* **S-152:** bump GitHub Actions to Node24-compatible ([0c29b4a](https://github.com/dbsprout/dbsprout/commit/0c29b4a722ddd9c42c92a4d9cde02c72a9b06662))
+* **web:** 7-step model with cache-reading gate predicates (P3-1) ([0cc5cc1](https://github.com/dbsprout/dbsprout/commit/0cc5cc1f27936693727d772b65fc4cca36f43a7b))
+* **web:** add ColumnGrid with generator select (P1b-2) ([bdc8a36](https://github.com/dbsprout/dbsprout/commit/bdc8a363ac4ba2d467570f3f31f01b749f0d7da8))
+* **web:** add ColumnInspector side panel (P1b-2) ([ccbbc51](https://github.com/dbsprout/dbsprout/commit/ccbbc514558cb3132ad0adf3b86c1f1c6a92509a))
+* **web:** add ConfigurePanel composing grid+inspector+preview with live sample (P1b-2) ([bf6e196](https://github.com/dbsprout/dbsprout/commit/bf6e1969e758c5228006f0bc5d7218a18665630f))
+* **web:** add genLabel helper + PreviewTable component (P1b-2) ([8465dd1](https://github.com/dbsprout/dbsprout/commit/8465dd1692e3c4d8d80164da0d9fda9db75f51ab))
+* **web:** add PreviewResponse type + getPreview client fn (P1b-2) ([529be02](https://github.com/dbsprout/dbsprout/commit/529be023031c7b9c56ce583d99cd08b10f10d697))
+* **web:** Advanced packs — AI spec-assist (P2b-3) ([b46e425](https://github.com/dbsprout/dbsprout/commit/b46e425b2f7f3ebdea7fbca8d68d55f1b3105e13))
+* **web:** Advanced packs — AI spec-assist (P2b-3) ([6c84a26](https://github.com/dbsprout/dbsprout/commit/6c84a263c268f194bc501435e5d46ec027f81ee4))
+* **web:** Advanced packs — correlations + derived columns (P2b-2) ([bf7c7c1](https://github.com/dbsprout/dbsprout/commit/bf7c7c1dea42eff951bee5a48f8f997405cbdaf6))
+* **web:** Advanced packs — correlations + derived columns (P2b-2) ([7714d46](https://github.com/dbsprout/dbsprout/commit/7714d46e5e4afa800065afe13e580271f9803b31))
+* **web:** Advanced packs — distributions & nullability (P2b-1) ([93c50c9](https://github.com/dbsprout/dbsprout/commit/93c50c9781467f712dd24e6cd2fe203358cbeecd))
+* **web:** Advanced packs — distributions & nullability in the Inspector (P2b-1) ([e699308](https://github.com/dbsprout/dbsprout/commit/e699308b4cf84651f55c268fe41422618be202aa))
+* **web:** AI spec-assist — cloud key-entry UX (P4-11) ([b59271a](https://github.com/dbsprout/dbsprout/commit/b59271a890b84a741297ec9d4adfc68db9c1c840))
+* **web:** AI spec-assist — cloud key-entry UX (P4-11) ([73cb890](https://github.com/dbsprout/dbsprout/commit/73cb8907e89678e8fdfb6d9ffb14c96f6524c98b))
+* **web:** Configure — activate dtype filter wiring (P4-12) ([f4d686f](https://github.com/dbsprout/dbsprout/commit/f4d686f56871cdd2115018a1c2919e7b01474023))
+* **web:** Configure — activate dtype filter wiring (P4-12) ([1a1ac88](https://github.com/dbsprout/dbsprout/commit/1a1ac88011fdd42cca2ce353e07389e0d438d9df))
+* **web:** Configure — column grid virtualization (P4-2) ([abe000e](https://github.com/dbsprout/dbsprout/commit/abe000ee268cd142988b2311538c12aaee7d501c))
+* **web:** Configure — dtype-filtered generator dropdowns (P4-1) ([0267689](https://github.com/dbsprout/dbsprout/commit/0267689757a5c04116376b3b039888e0fcce7b07))
+* **web:** Configure — dtype-filtered generator dropdowns (P4-1) ([9130fc4](https://github.com/dbsprout/dbsprout/commit/9130fc4de56eea34aef2db19bc66c1ed343fbda0))
+* **web:** Configure — Inspector/grid dual-edit refresh (P4-3) ([7a2a154](https://github.com/dbsprout/dbsprout/commit/7a2a154ab50845e9298598546bba0fed32f14cd8))
+* **web:** Configure — Inspector/grid dual-edit refresh (P4-3) ([d6014c4](https://github.com/dbsprout/dbsprout/commit/d6014c4a33f1cce0d35e28bc8758b8230d1224bd))
+* **web:** Configure — per-column generator grid + Inspector + live preview (P1b-2) ([3ce5bf8](https://github.com/dbsprout/dbsprout/commit/3ce5bf872df8412c91ac2fdcbabd613f6acecab3))
+* **web:** Configure — spec API client + per-table row counts (P1b-1) ([7727e53](https://github.com/dbsprout/dbsprout/commit/7727e53548f2c0c7f95013ccf5a39bd4922c0750))
+* **web:** Configure panel with per-table row counts (P1b-1) ([f1bae7b](https://github.com/dbsprout/dbsprout/commit/f1bae7b062b7f2c16e5fde12c78ab366a4d5317f))
+* **web:** Connect — URL-paste field auto-fill (P4-8) ([c66da32](https://github.com/dbsprout/dbsprout/commit/c66da32c994c7e5ccddc9e4b990760b7f5b56f90))
+* **web:** connection-url builder + multipart upload client (P1a-2b) ([5338e2b](https://github.com/dbsprout/dbsprout/commit/5338e2bf3e0ed7533565fc167c87566c746e850a))
+* **web:** Connectivity — saved connections (.dbsprout/connections.toml) (P2a-2) ([3162478](https://github.com/dbsprout/dbsprout/commit/316247845f411026760bdd72aeaeea63bebda852))
+* **web:** Connectivity — saved connections (.dbsprout/connections.toml) (P2a-2) ([9c15947](https://github.com/dbsprout/dbsprout/commit/9c15947cf5df102f65aaa43bedc3143f00098217))
+* **web:** Connectivity — SSH tunnel ([ssh] extra) (P2a-3) ([a30649a](https://github.com/dbsprout/dbsprout/commit/a30649a9c737c1f1a4a166a824d165bcc3602351))
+* **web:** Connectivity — SSH tunnel ([ssh] extra) (P2a-3) ([df6d9b6](https://github.com/dbsprout/dbsprout/commit/df6d9b6a8460ab90f859472e280c6dff86ec00ce))
+* **web:** Connectivity — SSL/schema/params connect fields (P2a-1) ([f7b66b8](https://github.com/dbsprout/dbsprout/commit/f7b66b886929dc2f6cb7ab971e7b90740aac5bc9))
+* **web:** Connectivity — SSL/schema/params connect fields (P2a-1) ([fa83e91](https://github.com/dbsprout/dbsprout/commit/fa83e91df9d41919a59920af78a862cf05cc2b98))
+* **web:** Cross-panel selection store — Validate drill-to-cell (P4-7) ([f2f5141](https://github.com/dbsprout/dbsprout/commit/f2f514121734af4a7f479df685c6908d84a8c37d))
+* **web:** Cross-panel selection store — Validate drill-to-cell (P4-7) ([03c4bad](https://github.com/dbsprout/dbsprout/commit/03c4badf7a750bd341031935e4ab8f0f3a529d4a))
+* **web:** cutover — remove legacy HTMX UI, JSON-only API, / → /app (P1c-5) ([9d2266d](https://github.com/dbsprout/dbsprout/commit/9d2266d0ee589d8b82ca10f6e80f49e27e15d252))
+* **web:** cutover — remove legacy HTMX UI, JSON-only API, / → /app (P1c-5) ([67b9e43](https://github.com/dbsprout/dbsprout/commit/67b9e43f334c8067eb83ba75b0e1d1a7c3182ca1))
+* **web:** export StepId + STEP_IDS for the focus overlay (P3-2) ([1fc6e32](https://github.com/dbsprout/dbsprout/commit/1fc6e3274321d2a646bc83b304a219191532487b))
+* **web:** first-run Sample offer reusing loadSample (P3-2) ([ac0f97b](https://github.com/dbsprout/dbsprout/commit/ac0f97bb77137c4a31a6a74f03f49ea258e3bb19))
+* **web:** Generate — cancel affordance (P4-6) ([0c8a25e](https://github.com/dbsprout/dbsprout/commit/0c8a25e08e0a9db4c99403b8c9cf6682433d7026))
+* **web:** Generate — cancel affordance (P4-6) ([8cd04f5](https://github.com/dbsprout/dbsprout/commit/8cd04f57beb2e29979e6b8e2b81804b26e36b182))
+* **web:** Generate — engine select + run + progress console + result preview (P1b-3) ([4ba1275](https://github.com/dbsprout/dbsprout/commit/4ba1275565b58614516ae37074175c1a8995903a))
+* **web:** Generate — engine select + run + progress console + result preview (P1b-3) ([5421e8e](https://github.com/dbsprout/dbsprout/commit/5421e8edb8cbfe9e1c399a6daaf21883715bd3ac))
+* **web:** Generate — richer job-result envelope (P4-4) ([f34019c](https://github.com/dbsprout/dbsprout/commit/f34019cce6ae46158fe8093f1b6d28b46c7b426d))
+* **web:** Generate — richer job-result envelope (P4-4) ([1943c5c](https://github.com/dbsprout/dbsprout/commit/1943c5c0ea2015f545f97b2e98937c421c32c7f4))
+* **web:** Generate — WebSocket progress streaming (P4-5) ([77a6308](https://github.com/dbsprout/dbsprout/commit/77a63083bdc732fa19e6d8d2f0e3b268a71ae38d))
+* **web:** Generate — WebSocket progress streaming (P4-5) ([5bb6c46](https://github.com/dbsprout/dbsprout/commit/5bb6c46bdce5278b48ada3a5943b50dcdd00ebcc))
+* **web:** GET /api/samples + POST /api/schema/sample (P1a) ([d875796](https://github.com/dbsprout/dbsprout/commit/d875796e1734fd94b6e80caf37e8f44e0d4a9f26))
+* **web:** Guided focus overlay + coach copy + first-run sample (P3-2) ([ba0abe2](https://github.com/dbsprout/dbsprout/commit/ba0abe248d3b7f88bd65bc0258d76c503498f35d))
+* **web:** Guided mode engine — toggle + stepper + gating (P3-1) ([f3069f4](https://github.com/dbsprout/dbsprout/commit/f3069f40d6d5f55808bd9b7198e9acd04670aaa0))
+* **web:** guided-only stepper with reactive gated Next/Back (P3-1) ([6f5a1e7](https://github.com/dbsprout/dbsprout/commit/6f5a1e7eb5484e2992fe75dbe57e4ed8d49ed0fb))
+* **web:** GuidedSection focus-overlay wrapper (P3-2) ([43814c5](https://github.com/dbsprout/dbsprout/commit/43814c54e59aae03a06082c74c6fd02a72c1a986))
+* **web:** mode context with localStorage persistence (P3-1) ([a5a9f77](https://github.com/dbsprout/dbsprout/commit/a5a9f77b5e8e2ad3e47495848bfdf22c1b70e8d7))
+* **web:** mode toggle + stepper wired into AppShell header (P3-1) ([a853fc4](https://github.com/dbsprout/dbsprout/commit/a853fc464e7d8705c7a3ae58fb25f205d76ca6e9))
+* **web:** mount ConfigurePanel in App Configure section (P1b-2) ([cdd5466](https://github.com/dbsprout/dbsprout/commit/cdd5466bf6ba0636750beb3605b2126b45d1d22b))
+* **web:** Output — Export panel (SQL/CSV/JSON/Parquet) (P1c-1) ([3e6da59](https://github.com/dbsprout/dbsprout/commit/3e6da592097d2429c2860755a4c0019442c85965))
+* **web:** Output — Export panel (SQL/CSV/JSON/Parquet) (P1c-1) ([cdfcc06](https://github.com/dbsprout/dbsprout/commit/cdfcc06bcb3a796fc3595b3cb801e9ecdbe7d503))
+* **web:** Output — Insert panel with write-guard confirm (P1c-2) ([0a4ba34](https://github.com/dbsprout/dbsprout/commit/0a4ba3450f63ccef41d60c7973708924670158fa))
+* **web:** Output — Insert panel with write-guard confirm (P1c-2) ([7d18950](https://github.com/dbsprout/dbsprout/commit/7d189509b68a74e5ffaefe2f4a51eb3f276b60c1))
+* **web:** P1a connect/schema backend (test-connection, paste, samples) ([c7568a2](https://github.com/dbsprout/dbsprout/commit/c7568a2ac1ab670c140c5f31bfb9d9a7101085ee))
+* **web:** per-step coach copy + CoachPanel (P3-2) ([73a529a](https://github.com/dbsprout/dbsprout/commit/73a529aed856e0465858788e54fdc44d8352963c))
+* **web:** POST /api/connect/test probe (P1a) ([ba90cdb](https://github.com/dbsprout/dbsprout/commit/ba90cdbd950bcb40a90833e55da12d314eaab544))
+* **web:** POST /api/schema/paste (P1a) ([9f97b93](https://github.com/dbsprout/dbsprout/commit/9f97b93de510d2c5ed3ac1cc51d404751806b437))
+* **web:** Runs/Quality/Costs panels + JSON state endpoints (P1c-4) ([86e03b7](https://github.com/dbsprout/dbsprout/commit/86e03b78129e528bec7cf02f934a87b2d9e07779))
+* **web:** Runs/Quality/Costs panels + JSON state endpoints (P1c-4) ([b8b316f](https://github.com/dbsprout/dbsprout/commit/b8b316f7c53568e9829094d7e90826b5c929c9fd))
+* **web:** scaffold React+Vite+TS Workbench frontend ([adbe275](https://github.com/dbsprout/dbsprout/commit/adbe2756c1b634185522e83d1ee849cb8a16cfcb))
+* **web:** serve Workbench SPA at /app with placeholder fallback ([b6d5e40](https://github.com/dbsprout/dbsprout/commit/b6d5e40c149c30d0e59d08c92de46eef0f8e6280))
+* **web:** spec + generators API client (P1b-1) ([e9e60ac](https://github.com/dbsprout/dbsprout/commit/e9e60ace639d7bcc39869467eaf6e63387db1554))
+* **web:** SSH — bastion-failure friendly typed error (P4-9) ([094ad08](https://github.com/dbsprout/dbsprout/commit/094ad08f1debbe8c7a730a2b73b6c8e1f912ae48))
+* **web:** SSH — bastion-failure friendly typed error (P4-9) ([c75a5c5](https://github.com/dbsprout/dbsprout/commit/c75a5c5fa0ff714bdcacc437fdc1df899fd3cfbd))
+* **web:** SSH — incomplete-block inline validation (P4-10) ([bcecd11](https://github.com/dbsprout/dbsprout/commit/bcecd1118925ec1c9ae759884b4272130186a47d))
+* **web:** SSH — incomplete-block inline validation (P4-10) ([5479508](https://github.com/dbsprout/dbsprout/commit/5479508ac0ac6d820a3641dc0ad07d02f474e084))
+* **web:** tabbed Start panel + connect/upload/paste forms (P1a-2b) ([92a1bee](https://github.com/dbsprout/dbsprout/commit/92a1bee1349423b5f43244e46841775bdfe33b09))
+* **web:** trigger first-run sample on advanced-&gt;guided toggle, not just initial mount (P3-2) ([4ce220b](https://github.com/dbsprout/dbsprout/commit/4ce220b14149262738e59cdd83a27cfc2497d327))
+* **web:** typed API client + TanStack Query provider (P1a-2a) ([a462ac2](https://github.com/dbsprout/dbsprout/commit/a462ac224d3fc90a52186c01eb470a411e12d78d))
+* **web:** Validate panel — integrity + fidelity + detection (P1c-3) ([751bdd4](https://github.com/dbsprout/dbsprout/commit/751bdd4fd475f12fc4226fd589f518fd1c5b625c))
+* **web:** Validate panel — integrity + fidelity + detection (P1c-3) ([d2c22c5](https://github.com/dbsprout/dbsprout/commit/d2c22c572aac338f591a662cefabae2e174d5d10))
+* **web:** virtualize ColumnGrid with react-virtual (P4-2) ([4e67c68](https://github.com/dbsprout/dbsprout/commit/4e67c68457afd9ed8d787dddadfea67a40b84c74))
+* **web:** wire focus overlay + coach + first-run into App/AppShell (P3-2) ([16d15cb](https://github.com/dbsprout/dbsprout/commit/16d15cbc6c0c6d8a46ecac87c7928e2a6faac11f))
+* **web:** Workbench frontend foundation + sample→schema (P1a-2a) ([4b1443e](https://github.com/dbsprout/dbsprout/commit/4b1443ef0e38364317d5583421c57d0d2bb2debe))
+* **web:** Workbench shell + sample picker + schema tree (P1a-2a) ([a827f65](https://github.com/dbsprout/dbsprout/commit/a827f65305e645b50df50aa83b53c267782736ef))
+* **web:** Workbench SPA — P0 foundation (DBS-181) ([c468733](https://github.com/dbsprout/dbsprout/commit/c468733582a3ec8c799ab3a99b1c2cf8300d0d60))
+* **web:** Workbench Start screen — connect form + upload + paste (P1a-2b) ([5542e83](https://github.com/dbsprout/dbsprout/commit/5542e83b2c4aa2313ca121aaebc0da81caa4473a))
+* **web:** wrap App in ModeProvider + advanced-mode regression guard (P3-1) ([f6c9007](https://github.com/dbsprout/dbsprout/commit/f6c9007d9baabd1369fc241415a20ce543ec30c6))
+
+
+### Bug Fixes
+
+* **S-148:** make TUI progress on_mount idempotent to stop row duplication ([78ff20c](https://github.com/dbsprout/dbsprout/commit/78ff20c31c35cde43dfd58872f1a3bfe23be9210))
+* **S-148:** make TUI progress on_mount idempotent to stop row duplication ([13f76ac](https://github.com/dbsprout/dbsprout/commit/13f76acce9ce854f89b6be12b206975c08107d38))
+* **S-149:** make cli_diff --file path assertions width-independent ([6ffebac](https://github.com/dbsprout/dbsprout/commit/6ffebac81b827e98e3fd077d9695f575b3c2d4ce))
+* **S-149:** make cli_diff --file path assertions width-independent ([e4ac789](https://github.com/dbsprout/dbsprout/commit/e4ac789921d935a2907eed4dd5accc413d8ebca3))
+* **S-153:** consolidate train extractor to a single DB engine ([c79e692](https://github.com/dbsprout/dbsprout/commit/c79e692d93dc8425e14452a71bb525939b23cc1d))
+* **S-153:** consolidate train extractor to a single DB engine ([1e33f08](https://github.com/dbsprout/dbsprout/commit/1e33f0842b3232445f97f18337387a09194851df))
+* **S-153:** repoint extractor helper-test patches to introspect_engine ([487c2d1](https://github.com/dbsprout/dbsprout/commit/487c2d18e760a9bc1b4f1ff71be989efacaa0169))
+* **web:** consistent sample dialect + accurate saas description (P1a) ([0d2d374](https://github.com/dbsprout/dbsprout/commit/0d2d374f4621047f2a4c63a81ef0c789d7242541))
+* **web:** spec-assist never-500 — catch broad provider failures (P2b-3) ([ea22fd3](https://github.com/dbsprout/dbsprout/commit/ea22fd3fa92f6c75ed6d187769f6a1b404ca3bc6))
+* **web:** stepper re-renders on in-place query updates via monotonic version (P3-1) ([eb1aeb7](https://github.com/dbsprout/dbsprout/commit/eb1aeb79d31a84267e670183b386d1f90f0c0950))
+
+
+### Code Refactoring
+
+* **S-150:** consolidate duplicated _detect_direct_dialect ([f8a85b6](https://github.com/dbsprout/dbsprout/commit/f8a85b6f3dbed83adae03077626e25332f530cd0))
+* **S-150:** consolidate duplicated _detect_direct_dialect ([42c9c7a](https://github.com/dbsprout/dbsprout/commit/42c9c7a97c3f391d525873fc691cdc615fb0dd19))
+* **web:** drop unused react-query dep, pin node&gt;=20 ([2e2963c](https://github.com/dbsprout/dbsprout/commit/2e2963c4d810bc4f9880130321022f091cc26ac0))
+
+
+### Miscellaneous
+
+* release 0.2.0 ([d20952e](https://github.com/dbsprout/dbsprout/commit/d20952e0ad30716999b40794f3f21cac7cd58f2d))
+* relicense from MIT to AGPL-3.0-or-later ([a9a15a6](https://github.com/dbsprout/dbsprout/commit/a9a15a6bd4b2c7f678122875b5ad18cc1f7594f9))
+* relicense from MIT to AGPL-3.0-or-later ([75f0bf4](https://github.com/dbsprout/dbsprout/commit/75f0bf40322a3a3b2180851549ebc19f8eefd318))
+* **web:** add @tanstack/react-virtual dep (P4-2) ([9df4ecf](https://github.com/dbsprout/dbsprout/commit/9df4ecfef15d6ad9cf3aae003d380458434f2be2))
+
+
+### CI/CD
+
+* **S-151:** add web-router collection-check gate ([717b382](https://github.com/dbsprout/dbsprout/commit/717b3827bf72cfe4d11377faa9c4c7c438df5014))
+* **S-151:** add web-router collection-check gate ([262b3c6](https://github.com/dbsprout/dbsprout/commit/262b3c6a25e6afdf9625a034b5ebfdc44cc780d1))
+* **web:** frontend build/test job + bundle SPA in release wheel ([8ea6ec3](https://github.com/dbsprout/dbsprout/commit/8ea6ec3c4147755f72faf6502716b24868f25dbd))
+
+
+### Tests
+
+* **web:** add vitest coverage tooling (P1b-2) ([b167baf](https://github.com/dbsprout/dbsprout/commit/b167bafb21cae7f9e27fbe7d97453057dbd6ce6d))
+* **web:** cover localStorage failure paths in ModeProvider (P3-1) ([ce9b907](https://github.com/dbsprout/dbsprout/commit/ce9b907d09def047ae40130e1c6045a18d12160a))
+* **web:** cover Upload/Paste forms + exclude type-only module for &gt;=80% coverage (P1b-2) ([f3e53b1](https://github.com/dbsprout/dbsprout/commit/f3e53b1bc92a16d186f223c7c1e1b65b7c8d0598))
+* **web:** fix tsc tuple-index error in ConfigurePanelAdvanced mock ([d3d91d3](https://github.com/dbsprout/dbsprout/commit/d3d91d36bf6048a9363adf4ac3a8f451a095650f))
+* **web:** set guided step via effect to avoid render-phase setState (P3-2) ([7feef69](https://github.com/dbsprout/dbsprout/commit/7feef69309585ea777e0cb1e98670076a2fe2fff))
+* **web:** type PasteForm fetch mock for strict tsc (P1b-2) ([db506a6](https://github.com/dbsprout/dbsprout/commit/db506a6f7d29535c6c14db601e61dbc3d240943f))
+* **web:** Vitest smoke test for Workbench App ([ed6c987](https://github.com/dbsprout/dbsprout/commit/ed6c9875958ab58bbba959fb977c8b63cbb93001))
+
 ## [0.1.8](https://github.com/dbsprout/dbsprout/compare/v0.1.7...v0.1.8) (2026-05-28)
 
 
