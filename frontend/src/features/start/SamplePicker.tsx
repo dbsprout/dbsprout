@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ApiError } from "../../api/client";
 import { listSamples, loadSample, queryKeys } from "../../api/endpoints";
+import { invalidateSchemaQueries } from "../../api/invalidateSchema";
 
 interface SamplePickerProps {
   onLoaded: () => void;
@@ -17,9 +18,11 @@ export function SamplePicker({ onLoaded }: SamplePickerProps) {
     mutationFn: loadSample,
     // ═══ P5-3 ═══ — the post-load confirmation moved up to the StartPanel
     // collapse (the single, non-duplicated load signal); SamplePicker only
-    // invalidates the schema query and fires onLoaded.
+    // refreshes the schema-derived queries and fires onLoaded.
+    // ═══ P5-12 ═══ — invalidate spec + preview too (not just schema) so an
+    // existing session's stuck "No schema loaded" Configure repaints.
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: queryKeys.schema });
+      invalidateSchemaQueries(qc);
       onLoaded();
     },
   });

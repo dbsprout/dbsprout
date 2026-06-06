@@ -1,7 +1,8 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { ApiError } from "../../api/client";
-import { pasteSchema, queryKeys } from "../../api/endpoints";
+import { pasteSchema } from "../../api/endpoints";
+import { invalidateSchemaQueries } from "../../api/invalidateSchema";
 
 interface PasteFormProps {
   onLoaded: () => void;
@@ -13,8 +14,9 @@ export function PasteForm({ onLoaded }: PasteFormProps) {
 
   const mutation = useMutation({
     mutationFn: (t: string) => pasteSchema(t),
+    // ═══ P5-12 ═══ — refresh spec + preview alongside schema.
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: queryKeys.schema });
+      invalidateSchemaQueries(qc);
       onLoaded();
     },
   });
