@@ -39,9 +39,8 @@ export function QualityPanel({ runId }: QualityPanelProps) {
     return (
       <p className="db-notice-muted">
         No quality data yet. Quality metrics are recorded when a generation run completes — run{" "}
-        <strong>Generate</strong> to populate them (web runs will be recorded automatically once
-        run history lands), or use the <strong>Validate</strong> step for a live integrity check of
-        your current data.
+        <strong>Generate</strong> to populate them, or use the <strong>Validate</strong> step for a
+        live integrity check of your current data.
       </p>
     );
   }
