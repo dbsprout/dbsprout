@@ -59,6 +59,10 @@ test("shows an empty-state when no run was found", async () => {
   // Points the user at the right actions: live check now (Validate) + populate (Generate).
   expect(screen.getByText("Validate")).toBeInTheDocument();
   expect(screen.getByText("Generate")).toBeInTheDocument();
+  // P5-11: P5-9 has shipped (web runs now record quality), so the old
+  // future-tense "once run history lands" hedge must be gone.
+  expect(screen.queryByText(/once run history lands/i)).not.toBeInTheDocument();
+  expect(screen.queryByText(/will be recorded automatically/i)).not.toBeInTheDocument();
 });
 
 test("shows an error state when the request fails", async () => {
