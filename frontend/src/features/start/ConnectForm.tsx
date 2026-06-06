@@ -10,7 +10,8 @@ import {
   type ConnectionParam,
   type DbType,
 } from "../../api/connectionUrl";
-import { connect, connectTest, queryKeys } from "../../api/endpoints";
+import { connect, connectTest } from "../../api/endpoints";
+import { invalidateSchemaQueries } from "../../api/invalidateSchema";
 import type { ConnectionProbe, SshTunnelInput } from "../../api/types";
 
 // ─── P2a-3 ───
@@ -153,8 +154,10 @@ export function ConnectForm({ onLoaded }: ConnectFormProps) {
 
   const connectM = useMutation({
     mutationFn: () => connect(url, buildSsh(ssh)),
+    // ═══ P5-12 ═══ — refresh spec + preview alongside schema (also covers the
+    // SavedConnections load path, which flows through this mutation).
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: queryKeys.schema });
+      invalidateSchemaQueries(qc);
       onLoaded();
     },
   });

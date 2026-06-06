@@ -1,7 +1,8 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { ApiError } from "../../api/client";
-import { queryKeys, uploadSchema } from "../../api/endpoints";
+import { uploadSchema } from "../../api/endpoints";
+import { invalidateSchemaQueries } from "../../api/invalidateSchema";
 
 interface UploadFormProps {
   onLoaded: () => void;
@@ -13,8 +14,9 @@ export function UploadForm({ onLoaded }: UploadFormProps) {
 
   const mutation = useMutation({
     mutationFn: (f: File) => uploadSchema(f),
+    // ═══ P5-12 ═══ — refresh spec + preview alongside schema.
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: queryKeys.schema });
+      invalidateSchemaQueries(qc);
       onLoaded();
     },
   });
